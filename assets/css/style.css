@@ -797,4 +797,93 @@ html[data-theme="light"] .feature .ico{color:var(--accent)}
   html[data-theme="light"] .msg-actions{background:none;border:none;box-shadow:none}
 }
 
+/* ============================================================
+   Site-wide owner settings (announcement, maintenance, gating)
+   ============================================================ */
+.site-announce{
+  position:fixed;
+  z-index:88;
+  left:50%;
+  bottom:18px;
+  transform:translateX(-50%);
+  max-width:min(620px,calc(100vw - 24px));
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:11px 14px;
+  border-radius:13px;
+  font-size:12.5px;
+  line-height:1.8;
+  background:rgba(14,18,30,.96);
+  border:1px solid rgba(34,211,238,.34);
+  color:#c7f5fb;
+  box-shadow:0 18px 50px rgba(0,0,0,.55);
+  backdrop-filter:blur(14px);
+}
+.site-announce.warn{border-color:rgba(251,191,36,.4);color:#fde9b0;background:rgba(30,24,10,.96)}
+.site-announce.critical{border-color:rgba(248,113,113,.45);color:#fecaca;background:rgba(34,12,15,.96)}
+.site-announce-x{
+  flex:none;
+  width:24px;height:24px;
+  border-radius:8px;
+  border:1px solid rgba(255,255,255,.14);
+  background:rgba(255,255,255,.06);
+  color:inherit;
+  font-size:16px;
+  line-height:1;
+  cursor:pointer;
+}
+.site-announce-x:hover{background:rgba(255,255,255,.14)}
+.wt-preview-badge{
+  position:fixed;
+  z-index:95;
+  top:10px;
+  left:10px;
+  padding:5px 10px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:600;
+  letter-spacing:.02em;
+  color:#0b0c12;
+  background:linear-gradient(135deg,#fcd34d,#f59e0b);
+  box-shadow:0 8px 24px rgba(0,0,0,.35);
+}
+.wt-maint{
+  position:fixed;
+  inset:0;
+  z-index:9998;
+  display:grid;
+  place-items:center;
+  padding:24px;
+  background:radial-gradient(900px 500px at 50% 0%,rgba(124,92,255,.18),transparent 70%),#05060a;
+}
+.wt-maint-box{
+  width:min(480px,100%);
+  text-align:center;
+  padding:34px 26px;
+  border-radius:22px;
+  background:rgba(15,18,28,.96);
+  border:1px solid rgba(255,255,255,.1);
+  box-shadow:0 40px 120px rgba(0,0,0,.6);
+}
+.wt-maint-logo{font-size:40px;margin-bottom:10px}
+.wt-maint-box h1{font-size:21px;margin:0 0 10px}
+.wt-maint-box p{margin:0;color:#9aa3ba;font-size:13px;line-height:1.9}
+.room-shell.no-chat{grid-template-columns:minmax(0,1fr) 0!important}
+.room-shell.no-chat .sidebar,
+.room-shell.no-chat .sheet-grip,
+.room-shell.no-chat .side-toggle{display:none!important}
+.feature-off{display:none!important}
+html[data-theme="light"] .wt-maint{background:radial-gradient(900px 500px at 50% 0%,rgba(124,92,255,.14),transparent 70%),#f3f5fa}
+html[data-theme="light"] .wt-maint-box{background:#fff;border-color:rgba(15,23,42,.12)}
+html[data-theme="light"] .wt-maint-box p{color:#5b647a}
+html[data-theme="light"] .site-announce{background:rgba(255,255,255,.97);color:#0f172a}
+@media (max-width:540px){
+  .site-announce{bottom:calc(10px + env(safe-area-inset-bottom));font-size:11.5px;padding:9px 11px;border-radius:11px}
+}
 
+
+
+.auth-notice{margin:0 0 14px;padding:10px 12px;border-radius:12px;background:rgba(255,184,77,.09);border:1px solid rgba(255,184,77,.28);color:#ffd79a;font-size:.84rem;line-height:1.75}
+html[data-theme="light"] .auth-notice{background:#fff7e8;border-color:#f3d5a4;color:#7a5212}
+#authForm.is-closed .field,#authForm.is-closed #submitBtn,#authForm.is-closed .captcha-row{opacity:.4;pointer-events:none}

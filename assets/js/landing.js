@@ -1,6 +1,7 @@
-import { initI18n, t } from "./i18n.js";
+import { initI18n, t, getLang } from "./i18n.js";
 import { $, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt, createLimiter } from "./core.js";
 import { currentUser, mountUserChip, isRealName } from "./auth.js";
+import { loadSiteConfig, applySiteConfig, isConfigPreview, accessOn } from "./site-config.js";
 
 applyUIPrefs();
 initI18n();
@@ -9,14 +10,73 @@ wireInstallPrompt();
 
 mountUserChip();
 
+let siteCfg = null;
+let roomCreateOpen = true;
+let roomJoinOpen = true;
+
 const user = currentUser();
-if (user) resumePendingRoom();
+
+async function bootSite() {
+  siteCfg = await loadSiteConfig();
+  applySiteConfig(siteCfg);
+  roomCreateOpen = accessOn("roomCreate", siteCfg);
+  roomJoinOpen = accessOn("roomJoin", siteCfg);
+  applyAccessState();
+  applyCapacityOptions();
+  if (user) resumePendingRoom();
+  if (isConfigPreview()) {
+    const badge = document.createElement("div");
+    badge.className = "wt-preview-badge";
+    badge.textContent = "پیش‌نمایش مالک";
+    document.body.append(badge);
+  }
+  document.addEventListener("langchange", () => applySiteConfig(siteCfg));
+}
+bootSite();
+
+function applyAccessState() {
+  const createBtn = $("#createBtn");
+  const joinBtn = $("#joinBtn");
+  if (createBtn) {
+    createBtn.disabled = !roomCreateOpen;
+    let hint = $("#createClosedHint");
+    if (!roomCreateOpen && !hint) {
+      hint = document.createElement("p");
+      hint.className = "hint";
+      hint.id = "createClosedHint";
+      hint.textContent = getLang() === "fa" ? "ساخت اتاق توسط مالک سایت موقتاً بسته شده است." : "Room creation is temporarily closed by the site owner.";
+      createBtn.insertAdjacentElement("afterend", hint);
+    }
+    if (hint) hint.classList.toggle("hidden", roomCreateOpen);
+  }
+  if (joinBtn) {
+    joinBtn.disabled = !roomJoinOpen;
+    const hint = $("#joinHint");
+    if (hint && !roomJoinOpen) hint.textContent = getLang() === "fa" ? "ورود به اتاق موقتاً بسته است." : "Joining rooms is temporarily closed.";
+  }
+}
+
+function applyCapacityOptions() {
+  const sel = $("#createCapacity");
+  if (!sel || !siteCfg) return;
+  const max = Math.max(2, Number(siteCfg.limits.maxCapacity) || 24);
+  const wanted = Math.max(2, Math.min(max, Number(siteCfg.limits.defaultCapacity) || 6));
+  const values = [...new Set([4, 6, 8, 12, 16, 20, 24, wanted].filter((v) => v <= max))].sort((a, b) => a - b);
+  sel.replaceChildren(...values.map((v) => {
+    const opt = document.createElement("option");
+    opt.value = String(v);
+    opt.textContent = String(v);
+    opt.selected = v === wanted;
+    return opt;
+  }));
+}
 
 function resumePendingRoom() {
   let raw = "";
   try { raw = sessionStorage.getItem("wt.pending") || ""; } catch {}
   if (!raw) return;
   try { sessionStorage.removeItem("wt.pending"); } catch {}
+  if (!roomJoinOpen) return;
   let pending = null;
   try { pending = JSON.parse(raw); } catch { return; }
   if (!pending?.q || Date.now() - (pending.at || 0) > 30 * 60 * 1000) return;
@@ -59,6 +119,7 @@ privacyInput.addEventListener("change", () => {
 });
 
 $("#createBtn").addEventListener("click", () => {
+  if (!roomCreateOpen) return toast(getLangIsFa() ? "ساخت اتاق موقتاً بسته است." : "Room creation is temporarily closed.", "error");
   const nick = createNick.value.trim().slice(0, 20);
   if (!nick) return toast(t("toast.nameRequired"), "error");
   if (!isRealName(nick)) return toast(t("toast.realName"), "error");
@@ -87,6 +148,7 @@ joinCode.addEventListener("keydown", (e) => { if (e.key === "Enter") joinRoom();
 joinNick.addEventListener("keydown", (e) => { if (e.key === "Enter") joinRoom(); });
 
 function joinRoom() {
+  if (!roomJoinOpen) return toast(getLangIsFa() ? "ورود به اتاق موقتاً بسته است." : "Joining rooms is temporarily closed.", "error");
   const nick = joinNick.value.trim().slice(0, 20);
   if (!nick) return toast(t("toast.nameRequired"), "error");
   if (!isRealName(nick)) return toast(t("toast.realName"), "error");

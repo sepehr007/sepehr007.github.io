@@ -7,8 +7,9 @@ import {
 import { Net } from "./net.js";
 import { Player, parseSubtitles } from "./player.js";
 import { Voice } from "./voice.js";
-import { currentUser } from "./auth.js";
+import { currentUser, isLocallyBanned } from "./auth.js";
 import { avatarSrc } from "./avatars.js";
+import { loadSiteConfig, applySiteConfig, featureOn, accessOn, isMaintenanceBlocked } from "./site-config.js";
 
 initI18n();
 applyUIPrefs();
@@ -71,6 +72,8 @@ let currentLocalUrl = null;
 let localFileId = "";
 let pendingLocalState = null;
 let fileOfferId = "";
+let siteCfg = null;
+let chatEnabled = true;
 
 const chatList = $("#chatList");
 const peopleList = $("#peopleList");
@@ -93,6 +96,18 @@ let chatHidden = store.get("wt.chatHidden", false) === true;
 if (code && authUser) boot();
 
 async function boot() {
+  siteCfg = await loadSiteConfig();
+  applySiteConfig(siteCfg);
+  if (isMaintenanceBlocked(siteCfg)) return;
+  if (isLocallyBanned(authUser.username)) {
+    location.replace("index.html");
+    return;
+  }
+  if (!isHost && !accessOn("roomJoin", siteCfg)) {
+    toast(getLang() === "fa" ? "ورود به اتاق‌ها موقتاً بسته شده است." : "Joining rooms is temporarily closed.", "error");
+    setTimeout(() => location.replace("./"), 1400);
+    return;
+  }
   if (!nick) nick = await askName();
   if (!nick) { location.replace("./"); return; }
   store.set("wt.nick", nick);
@@ -164,17 +179,50 @@ async function boot() {
   wireViewport();
   wireSheet();
   wireFileLoad();
+  applyFeatureFlags();
   setInterval(() => broadcastLocalState(), 4000);
 
   createNet();
 }
 
+function applyFeatureFlags() {
+  chatEnabled = featureOn("chat", siteCfg);
+  if (!chatEnabled) {
+    document.querySelector(".room-shell")?.classList.add("no-chat");
+    $("#chatForm")?.classList.add("feature-off");
+    $("#chatBadge")?.classList.add("hidden");
+  }
+  if (!featureOn("voice", siteCfg)) {
+    $("#voiceBtn")?.classList.add("feature-off");
+    $("#voiceStrip")?.classList.add("feature-off");
+    $("#voiceDock")?.classList.add("feature-off");
+  }
+  if (!featureOn("liveReactions", siteCfg)) $("#reactDock")?.classList.add("feature-off");
+  if (!featureOn("screenShare", siteCfg)) {
+    $("#shareBtn")?.classList.add("feature-off");
+    $("#screenLayer")?.classList.add("feature-off");
+  }
+  if (!featureOn("queue", siteCfg)) {
+    $$('.tab[data-tab="queue"]').forEach((n) => n.classList.add("feature-off"));
+    $("#queueForm")?.classList.add("feature-off");
+  }
+  if (!featureOn("subtitles", siteCfg)) {
+    $("#subsBtn")?.classList.add("feature-off");
+    $("#subsPickBtn")?.closest(".setting")?.classList.add("feature-off");
+  }
+  if (!featureOn("localFile", siteCfg)) {
+    $("#pickFileBtn")?.classList.add("feature-off");
+    $("#fileInput")?.classList.add("feature-off");
+  }
+}
+
 function createNet() {
+  const maxCap = Number(siteCfg?.limits?.maxCapacity) || capacityParam;
   net = new Net({
     code, nick, isHost,
     password: roomPassword,
     roomName: roomNameParam,
-    capacity: capacityParam,
+    capacity: Math.min(capacityParam, maxCap),
     privacy: privacyParam,
     avatar: me.avatar
   });
@@ -967,6 +1015,10 @@ function wireChat() {
 
   chatForm.addEventListener("submit", (e) => {
     e.preventDefault();
+    if (!chatEnabled) {
+      toast(getLang() === "fa" ? "چت توسط مدیر سایت موقتاً غیرفعال شده است." : "Chat is temporarily disabled by the site owner.", "error");
+      return;
+    }
     const text = chatInput.value.trim();
     if (!text) return;
     if (!canSend()) { toast(getLang() === "fa" ? "کمی صبر کن" : "Slow down", "error"); return; }

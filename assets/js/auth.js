@@ -1,9 +1,12 @@
 import { $, colorFor, initials, applyUIPrefs } from "./core.js";
 import { t } from "./i18n.js";
 import { avatarId, avatarSrc, isAvatarId, presetValue } from "./avatars.js";
+import { loadSiteConfig, applySiteConfig, accessOn } from "./site-config.js";
+import { logModeration } from "./modlog.js";
 
 const USERS_KEY = "wt.users";
 const SESSION_KEY = "wt.session";
+const LOCAL_BANS_KEY = "wt.localBans";
 const SESSION_DAYS = 30;
 const PBKDF2_ITER = 120000;
 
@@ -37,6 +40,18 @@ function readUsers() {
 }
 function writeUsers(users) {
   try { localStorage.setItem(USERS_KEY, JSON.stringify(users)); } catch {}
+}
+function locallyBanned(username) {
+  const u = String(username || "").toLowerCase();
+  if (!u) return false;
+  try {
+    const list = JSON.parse(localStorage.getItem(LOCAL_BANS_KEY) || "[]");
+    return Array.isArray(list) && list.map((x) => String(x).toLowerCase()).includes(u);
+  } catch { return false; }
+}
+
+export function isLocallyBanned(username) {
+  return locallyBanned(username);
 }
 
 /* ---------- validation ---------- */
@@ -305,6 +320,10 @@ function clearThrottle(u) {
 
 export async function register({ name, username, password }) {  const nick = normalizeName(name);
   const u = String(username || "").trim().toLowerCase();
+  if (locallyBanned(u)) {
+    logModeration("loginFail", `تلاش ثبت‌نام حساب مسدود @${u}`);
+    return { ok: false, error: "blocked" };
+  }
   if (!isRealName(nick)) return { ok: false, error: "name" };
   if (!isUsername(u)) return { ok: false, error: "username" };
   if (!isPassword(password)) return { ok: false, error: "password" };
@@ -322,14 +341,25 @@ export async function register({ name, username, password }) {  const nick = nor
 
 export async function login({ username, password }) {
   const u = String(username || "").trim().toLowerCase();
+  if (locallyBanned(u)) {
+    logModeration("loginFail", `ورود حساب مسدود @${u}`);
+    return { ok: false, error: "blocked" };
+  }
   const wait = lockedFor(u);
-  if (wait) return { ok: false, error: "locked", wait };
+  if (wait) {
+    logModeration("loginLock", `قفل ورود @${u}`);
+    return { ok: false, error: "locked", wait };
+  }
   const rec = readUsers()[u];
-  if (!rec) { noteFailure(u); return { ok: false, error: "credentials" }; }
+  if (!rec) { noteFailure(u); logModeration("loginFail", `نام کاربری ناشناس @${u}`); return { ok: false, error: "credentials" }; }
   let hashValue;
   try { hashValue = await hashPassword(password, rec.salt); }
   catch { return { ok: false, error: "secure" }; }
-  if (hashValue !== rec.hash) { noteFailure(u); return { ok: false, error: "credentials" }; }
+  if (hashValue !== rec.hash) {
+    noteFailure(u);
+    logModeration("loginFail", `رمز اشتباه @${u}`);
+    return { ok: false, error: "credentials" };
+  }
   clearThrottle(u);
   saveSession(u);
   return { ok: true, nick: rec.nick };
@@ -338,6 +368,7 @@ export async function login({ username, password }) {
 export async function recover({ username, name, password }) {
   const u = String(username || "").trim().toLowerCase();
   const nick = normalizeName(name);
+  if (locallyBanned(u)) return { ok: false, error: "blocked" };
   const wait = lockedFor(u);
   if (wait) return { ok: false, error: "locked", wait };
   const users = readUsers();
@@ -398,10 +429,12 @@ export function mountUserChip() {
 }
 
 /* ---------- auth page ---------- */
-export function initAuthPage() {
+export async function initAuthPage() {
   const form = $("#authForm");
   if (!form) return;
   applyUIPrefs();
+  const cfg = await loadSiteConfig();
+  applySiteConfig(cfg);
 
   let mode = new URLSearchParams(location.search).get("mode") === "login" ? "login" : "register";
   let captcha = makeCaptcha();
@@ -483,6 +516,34 @@ export function initAuthPage() {
     }
   }
 
+  function applyAccess() {
+    const fa = document.documentElement.lang === "fa";
+    const regOpen = accessOn("registration", cfg);
+    const loginOpen = accessOn("login", cfg);
+    const bothClosed = !regOpen && !loginOpen;
+    $("#tabRegister")?.classList.toggle("hidden", !regOpen);
+    $("#tabLogin")?.classList.toggle("hidden", !loginOpen);
+    document.querySelector(".auth-tabs")?.classList.toggle("hidden", bothClosed);
+
+    const notice = $("#authNotice");
+    let msg = "";
+    if (bothClosed) msg = fa ? "ثبت‌نام و ورود موقتاً توسط مدیر سایت بسته شده است." : "Sign-up and sign-in are temporarily closed by the site owner.";
+    else if (!regOpen) msg = fa ? "ثبت‌نام حساب جدید موقتاً بسته است؛ اگر حساب داری وارد شو." : "New sign-ups are temporarily closed; sign in if you already have an account.";
+    else if (!loginOpen) msg = fa ? "ورود با حساب موجود موقتاً بسته است؛ فقط ثبت‌نام باز است." : "Sign-in is temporarily closed; only new sign-ups are open.";
+    if (notice) {
+      notice.textContent = msg;
+      notice.classList.toggle("hidden", !msg);
+    }
+
+    form.classList.toggle("is-closed", bothClosed);
+    if (submit) submit.disabled = bothClosed;
+    $("#forgotLink")?.classList.toggle("hidden", bothClosed || !loginOpen || mode !== "login");
+
+    if (bothClosed) return;
+    if (mode === "register" && !regOpen) setMode("login");
+    if (mode === "login" && !loginOpen) setMode("register");
+  }
+
   $("#tabLogin")?.addEventListener("click", () => setMode("login"));
   $("#tabRegister")?.addEventListener("click", () => setMode("register"));
   $("#captchaRefresh")?.addEventListener("click", drawCaptcha);
@@ -493,8 +554,14 @@ export function initAuthPage() {
     return;
   }
 
+  if (mode === "register" && !accessOn("registration", cfg) && accessOn("login", cfg)) mode = "login";
+  if (mode === "login" && !accessOn("login", cfg) && accessOn("registration", cfg)) mode = "register";
   setMode(mode);
-  document.addEventListener("langchange", () => { if (recovering) showRecover(true); else setMode(mode); });
+  applyAccess();
+  document.addEventListener("langchange", () => {
+    if (recovering) showRecover(true); else setMode(mode);
+    applyAccess();
+  });
 
   $("#forgotLink")?.addEventListener("click", () => showRecover(true));
   $("#recoverBack")?.addEventListener("click", () => { showRecover(false); setMode("login"); });
@@ -505,6 +572,7 @@ export function initAuthPage() {
     if (busy) return;
     const fa = document.documentElement.lang === "fa";
     const err = (m) => { const el = $("#recError"); if (el) el.textContent = m; };
+    if (!accessOn("login", cfg)) return err(fa ? "بازیابی رمز موقتاً بسته است." : "Password recovery is temporarily closed.");
     const username = $("#recUsername").value.trim();
     const name = $("#recName").value;
     const password = $("#recPassword").value;
@@ -530,10 +598,13 @@ export function initAuthPage() {
         credentials: fa ? "این نام کاربری و اسم واقعی با هم هم‌خوانی ندارند." : "Username and real name do not match.",
         password: t("auth.pwWeak"),
         locked: t("auth.locked"),
+        blocked: fa ? "این حساب به‌دست مدیر سایت مسدود شده است." : "This account is blocked by the site owner.",
         secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https."
       };
+      logModeration("recoverFail", `تلاش ناموفق بازیابی رمز @${username}`);
       return err(map[res.error] || "Error");
     }
+    logModeration("recover", `بازیابی رمز @${String(username).trim().toLowerCase()}`);
     location.replace(next);
   });
 
@@ -542,6 +613,12 @@ export function initAuthPage() {
     if (busy) return;
     const fa = document.documentElement.lang === "fa";
     const err = (m) => { if (errLine) errLine.textContent = m; };
+    if (mode === "register" && !accessOn("registration", cfg)) {
+      return err(fa ? "ثبت‌نام موقتاً بسته است." : "Sign-up is temporarily closed.");
+    }
+    if (mode === "login" && !accessOn("login", cfg)) {
+      return err(fa ? "ورود موقتاً بسته است." : "Sign-in is temporarily closed.");
+    }
 
     const username = $("#username").value.trim();
     const password = $("#password").value;
@@ -581,11 +658,15 @@ export function initAuthPage() {
         exists: fa ? "این نام کاربری قبلاً روی این مرورگر ساخته شده." : "This username already exists on this browser.",
         credentials: fa ? "نام کاربری یا رمز اشتباه است." : "Wrong username or password.",
         locked: t("auth.locked"),
+        blocked: fa ? "این حساب به‌دست مدیر سایت مسدود شده است." : "This account is blocked by the site owner.",
         secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https."
       };
+      if (res.error === "blocked") logModeration("loginFail", `ورود حساب مسدود @${username.trim().toLowerCase()}`);
       return err(map[res.error] || "Error");
     }
 
+    const u = username.trim().toLowerCase();
+    logModeration(mode === "register" ? "register" : "login", `${mode === "register" ? "ساخت حساب" : "ورود"} @${u}`);
     location.replace(next);
   });
 }

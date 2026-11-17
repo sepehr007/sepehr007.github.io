@@ -5,9 +5,11 @@ import {
 } from "./core.js";
 import {
   currentUser, getProfile, saveProfile, changeUsername, changePassword,
-  setAvatar, addFriend, removeFriend, logout, passwordScore, isPassword
+  setAvatar, addFriend, removeFriend, logout, passwordScore, isPassword,
+  isLocallyBanned
 } from "./auth.js";
 import { AVATAR_PRESETS, avatarId, avatarSrc, presetValue } from "./avatars.js";
+import { loadSiteConfig, applySiteConfig, isMaintenanceBlocked } from "./site-config.js";
 
 applyUIPrefs();
 initI18n();
@@ -24,7 +26,15 @@ if (!me) {
   boot();
 }
 
-function boot() {
+async function boot() {
+  const siteCfg = await loadSiteConfig();
+  applySiteConfig(siteCfg);
+  if (isMaintenanceBlocked(siteCfg)) return;
+  if (isLocallyBanned(me.username)) {
+    logout();
+    location.replace("auth.html?mode=login");
+    return;
+  }
   profile = getProfile(me.username);
   if (!profile) {
     location.replace("auth.html?next=profile.html&force=1");

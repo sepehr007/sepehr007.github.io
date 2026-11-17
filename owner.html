@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="theme-color" content="#07080d">
+<title>کنسول مالک — هم‌تماشا</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="stylesheet" href="assets/css/owner.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%237c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
+</head>
+<body class="owner-body">
+
+<div class="owner-bg" aria-hidden="true">
+  <span class="aurora a1"></span>
+  <span class="aurora a2"></span>
+  <span class="aurora a3"></span>
+  <div class="grid-overlay"></div>
+</div>
+
+<!-- ================= gate ================= -->
+<section class="owner-gate" id="ownerGate">
+  <div class="gate-card">
+    <div class="gate-badge" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2l7 3v6c0 5-3.4 8.4-7 11-3.6-2.6-7-6-7-11V5l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+    </div>
+    <h1>کنسول مالک سایت</h1>
+    <p class="gate-sub">ورود امن به مدیریت سراسری هم‌تماشا. این مسیر در هیچ منویی لینک نشده است.</p>
+
+    <div class="gate-tabs" role="tablist">
+      <button class="active" id="gateTabLogin" type="button">ورود مالک</button>
+      <button id="gateTabGithub" type="button">اتصال به گیت‌هاب</button>
+    </div>
+
+    <div class="gate-note">
+      <b>چطور امن است؟</b>
+      فعال‌سازی و انتشار فقط با توکن گیت‌هابِ دارای دسترسی نوشتن به مخزن انجام می‌شود و هویت حساب باید با مالک تنظیم‌شده یکی باشد. رمز محلی با PBKDF2 هش می‌شود و توکن فقط در همین تب می‌ماند.
+    </div>
+
+    <form class="gate-form" id="loginForm" autocomplete="off">
+      <label class="ofield">
+        <span>رمز مالک</span>
+        <input id="ownerPass" type="password" autocomplete="current-password" placeholder="رمز محلی مالک">
+      </label>
+      <p class="gate-hint" id="loginHint">اولین بار باید از تب «اتصال به گیت‌هاب» فعال‌سازی کنی.</p>
+      <p class="gate-err" id="loginErr" role="alert"></p>
+      <button class="btn btn-primary btn-block" id="loginBtn" type="submit">باز کردن کنسول</button>
+    </form>
+
+    <form class="gate-form hidden" id="githubForm" autocomplete="off">
+      <label class="ofield">
+        <span>حساب مالک</span>
+        <input id="ghLogin" type="text" dir="ltr" readonly>
+      </label>
+      <label class="ofield">
+        <span>توکن گیت‌هاب <small>(Fine-grained، دسترسی Contents: Read and write)</small></span>
+        <input id="ghToken" type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+      </label>
+      <div class="ofield-row">
+        <label class="ofield">
+          <span>رمز محلی جدید <small>(حداقل ۱۰ کاراکتر)</small></span>
+          <input id="newOwnerPass" type="password" autocomplete="new-password">
+        </label>
+        <label class="ofield">
+          <span>تکرار رمز</span>
+          <input id="newOwnerPass2" type="password" autocomplete="new-password">
+        </label>
+      </div>
+      <p class="gate-hint">توکن باید به مخزن <code id="ghRepo">sepehr007/sepehr007.github.io</code> دسترسی نوشتن داشته باشد. توکن را در چت یا جای دیگری ارسال نکن؛ فقط همین‌جا وارد کن.</p>
+      <p class="gate-err" id="githubErr" role="alert"></p>
+      <button class="btn btn-primary btn-block" id="githubBtn" type="submit">تأیید با گیت‌هاب و فعال‌سازی</button>
+    </form>
+
+    <a class="gate-back" href="./">بازگشت به سایت</a>
+  </div>
+</section>
+
+<!-- ================= app ================= -->
+<div class="owner-app hidden" id="ownerApp">
+  <aside class="owner-side" id="ownerSide">
+    <div class="os-brand">
+      <span class="os-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2l7 3v6c0 5-3.4 8.4-7 11-3.6-2.6-7-6-7-11V5l7-3z"/></svg>
+      </span>
+      <div>
+        <b>کنسول مالک</b>
+        <span>Site Owner Console</span>
+      </div>
+    </div>
+
+    <nav class="os-nav" aria-label="بخش‌های مدیریت">
+      <button class="active" data-nav="overview" type="button"><span class="ni">◈</span>نمای کلی</button>
+      <button data-nav="branding" type="button"><span class="ni">✎</span>هویت سایت</button>
+      <button data-nav="content" type="button"><span class="ni">◫</span>اطلاعیه و تعمیرات</button>
+      <button data-nav="access" type="button"><span class="ni">⌘</span>دسترسی‌ها</button>
+      <button data-nav="features" type="button"><span class="ni">◧</span>قابلیت‌ها</button>
+      <button data-nav="limits" type="button"><span class="ni">⏱</span>محدودیت‌ها</button>
+      <button data-nav="plans" type="button"><span class="ni">◇</span>پلن پریمیوم</button>
+      <button data-nav="moderation" type="button"><span class="ni">⚑</span>مدیریت محلی</button>
+      <button data-nav="security" type="button"><span class="ni">⌂</span>امنیت مالک</button>
+      <button data-nav="publish" type="button"><span class="ni">↑</span>انتشار تغییرات</button>
+    </nav>
+
+    <div class="os-foot">
+      <a href="./" class="os-site" target="_blank" rel="noopener">مشاهده سایت ↗</a>
+      <button class="os-lock" id="lockBtn" type="button">قفل کنسول</button>
+      <span class="os-version">Static owner plane · v1</span>
+    </div>
+  </aside>
+
+  <main class="owner-main">
+    <header class="owner-top">
+      <button class="om-menu" id="menuBtn" type="button" aria-label="منو">☰</button>
+      <div class="ot-titles">
+        <h1 id="viewTitle">نمای کلی</h1>
+        <p id="viewSub">وضعیت سایت، تنظیمات منتشرشده و پیش‌نویس محلی.</p>
+      </div>
+      <div class="ot-actions">
+        <span class="dirty-badge hidden" id="dirtyBadge">تغییر ذخیره‌نشده</span>
+        <button class="btn btn-ghost btn-sm" id="previewBtn" type="button">پیش‌نمایش</button>
+        <button class="btn btn-primary btn-sm" id="publishTop" type="button">انتشار</button>
+      </div>
+    </header>
+
+    <div class="owner-content">
+
+      <!-- overview -->
+      <section class="oview active" data-view="overview">
+        <div class="stat-grid">
+          <article class="ostat">
+            <span class="ostat-lbl">نسخهٔ تنظیمات</span>
+            <strong id="statVersion">1</strong>
+            <small id="statUpdated">—</small>
+          </article>
+          <article class="ostat">
+            <span class="ostat-lbl">حساب‌های همین مرورگر</span>
+            <strong id="statUsers">0</strong>
+            <small>مدیریت محلی و واقعی</small>
+          </article>
+          <article class="ostat">
+            <span class="ostat-lbl">مسدودهای محلی</span>
+            <strong id="statBans">0</strong>
+            <small>ورود روی این مرورگر بسته می‌شود</small>
+          </article>
+          <article class="ostat">
+            <span class="ostat-lbl">رخدادهای اخیر</span>
+            <strong id="statLogs">0</strong>
+            <small>گزارش محلی امنیتی</small>
+          </article>
+        </div>
+
+        <div class="ov-grid">
+          <article class="ocard">
+            <h2>وضعیت زنده</h2>
+            <ul class="okv">
+              <li><span>حالت تعمیرات</span><b id="ovMaint">خاموش</b></li>
+              <li><span>اطلاعیهٔ سراسری</span><b id="ovAnnounce">خاموش</b></li>
+              <li><span>ثبت‌نام</span><b id="ovRegister">باز</b></li>
+              <li><span>ساخت اتاق</span><b id="ovCreate">باز</b></li>
+              <li><span>چت / صدا / اشتراک صفحه</span><b id="ovFeat">فعال</b></li>
+            </ul>
+            <div class="ov-actions">
+              <button class="btn btn-secondary btn-sm" data-goto="content" type="button">اطلاعیه بده</button>
+              <button class="btn btn-secondary btn-sm" data-goto="publish" type="button">انتشار تنظیمات</button>
+            </div>
+          </article>
+
+          <article class="ocard">
+            <h2>وضعیت پیش‌نویس</h2>
+            <p class="ohint">تغییرات اول در همین مرورگر ذخیره می‌شوند. تا وقتی «انتشار» را نزنی، سایت عمومی عوض نمی‌شود.</p>
+            <div class="draft-state" id="draftState">هم‌سان با نسخهٔ منتشرشده</div>
+            <div class="ov-actions">
+              <button class="btn btn-ghost btn-sm" id="discardTop" type="button">دور انداختن تغییرات</button>
+            </div>
+          </article>
+        </div>
+
+        <article class="ocard honesty">
+          <h2>مرزهای صادقانهٔ معماری</h2>
+          <p>سایت روی GitHub Pages استاتیک اجرا می‌شود. این کنسول تنظیمات سایت را از طریق API گیت‌هاب در مخزن شما منتشر می‌کند و همان تنظیمات واقعاً روی همهٔ بازدیدکنندگان اعمال می‌شود. اما فهرست اتاق‌های زنده، آمار سراسری بازدید، مسدودسازی کاربران در همهٔ دستگاه‌ها و کنترل IP بدون بک‌اند ممکن نیست؛ موارد این صفحه که «محلی» برچسب خورده‌اند فقط روی همین مرورگر اثر دارند.</p>
+        </article>
+      </section>
+
+      <!-- branding -->
+      <section class="oview" data-view="branding">
+        <article class="ocard">
+          <h2>هویت و برند</h2>
+          <p class="ohint">نام و شعار در سربرگ، عنوان صفحه و توضیحات متا استفاده می‌شود.</p>
+          <div class="form-grid">
+            <label class="ofield"><span>نام فارسی</span><input data-cfg="site.nameFa" maxlength="40"></label>
+            <label class="ofield"><span>English name</span><input data-cfg="site.nameEn" dir="ltr" maxlength="40"></label>
+            <label class="ofield span2"><span>شعار فارسی</span><input data-cfg="site.taglineFa" maxlength="140"></label>
+            <label class="ofield span2"><span>English tagline</span><input data-cfg="site.taglineEn" dir="ltr" maxlength="140"></label>
+            <label class="ofield"><span>تم پیش‌فرض</span>
+              <select data-cfg="site.defaultTheme">
+                <option value="dark">تیره</option>
+                <option value="light">روشن</option>
+              </select>
+            </label>
+            <label class="ofield"><span>رنگ لهجه</span>
+              <span class="color-field"><input data-cfg="site.accent" type="color"><input data-cfg="site.accent" type="text" dir="ltr" maxlength="7" class="mono"></span>
+            </label>
+            <label class="ofield"><span>رنگ دوم</span>
+              <span class="color-field"><input data-cfg="site.accent2" type="color"><input data-cfg="site.accent2" type="text" dir="ltr" maxlength="7" class="mono"></span>
+            </label>
+            <label class="ofield"><span>لینک پشتیبانی (اختیاری)</span><input data-cfg="site.supportUrl" type="url" dir="ltr" placeholder="https://…"></label>
+          </div>
+          <p class="ohint">رنگ‌ها فقط برای بازدیدکنندگانی اعمال می‌شود که هنوز ظاهر شخصی انتخاب نکرده‌اند؛ انتخاب کاربر همیشه اولویت دارد.</p>
+        </article>
+      </section>
+
+      <!-- content -->
+      <section class="oview" data-view="content">
+        <article class="ocard">
+          <h2>اطلاعیهٔ سراسری</h2>
+          <label class="switch-line"><input type="checkbox" data-cfg="announcement.enabled"><span>نمایش نوار اطلاعیه روی همهٔ صفحات</span></label>
+          <div class="form-grid">
+            <label class="ofield"><span>نوع</span>
+              <select data-cfg="announcement.type">
+                <option value="info">اطلاع‌رسانی</option>
+                <option value="warn">هشدار</option>
+                <option value="critical">مهم</option>
+              </select>
+            </label>
+            <label class="ofield span2"><span>متن فارسی</span><input data-cfg="announcement.textFa" maxlength="220" placeholder="مثلاً جمعه ساعت ۲۲ پخش گروهی داریم"></label>
+            <label class="ofield span2"><span>English text</span><input data-cfg="announcement.textEn" dir="ltr" maxlength="220"></label>
+          </div>
+          <div class="announce-preview" id="announcePreview">پیش‌نمایش اطلاعیه</div>
+        </article>
+
+        <article class="ocard">
+          <h2>حالت تعمیرات</h2>
+          <label class="switch-line danger"><input type="checkbox" data-cfg="maintenance.enabled"><span>قفل کردن سایت برای همه به‌جز مالک</span></label>
+          <p class="ohint">با روشن‌بودن این گزینه، صفحات سایت یک لایهٔ تمام‌صفحه نشان می‌دهند. خود مالک در همین مرورگر آزاد است.</p>
+          <div class="form-grid">
+            <label class="ofield span2"><span>پیام فارسی</span><textarea data-cfg="maintenance.messageFa" rows="2" maxlength="300"></textarea></label>
+            <label class="ofield span2"><span>English message</span><textarea data-cfg="maintenance.messageEn" dir="ltr" rows="2" maxlength="300"></textarea></label>
+          </div>
+        </article>
+      </section>
+
+      <!-- access -->
+      <section class="oview" data-view="access">
+        <article class="ocard">
+          <h2>دسترسی عمومی</h2>
+          <p class="ohint">این کلیدها رابط کاربری همهٔ صفحات را کنترل می‌کنند. چون سایت استاتیک است، دور زدن با ابزار توسعه‌دهنده ممکن است؛ برای کنترل واقعی هویت به بک‌اند نیاز است.</p>
+          <div class="toggle-grid">
+            <label class="switch-line"><input type="checkbox" data-cfg="access.registration"><span>ثبت‌نام حساب جدید</span></label>
+            <label class="switch-line"><input type="checkbox" data-cfg="access.login"><span>ورود حساب‌های موجود</span></label>
+            <label class="switch-line"><input type="checkbox" data-cfg="access.roomCreate"><span>ساخت اتاق جدید</span></label>
+            <label class="switch-line"><input type="checkbox" data-cfg="access.roomJoin"><span>ورود به اتاق با کد/لینک</span></label>
+          </div>
+        </article>
+      </section>
+
+      <!-- features -->
+      <section class="oview" data-view="features">
+        <article class="ocard">
+          <h2>مرکز کنترل قابلیت‌ها</h2>
+          <p class="ohint">خاموش‌کردن هر مورد، دکمه/پنل مربوط را در اتاق پنهان و مسیر آن را می‌بندد.</p>
+          <div class="toggle-grid">
+            <label class="switch-line"><input type="checkbox" data-cfg="features.chat"><span>چت متنی و پنل گفتگو</span></label>
+            <label class="switch-line"><input type="checkbox" data-cfg="features.voice"><span>صدای زنده</span></label>
+            <label class="switch-line"><input type="checkbox" data-cfg="features.liveReactions"><span>واکنش‌های شناور</span></label>
+            <label class="switch-line"><input type="checkbox" data-cfg="features.screenShare"><span>اشتراک صفحه</span></label>
+            <label class="switch-line"><input type="checkbox" data-cfg="features.queue"><span>صف پخش</span></label>
+            <label class="switch-line"><input type="checkbox" data-cfg="features.subtitles"><span>زیرنویس</span></label>
+            <label class="switch-line"><input type="checkbox" data-cfg="features.localFile"><span>بارگذاری و اشتراک فایل محلی</span></label>
+          </div>
+        </article>
+      </section>
+
+      <!-- limits -->
+      <section class="oview" data-view="limits">
+        <article class="ocard">
+          <h2>ظرفیت و نرخ مجاز</h2>
+          <p class="ohint">این اعداد در ساخت اتاق و محدودکننده‌های چت/آواتار/اکشن اعمال می‌شوند. محدودیت واقعی IP همچنان به بک‌اند نیاز دارد.</p>
+          <div class="form-grid">
+            <label class="ofield"><span>ظرفیت پیش‌فرض اتاق</span><input type="number" min="2" max="24" data-cfg="limits.defaultCapacity"></label>
+            <label class="ofield"><span>بیشترین ظرفیت مجاز</span><input type="number" min="2" max="24" data-cfg="limits.maxCapacity"></label>
+            <label class="ofield"><span>پیام مجاز در بازه</span><input type="number" min="2" max="30" data-cfg="limits.chatPerWindow"></label>
+            <label class="ofield"><span>طول بازهٔ چت (میلی‌ثانیه)</span><input type="number" min="1000" max="30000" step="500" data-cfg="limits.chatWindowMs"></label>
+            <label class="ofield"><span>تغییر آواتار مجاز در بازه</span><input type="number" min="1" max="20" data-cfg="limits.avatarChanges"></label>
+            <label class="ofield"><span>طول بازهٔ آواتار (میلی‌ثانیه)</span><input type="number" min="500" max="30000" step="100" data-cfg="limits.avatarWindowMs"></label>
+            <label class="ofield"><span>اکشن اتاق مجاز در بازه</span><input type="number" min="1" max="20" data-cfg="limits.roomActions"></label>
+            <label class="ofield"><span>طول بازهٔ اکشن (میلی‌ثانیه)</span><input type="number" min="500" max="30000" step="100" data-cfg="limits.roomWindowMs"></label>
+          </div>
+        </article>
+      </section>
+
+      <!-- plans -->
+      <section class="oview" data-view="plans">
+        <article class="ocard">
+          <h2>پلن پریمیوم</h2>
+          <p class="ohint">بدون درگاه و بک‌اند، فعال‌سازی خودکار اشتراک ممکن نیست. می‌توانی یک لینک پرداخت میزبانی‌شده (مثل Stripe Payment Link) بگذاری؛ دکمهٔ خرید همان لینک واقعی را باز می‌کند.</p>
+          <label class="switch-line"><input type="checkbox" data-cfg="plans.premiumEnabled"><span>نمایش دکمهٔ خرید پریمیوم</span></label>
+          <div class="form-grid">
+            <label class="ofield span2"><span>لینک پرداخت</span><input data-cfg="plans.premiumUrl" type="url" dir="ltr" placeholder="https://buy.stripe.com/…"></label>
+            <label class="ofield"><span>قیمت (فارسی)</span><input data-cfg="plans.premiumPriceFa" maxlength="30"></label>
+            <label class="ofield"><span>Price (English)</span><input data-cfg="plans.premiumPriceEn" dir="ltr" maxlength="30"></label>
+            <label class="ofield span2"><span>توضیح فارسی</span><input data-cfg="plans.premiumNoteFa" maxlength="140"></label>
+            <label class="ofield span2"><span>English note</span><input data-cfg="plans.premiumNoteEn" dir="ltr" maxlength="140"></label>
+          </div>
+          <p class="ohint">اگر لینک خالی باشد، دکمه غیرفعال می‌ماند و موفقیت جعلی نمایش داده نمی‌شود.</p>
+        </article>
+      </section>
+
+      <!-- moderation -->
+      <section class="oview" data-view="moderation">
+        <article class="ocard">
+          <h2>حساب‌های همین مرورگر</h2>
+          <p class="ohint">این حساب‌ها در <code>localStorage</code> همین مرورگر هستند. مسدودکردن یا حذف، فقط روی همین دستگاه اثر قطعی دارد؛ ادعای مسدودسازی سراسری نمی‌کنیم.</p>
+          <div class="table-wrap">
+            <table class="otable">
+              <thead><tr><th>نام</th><th>نام کاربری</th><th>ساخته‌شده</th><th>وضعیت</th><th></th></tr></thead>
+              <tbody id="localUsersBody"><tr><td colspan="5" class="empty">حسابی پیدا نشد.</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="ocard">
+          <h2>گزارش رخدادهای محلی</h2>
+          <div class="log-list" id="modLogList"></div>
+          <div class="ov-actions">
+            <button class="btn btn-ghost btn-sm" id="clearLogBtn" type="button">پاک کردن گزارش</button>
+          </div>
+        </article>
+      </section>
+
+      <!-- security -->
+      <section class="oview" data-view="security">
+        <article class="ocard">
+          <h2>رمز محلی مالک</h2>
+          <p class="ohint">رمز با PBKDF2 هش می‌شود و هرگز به شبکه نمی‌رود. اگر رمز را فراموش کردی، از تب «اتصال به گیت‌هاب» با توکن معتبر رمز تازه بگذار.</p>
+          <form class="form-grid" id="passForm" autocomplete="off">
+            <label class="ofield"><span>رمز فعلی</span><input id="curPass" type="password" autocomplete="current-password"></label>
+            <label class="ofield"><span>رمز جدید</span><input id="nextPass" type="password" autocomplete="new-password"></label>
+            <label class="ofield"><span>تکرار رمز جدید</span><input id="nextPass2" type="password" autocomplete="new-password"></label>
+            <div class="ofield span2"><button class="btn btn-primary btn-sm" type="submit">ذخیرهٔ رمز جدید</button></div>
+          </form>
+          <p class="gate-err" id="passErr" role="alert"></p>
+        </article>
+
+        <article class="ocard">
+          <h2>توکن گیت‌هاب</h2>
+          <p class="ohint">توکن فقط در حافظهٔ همین تب نگه داشته می‌شود و با بستن تب پاک می‌شود. برای انتشار دوباره باید واردش کنی.</p>
+          <form class="token-row" id="tokenForm" autocomplete="off">
+            <input id="sessionToken" type="password" dir="ltr" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
+            <button class="btn btn-secondary btn-sm" type="submit">بررسی توکن</button>
+          </form>
+          <p class="token-state" id="tokenState">توکنی در این تب نیست.</p>
+        </article>
+      </section>
+
+      <!-- publish -->
+      <section class="oview" data-view="publish">
+        <article class="ocard">
+          <h2>تغییرات آمادهٔ انتشار</h2>
+          <div class="diff-list" id="diffList"><p class="empty">تغییری نسبت به نسخهٔ منتشرشده نیست.</p></div>
+          <div class="ov-actions">
+            <button class="btn btn-ghost btn-sm" id="discardBtn" type="button">دور انداختن تغییرات</button>
+            <button class="btn btn-ghost btn-sm" id="exportBtn" type="button">دانلود JSON</button>
+            <label class="btn btn-ghost btn-sm file-label">بارگذاری JSON<input id="importInput" type="file" accept="application/json,.json" hidden></label>
+            <button class="btn btn-secondary btn-sm" id="previewBtn2" type="button">پیش‌نمایش در سایت</button>
+          </div>
+        </article>
+
+        <article class="ocard">
+          <h2>انتشار روی GitHub Pages</h2>
+          <p class="ohint">فایل <code>assets/data/site-config.json</code> در شاخهٔ <code id="pubBranch">main</code> به‌روز می‌شود و GitHub Pages بعد از ساخت، نسخهٔ تازه را سرو می‌کند.</p>
+          <form class="token-row" id="publishForm" autocomplete="off">
+            <input id="publishToken" type="password" dir="ltr" placeholder="توکن گیت‌هاب با دسترسی نوشتن" autocomplete="off" spellcheck="false">
+            <button class="btn btn-primary" id="publishBtn" type="submit">انتشار تغییرات</button>
+          </form>
+          <p class="pub-state" id="pubState" role="status">آماده.</p>
+          <div class="pub-links">
+            <a id="repoLink" href="https://github.com/sepehr007/sepehr007.github.io" target="_blank" rel="noopener">مخزن گیت‌هاب ↗</a>
+            <a id="actionsLink" href="https://github.com/sepehr007/sepehr007.github.io/actions" target="_blank" rel="noopener">وضعیت ساخت Pages ↗</a>
+          </div>
+        </article>
+
+        <article class="ocard honesty">
+          <h2>هشدار امنیتی</h2>
+          <p>هر کسی که توکن با دسترسی نوشتن داشته باشد عملاً مالک سایت است. توکن را با حداقل دسترسی (فقط همین مخزن و Contents) بساز، در چت نفرست و بعد از استفادهٔ مشترک، از گیت‌هاب لغوش کن. رمز محلی فقط در همین مرورگر معتبر است.</p>
+        </article>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
+<script type="module" src="assets/js/owner.js"></script>
+</body>
+</html>

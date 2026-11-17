@@ -1,11 +1,17 @@
-const CACHE = "wt-v58";
+const CACHE = "wt-v59";
 const SHELL = [
   "./",
   "./index.html",
   "./auth.html",
   "./profile.html",
   "./room.html",
+  "./owner.html",
   "./assets/css/style.css",
+  "./assets/css/owner.css",
+  "./assets/data/site-config.json",
+  "./assets/js/site-config.js",
+  "./assets/js/modlog.js",
+  "./assets/js/owner.js",
   "./assets/js/core.js",
   "./assets/js/i18n.js",
   "./assets/js/auth.js",
@@ -68,6 +74,21 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+
+  if (url.pathname.endsWith("/assets/data/site-config.json")) {
+    event.respondWith(
+      fetch(req, { cache: "no-store" })
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
 
   if (req.mode === "navigate" || req.headers.get("accept")?.includes("text/html")) {
     event.respondWith(

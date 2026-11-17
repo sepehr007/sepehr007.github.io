@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-18T00:00:00.000Z",
+  "owner": {
+    "login": "sepehr007",
+    "repo": "sepehr007/sepehr007.github.io",
+    "branch": "main"
+  },
+  "site": {
+    "nameFa": "هم‌تماشا",
+    "nameEn": "Watch Together",
+    "taglineFa": "تماشای هم‌زمان فیلم با دوستان؛ چت، صدا و پخش همگام در مرورگر.",
+    "taglineEn": "Watch together in sync, with chat and live voice in your browser.",
+    "defaultTheme": "dark",
+    "accent": "#7c5cff",
+    "accent2": "#22d3ee",
+    "supportUrl": ""
+  },
+  "announcement": {
+    "enabled": false,
+    "type": "info",
+    "textFa": "",
+    "textEn": ""
+  },
+  "maintenance": {
+    "enabled": false,
+    "messageFa": "سایت موقتاً برای به‌روزرسانی در دسترس نیست. کمی بعد برگرد.",
+    "messageEn": "The site is temporarily unavailable for maintenance. Please check back soon."
+  },
+  "access": {
+    "registration": true,
+    "login": true,
+    "roomCreate": true,
+    "roomJoin": true
+  },
+  "features": {
+    "chat": true,
+    "voice": true,
+    "liveReactions": true,
+    "screenShare": true,
+    "queue": true,
+    "subtitles": true,
+    "localFile": true
+  },
+  "limits": {
+    "defaultCapacity": 6,
+    "maxCapacity": 24,
+    "chatPerWindow": 6,
+    "chatWindowMs": 3000,
+    "avatarChanges": 3,
+    "avatarWindowMs": 1200,
+    "roomActions": 2,
+    "roomWindowMs": 1800
+  },
+  "plans": {
+    "premiumEnabled": false,
+    "premiumUrl": "",
+    "premiumPriceFa": "به‌زودی",
+    "premiumPriceEn": "Coming soon",
+    "premiumNoteFa": "چند اتاق هم‌زمان، آپلود ابری و ظاهرهای بیشتر.",
+    "premiumNoteEn": "Multiple rooms, cloud uploads and more themes."
+  }
+}
