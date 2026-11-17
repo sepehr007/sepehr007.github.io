@@ -385,7 +385,34 @@ function wirePlayer() {
   });
   $("#videoUrlInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadVideoFromInput(); });
 
-  video.addEventListener("click", () => player.togglePlay());
+  const showTapHint = (side) => {
+    const frame = $("#videoFrame");
+    const hint = el("div", { class: `tap-hint ${side}`, text: side === "left" ? "−10s" : "+10s" });
+    frame.append(hint);
+    setTimeout(() => hint.remove(), 620);
+  };
+
+  let lastTap = 0;
+  video.addEventListener("click", (e) => {
+    if (!matchMedia("(pointer: coarse)").matches) { player.togglePlay(); return; }
+    const now = performance.now();
+    if (now - lastTap < 280) { lastTap = 0; return; }
+    lastTap = now;
+    setTimeout(() => {
+      if (lastTap !== now) return;
+      lastTap = 0;
+      player.togglePlay();
+    }, 240);
+  });
+  video.addEventListener("dblclick", (e) => {
+    if (!player?.url) return;
+    const rect = video.getBoundingClientRect();
+    const ratio = rect.width ? (e.clientX - rect.left) / rect.width : 0.5;
+    if (ratio >= 0.3 && ratio <= 0.7) return;
+    const forward = ratio > 0.7;
+    player.seekBy(forward ? 10 : -10);
+    showTapHint(forward ? "right" : "left");
+  });
   video.addEventListener("play", () => updatePlayUI(true));
   video.addEventListener("pause", () => updatePlayUI(false));
 
