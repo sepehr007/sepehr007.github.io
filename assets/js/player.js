@@ -27,7 +27,7 @@ export function parseSubtitles(raw) {
 }
 
 export class Player {
-  constructor({ video, frame, onControl, onTime, onLoaded, onError, onLevels, canControl }) {
+  constructor({ video, frame, onControl, onTime, onLoaded, onError, onLevels, onAudio, canControl }) {
     this.video = video;
     this.frame = frame;
     this.onControl = onControl;
@@ -35,6 +35,7 @@ export class Player {
     this.onLoaded = onLoaded;
     this.onError = onError;
     this.onLevels = onLevels;
+    this.onAudio = onAudio;
     this.canControl = canControl || (() => true);
 
     this.url = "";
@@ -83,6 +84,7 @@ export class Player {
     this.state = { url: "", playing: false, time: 0, at: Date.now(), rate: 1 };
     this.destroyHls();
     this.onLevels?.(null);
+    this.onAudio?.(null);
     this.video.removeAttribute("src");
     this.video.load();
     this.cues = [];
@@ -108,12 +110,15 @@ export class Player {
     const isHls = /\.m3u8($|\?)/i.test(url);
     if (isHls && window.Hls?.isSupported()) {
       this.hls = new window.Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 30 });
-      this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => this.#emitLevels());
+      this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => { this.#emitLevels(); this.#emitAudio(); });
       this.hls.on(window.Hls.Events.LEVEL_SWITCHED, () => this.#emitLevels());
+      this.hls.on(window.Hls.Events.AUDIO_TRACKS_UPDATED, () => this.#emitAudio());
+      this.hls.on(window.Hls.Events.AUDIO_TRACK_SWITCHED, () => this.#emitAudio());
       this.hls.loadSource(url);
       this.hls.attachMedia(this.video);
     } else {
       this.onLevels?.(null);
+      this.onAudio?.(null);
       this.video.src = url;
     }
   }
@@ -131,6 +136,19 @@ export class Player {
   setLevel(i) {
     if (!this.hls) return;
     this.hls.currentLevel = Number(i);
+  }
+
+  #emitAudio() {
+    if (!this.hls) return;
+    const list = this.hls.audioTracks || [];
+    if (!list.length) { this.onAudio?.(null); return; }
+    const tracks = list.map((a, i) => ({ i, name: a.name || "", lang: a.lang || "" }));
+    this.onAudio?.({ tracks, current: this.hls.audioTrack });
+  }
+
+  setAudio(i) {
+    if (!this.hls) return;
+    this.hls.audioTrack = Number(i);
   }
 
   applyState(state) {

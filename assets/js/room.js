@@ -91,7 +91,8 @@ async function boot() {
     },
     onLoaded: () => syncStageEmpty(),
     onError: () => toast(t("toast.videoInvalid"), "error"),
-    onLevels: (info) => renderQuality(info)
+    onLevels: (info) => renderQuality(info),
+    onAudio: (info) => renderAudio(info)
   });
 
   voice = new Voice({
@@ -1016,6 +1017,7 @@ function wireSettings() {
   $("#optLock").addEventListener("change", (e) => push({ locked: e.target.checked }));
   $("#optApproval").addEventListener("change", (e) => push({ approval: e.target.checked }));
   $("#optQuality").addEventListener("change", (e) => player.setLevel(e.target.value));
+  $("#optAudio").addEventListener("change", (e) => player.setAudio(e.target.value));
 
   $("#subsPickBtn")?.addEventListener("click", () => $("#subsFile").click());
   $("#subsFile").addEventListener("change", async (e) => {
@@ -1058,6 +1060,23 @@ function renderQuality(info) {
     sel.append(el("option", { value: String(idx), text: `${h}p` }));
   }
   sel.value = info.auto ? "-1" : String(Math.max(0, info.current));
+}
+
+function renderAudio(info) {
+  const row = $("#audioRow");
+  const sel = $("#optAudio");
+  if (!row || !sel) return;
+  if (!info || info.tracks.length < 2) {
+    row.classList.add("hidden");
+    return;
+  }
+  row.classList.remove("hidden");
+  sel.innerHTML = "";
+  for (const track of info.tracks) {
+    const label = track.name || track.lang || `Track ${track.i + 1}`;
+    sel.append(el("option", { value: String(track.i), text: label }));
+  }
+  sel.value = String(Math.max(0, info.current));
 }
 
 function renderSubsSets() {
