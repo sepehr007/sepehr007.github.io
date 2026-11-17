@@ -179,6 +179,13 @@
     <section class="panel active" data-panel="chat">
       <div class="panel-head">
         <input class="search" id="chatSearch" type="search" data-i18n-ph="chat.search" placeholder="جستجو در پیام‌ها…">
+        <div class="chat-timer-chips">
+          <button type="button" class="chat-timer-btn running" id="chatTimerBtn" data-i18n-title="chat.timerStart" title="زمان تماشا" aria-label="Watch timer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9 2h6"/></svg>
+            <span id="chatTimerLabel">00:00</span>
+          </button>
+          <button type="button" class="chat-timer-reset hidden" id="chatTimerReset" data-i18n-title="chat.timerReset" title="بازنشانی" aria-label="Reset timer">↺</button>
+        </div>
       </div>
       <div class="pinned hidden" id="pinnedBar"></div>
       <div class="chat-empty" id="chatEmpty">

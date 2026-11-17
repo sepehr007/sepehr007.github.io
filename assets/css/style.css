@@ -250,6 +250,15 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .panel-head h2{font-size:14px;font-weight:700}
 .count{font-size:11.5px;color:var(--text-faint);background:var(--panel);border:1px solid var(--border);padding:2px 8px;border-radius:99px}
 .search{padding:9px 12px;font-size:13px;border-radius:10px}
+.panel-head .search{flex:1;min-width:0}
+.chat-timer-chips{display:flex;align-items:center;gap:2px;flex:none;padding:2px;border-radius:10px;border:1px solid var(--border);background:var(--panel)}
+.chat-timer-btn{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:8px;font-size:11.5px;font-weight:700;color:var(--text-dim);font-variant-numeric:tabular-nums;transition:.15s}
+.chat-timer-btn:hover{background:var(--panel-strong);color:var(--text)}
+.chat-timer-btn.running{color:var(--text)}
+.chat-timer-btn.running svg{color:var(--accent)}
+.chat-timer-btn svg{width:14px;height:14px}
+.chat-timer-reset{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;color:var(--text-faint);font-size:15px;line-height:1;transition:.15s}
+.chat-timer-reset:hover{background:var(--panel-strong);color:var(--text)}
 
 /* chat */
 .chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:26px 18px;text-align:center;color:var(--text-faint);font-size:12.5px}

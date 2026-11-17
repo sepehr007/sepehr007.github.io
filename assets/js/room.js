@@ -76,6 +76,9 @@ let replyTo = null;
 let editingId = null;
 let searchTerm = "";
 let chatJumpCount = 0;
+const CHAT_TIMER_KEY = "wt.chatTimer";
+let chatTimerElapsed = 0;
+let chatTimerSince = null;
 
 /* ================= boot ================= */
 if (code && authUser) boot();
@@ -128,6 +131,7 @@ async function boot() {
 
   wirePlayer();
   wireChat();
+  wireChatTimer();
   wireTabs();
   wirePeople();
   wireQueue();
@@ -764,6 +768,64 @@ function startLocalPlayback(url, fileName, converted) {
 }
 
 /* ================= chat ================= */
+/* ================= personal watch timer ================= */
+function chatTimerTotal() {
+  return chatTimerElapsed + (chatTimerSince ? Date.now() - chatTimerSince : 0);
+}
+function fmtChatTimer(ms) {
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(sec).padStart(2, "0");
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+function saveChatTimer() {
+  store.set(CHAT_TIMER_KEY, { elapsed: chatTimerTotal(), running: !!chatTimerSince });
+}
+function paintChatTimer() {
+  const label = $("#chatTimerLabel");
+  if (!label) return;
+  label.textContent = fmtChatTimer(chatTimerTotal());
+  const btn = $("#chatTimerBtn");
+  btn?.classList.toggle("running", !!chatTimerSince);
+  if (btn) btn.title = t(chatTimerSince ? "chat.timerPause" : "chat.timerStart");
+  $("#chatTimerReset")?.classList.toggle("hidden", chatTimerTotal() === 0);
+}
+
+function wireChatTimer() {
+  if (!$("#chatTimerBtn")) return;
+  const saved = store.get(CHAT_TIMER_KEY, null);
+  if (saved && typeof saved === "object") {
+    chatTimerElapsed = Math.max(0, Number(saved.elapsed) || 0);
+    chatTimerSince = saved.running ? Date.now() : null;
+  } else {
+    chatTimerSince = Date.now();
+  }
+  paintChatTimer();
+  $("#chatTimerBtn").addEventListener("click", () => {
+    if (chatTimerSince) {
+      chatTimerElapsed = chatTimerTotal();
+      chatTimerSince = null;
+    } else {
+      chatTimerSince = Date.now();
+    }
+    saveChatTimer();
+    paintChatTimer();
+  });
+  $("#chatTimerReset")?.addEventListener("click", () => {
+    chatTimerElapsed = 0;
+    chatTimerSince = null;
+    saveChatTimer();
+    paintChatTimer();
+  });
+  setInterval(paintChatTimer, 1000);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) saveChatTimer(); });
+  window.addEventListener("beforeunload", saveChatTimer);
+  saveChatTimer();
+}
+
 function wireChat() {
   const chatInput = $("#chatInput");
   const chatForm = $("#chatForm");
