@@ -112,7 +112,10 @@
       <button data-nav="limits" type="button"><span class="ni">⏱</span>محدودیت‌ها</button>
       <button data-nav="plans" type="button"><span class="ni">◇</span>پلن پریمیوم</button>
       <button data-nav="moderation" type="button"><span class="ni">⚑</span>مدیریت محلی</button>
+      <button data-nav="rooms" type="button"><span class="ni">▤</span>اتاق‌ها</button>
       <button data-nav="security" type="button"><span class="ni">⌂</span>امنیت مالک</button>
+      <button data-nav="system" type="button"><span class="ni">⚙</span>سیستم</button>
+      <button data-nav="analytics" type="button"><span class="ni">◔</span>آمار</button>
       <button data-nav="publish" type="button"><span class="ni">↑</span>انتشار تغییرات</button>
     </nav>
 
@@ -342,6 +345,24 @@
         </article>
       </section>
 
+      <!-- rooms -->
+      <section class="oview" data-view="rooms">
+        <article class="ocard">
+          <h2>اتاق‌های سایت</h2>
+          <p class="ohint">اتاق‌ها در نسخهٔ فعلی روی مرورگر میزبان و به‌صورت P2P اجرا می‌شوند و سرور اتاق ندارند؛ بنابراین فهرست زندهٔ اتاق‌ها از این کنسول در دسترس نیست. این بخش پایهٔ مدیریت اتاق‌ها در فاز بعد است.</p>
+          <div class="table-wrap">
+            <table class="otable">
+              <thead><tr><th>اتاق</th><th>میزبان</th><th>اعضا</th><th>وضعیت</th></tr></thead>
+              <tbody><tr><td colspan="4" class="empty">اتاق‌های سروری هنوز فعال نشده‌اند.</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="ocard honesty">
+          <h2>بنیان فاز بعد</h2>
+          <p>با فعال‌شدن API اتاق‌ها، همین جدول به فهرست زندهٔ اتاق‌ها، تعداد اعضا و امکان بستن اتاق متصل می‌شود. تا آن زمان هیچ دادهٔ ساختگی نمایش داده نمی‌شود.</p>
+        </article>
+      </section>
+
       <!-- security -->
       <section class="oview" data-view="security">
         <article class="ocard">
@@ -364,6 +385,37 @@
             <button class="btn btn-secondary btn-sm" type="submit" disabled>بررسی توکن</button>
           </form>
           <p class="token-state" id="tokenState">توکن گیت‌هاب غیرفعال است.</p>
+        </article>
+      </section>
+
+      <!-- system -->
+      <section class="oview" data-view="system">
+        <article class="ocard">
+          <h2>وضعیت سیستم</h2>
+          <ul class="okv">
+            <li><span>آدرس API</span><b id="sysApiBase">—</b></li>
+            <li><span>اتصال شبکه</span><b id="sysOnline">—</b></li>
+            <li><span>میزبان</span><b id="sysHost">—</b></li>
+            <li><span>حالت اجرا</span><b id="sysMode">—</b></li>
+          </ul>
+        </article>
+        <article class="ocard honesty">
+          <h2>اتصال به بک‌اند</h2>
+          <p>برای اتصال واقعی به سرویس، مقدار <code>apiBase</code> را در فایل <code>assets/data/runtime-config.json</code> تنظیم کن (مثلاً <code>https://api.example.com/api</code>). تا وقتی این مقدار خالی باشد، سایت در حالت محلی کار می‌کند و هیچ داده‌ای به سرور نمی‌فرستد.</p>
+        </article>
+      </section>
+
+      <!-- analytics -->
+      <section class="oview" data-view="analytics">
+        <article class="ocard">
+          <h2>آمار مصرف</h2>
+          <p class="ohint">بدون بک‌اند و پایگاه داده، آمار سراسری بازدید، اتاق و پیام وجود ندارد. این بخش ساختار پایه برای اتصال به API آمار در فاز بعد است و عدد ساختگی نمایش نمی‌دهد.</p>
+          <div class="stat-grid">
+            <article class="ostat"><span class="ostat-lbl">بازدید سراسری</span><strong>—</strong><small>نیازمند بک‌اند</small></article>
+            <article class="ostat"><span class="ostat-lbl">اتاق‌های فعال</span><strong>—</strong><small>نیازمند API اتاق</small></article>
+            <article class="ostat"><span class="ostat-lbl">پیام‌های امروز</span><strong>—</strong><small>نیازمند بک‌اند</small></article>
+            <article class="ostat"><span class="ostat-lbl">کاربران ثبت‌شده</span><strong>—</strong><small>نیازمند اتصال API</small></article>
+          </div>
         </article>
       </section>
 

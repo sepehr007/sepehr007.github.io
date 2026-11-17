@@ -97,6 +97,16 @@ let chatScrollLock = false;
 let chatLockTimer = 0;
 let chatBottomFrame = 0;
 let chatBottomTimer = 0;
+let broadcastTimer = 0;
+let chatTimerInterval = 0;
+let typingTimer = 0;
+const MAX_CHAT_NODES = 400;
+
+function cssEscape(value) {
+  const raw = String(value ?? "");
+  if (globalThis.CSS?.escape) return CSS.escape(raw);
+  return raw.replace(/["\\]/g, "\\$&");
+}
 
 /* ================= boot ================= */
 if (code && authUser) boot();
@@ -194,7 +204,7 @@ async function boot() {
   wireSheet();
   wireFileLoad();
   applyFeatureFlags();
-  setInterval(() => broadcastLocalState(), 4000);
+  broadcastTimer = setInterval(() => broadcastLocalState(), 4000);
 
   createNet();
 }
@@ -1015,7 +1025,7 @@ function wireChatTimer() {
     saveChatTimer();
     paintChatTimer();
   });
-  setInterval(paintChatTimer, 1000);
+  chatTimerInterval = setInterval(paintChatTimer, 1000);
   document.addEventListener("visibilitychange", () => { if (document.hidden) saveChatTimer(); });
   window.addEventListener("beforeunload", saveChatTimer);
   saveChatTimer();
@@ -1195,7 +1205,6 @@ function wireChat() {
   }, { passive: true });
   if ("ResizeObserver" in window && chatFormEl) new ResizeObserver(placeJump).observe(chatFormEl);
   else window.addEventListener("resize", placeJump);
-  window.addEventListener("resize", placeJump);
   window.visualViewport?.addEventListener("resize", placeJump);
   window.visualViewport?.addEventListener("scroll", placeJump);
   placeJump();
@@ -1240,9 +1249,10 @@ function startEdit(msg) {
 
 function appendMessage(msg, animate) {
   if (!msg) return;
-  if (chatList.querySelector(`[data-id="${msg.id}"]`)) return;
+  if (chatList.querySelector(`[data-id="${cssEscape(msg.id)}"]`)) return;
   const node = buildMessage(msg);
   chatList.append(node);
+  while (chatList.children.length > MAX_CHAT_NODES) chatList.firstElementChild?.remove();
   if (animate) node.animate?.([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 180 });
   refreshPinned();
   syncChatEmpty();
@@ -1330,7 +1340,7 @@ function buildMessage(msg) {
   const body = el("div", { class: "msg-body" });
 
   if (msg.replyTo) {
-    const ref = chatList.querySelector(`[data-id="${msg.replyTo}"]`);
+    const ref = chatList.querySelector(`[data-id="${cssEscape(msg.replyTo)}"]`);
     const refData = ref ? JSON.parse(ref.dataset.msg || "{}") : null;
     const quote = el("div", { class: "msg-reply", "data-ref": msg.replyTo });
     quote.textContent = refData ? `${refData.nick}: ${String(refData.text).slice(0, 70)}` : "…";
@@ -1384,7 +1394,7 @@ function renderReactions(node, msg) {
 }
 
 function updateMessage(msg) {
-  const node = chatList.querySelector(`[data-id="${msg.id}"]`);
+  const node = chatList.querySelector(`[data-id="${cssEscape(msg.id)}"]`);
   if (!node) { appendMessage(msg, false); return; }
   node.dataset.msg = JSON.stringify({ id: msg.id, by: msg.by, nick: msg.nick, text: msg.text, role: msg.role, pinned: !!msg.pinned, deleted: !!msg.deleted });
   node.dataset.text = msg.text || "";
@@ -1420,7 +1430,7 @@ function refreshPinned() {
 }
 
 function scrollToMessage(id) {
-  const node = chatList.querySelector(`[data-id="${id}"]`);
+  const node = chatList.querySelector(`[data-id="${cssEscape(id)}"]`);
   if (!node) return;
   node.scrollIntoView({ behavior: "smooth", block: "center" });
   node.animate?.([{ background: "rgba(124,92,255,.35)" }, { background: "transparent" }], { duration: 1200 });
@@ -1503,7 +1513,7 @@ function renderTyping() {
     ? t(count > 1 ? "chat.typingMany" : "chat.typingOne", { n: count > 2 ? String(count) : [...typingUsers.values()].map((v) => v.nick).join(", ") })
     : "";
 }
-setInterval(renderTyping, 1200);
+typingTimer = setInterval(renderTyping, 1200);
 
 /* ================= people ================= */
 function wirePeople() {
@@ -1582,15 +1592,15 @@ function renderMembers() {
 
 function markSpeaking(id, active) {
   if (id === "self") {
-    const tile = document.querySelector(`.voice-tile[data-id="${me.id}"]`);
+    const tile = document.querySelector(`.voice-tile[data-id="${cssEscape(me.id)}"]`);
     tile?.classList.toggle("speaking", active);
-    const person = peopleList.querySelector(`.person[data-id="${me.id}"]`);
+    const person = peopleList.querySelector(`.person[data-id="${cssEscape(me.id)}"]`);
     person?.classList.toggle("speaking", active);
     return;
   }
-  const tile = document.querySelector(`.voice-tile[data-id="${id}"]`);
+  const tile = document.querySelector(`.voice-tile[data-id="${cssEscape(id)}"]`);
   tile?.classList.toggle("speaking", active);
-  const person = peopleList.querySelector(`.person[data-id="${id}"]`);
+  const person = peopleList.querySelector(`.person[data-id="${cssEscape(id)}"]`);
   person?.classList.toggle("speaking", active);
 }
 
@@ -2094,7 +2104,7 @@ function syncMicUI() {
   btn.innerHTML = voice.muted
     ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l16 16M9 4v3M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>'
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
-  const tile = document.querySelector(`.voice-tile[data-id="${me.id}"]`);
+  const tile = document.querySelector(`.voice-tile[data-id="${cssEscape(me.id)}"]`);
   tile?.classList.toggle("muted", voice.muted);
 }
 
@@ -2423,6 +2433,10 @@ function wireMisc() {
 }
 
 function cleanup() {
+  clearInterval(broadcastTimer);
+  clearInterval(chatTimerInterval);
+  clearInterval(typingTimer);
+  broadcastTimer = chatTimerInterval = typingTimer = 0;
   try { voice?.leave(); } catch {}
   try { player?.destroy(); } catch {}
   try { net?.destroy(); } catch {}

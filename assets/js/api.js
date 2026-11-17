@@ -2,6 +2,8 @@ const TOKEN_KEY = "wt.jwt";
 const LEGACY_TOKEN_KEY = "wt.apiToken";
 const BASE_KEY = "wt.apiBase";
 const DEFAULT_BASE = "http://localhost:3001/api";
+const RUNTIME_CONFIG_PATH = "assets/data/runtime-config.json";
+const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i;
 
 export class ApiError extends Error {
   constructor(message, { status = 0, code = "network_error", payload = null } = {}) {
@@ -28,15 +30,60 @@ function writeStorage(key, value) {
   } catch {}
 }
 
+function devFallbackBase() {
+  try {
+    if (LOCAL_HOSTS.test(location.hostname) || location.protocol === "file:") return DEFAULT_BASE;
+  } catch {}
+  return "";
+}
+
 function resolveBase() {
   const override = globalThis.WT_API_BASE;
   if (typeof override === "string" && override.trim()) return override.trim().replace(/\/+$/, "");
   const stored = readStorage(BASE_KEY);
   if (stored) return stored.replace(/\/+$/, "");
-  return DEFAULT_BASE;
+  return devFallbackBase();
 }
 
 let apiBase = resolveBase();
+let runtimePromise = null;
+
+function loadRuntimeBase() {
+  if (runtimePromise) return runtimePromise;
+  runtimePromise = (async () => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2500);
+      const res = await fetch(new URL(RUNTIME_CONFIG_PATH, document.baseURI).href, {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!res.ok) return "";
+      const data = await res.json();
+      return typeof data?.apiBase === "string" ? data.apiBase.trim().replace(/\/+$/, "") : "";
+    } catch {
+      return "";
+    }
+  })();
+  return runtimePromise;
+}
+
+async function ensureApiBase() {
+  const override = globalThis.WT_API_BASE;
+  if (typeof override === "string" && override.trim()) {
+    apiBase = override.trim().replace(/\/+$/, "");
+    return apiBase;
+  }
+  const stored = readStorage(BASE_KEY);
+  if (stored) {
+    apiBase = stored.replace(/\/+$/, "");
+    return apiBase;
+  }
+  const runtime = await loadRuntimeBase();
+  apiBase = runtime || devFallbackBase();
+  return apiBase;
+}
 
 export function getApiBase() {
   return apiBase;
@@ -44,8 +91,14 @@ export function getApiBase() {
 
 export function setApiBase(base) {
   const clean = String(base || "").trim().replace(/\/+$/, "");
-  apiBase = clean || DEFAULT_BASE;
-  writeStorage(BASE_KEY, clean ? apiBase : "");
+  if (!clean) {
+    writeStorage(BASE_KEY, "");
+    runtimePromise = null;
+    apiBase = devFallbackBase();
+    return apiBase;
+  }
+  apiBase = clean;
+  writeStorage(BASE_KEY, apiBase);
   return apiBase;
 }
 
@@ -87,6 +140,10 @@ function isPlainObject(value) {
 }
 
 export async function apiFetch(path, options = {}) {
+  await ensureApiBase();
+  if (!apiBase) {
+    throw new ApiError("API is not configured", { status: 0, code: "not_configured" });
+  }
   const {
     method = "GET",
     body,
@@ -193,6 +250,7 @@ export const authApi = {
 
 export function apiConnectSocket({ url, onMessage, onOpen, onClose, onError } = {}) {
   const base = apiBase.replace(/\/api\/?$/, "");
+  if (!base && !url) return null;
   const target = url || `${base.replace(/^http/, "ws")}/ws`;
   const socket = new WebSocket(target);
   socket.addEventListener("open", (event) => onOpen?.(event));

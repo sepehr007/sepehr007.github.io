@@ -88,51 +88,56 @@ export async function prepareLocalVideo(file, { onStatus, onProgress } = {}) {
     return { url: nativeUrl, converted: false };
   }
 
-  onStatus?.("loading");
-  const ff = await getFFmpeg(onProgress);
-  const { fetchFile } = await import(`${activeBase}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`);
-  const inName = `in.${(file.name.split(".").pop() || "bin").toLowerCase()}`;
-
-  await ff.writeFile(inName, await fetchFile(file));
-
-  onStatus?.("remux");
-  onProgress?.(0);
-  let ok = true;
   try {
-    await ff.exec(["-i", inName, "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", "out.mp4"]);
-  } catch { ok = false; }
+    onStatus?.("loading");
+    const ff = await getFFmpeg(onProgress);
+    const { fetchFile } = await import(`${activeBase}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`);
+    const inName = `in.${(file.name.split(".").pop() || "bin").toLowerCase()}`;
 
-  if (ok) {
+    await ff.writeFile(inName, await fetchFile(file));
+
+    onStatus?.("remux");
+    onProgress?.(0);
+    let ok = true;
     try {
-      const data = await ff.readFile("out.mp4");
-      const blob = new Blob([data.buffer], { type: "video/mp4" });
-      const url = URL.createObjectURL(blob);
-      onStatus?.("verify");
-      if (await canPlayUrl(url, 7000)) {
-        URL.revokeObjectURL(nativeUrl);
-        return { url, converted: true };
-      }
-      URL.revokeObjectURL(url);
-    } catch { /* fall through to transcode */ }
-  }
+      await ff.exec(["-i", inName, "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", "out.mp4"]);
+    } catch { ok = false; }
 
-  onStatus?.("transcode");
-  onProgress?.(0);
-  try { await ff.deleteFile("out.mp4"); } catch {}
-  await ff.exec([
-    "-i", inName,
-    "-map", "0:v:0?", "-map", "0:a:0?",
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
-    "-vf", "scale='min(1280,iw)':-2",
-    "-c:a", "aac", "-b:a", "128k",
-    "-movflags", "+faststart",
-    "out.mp4"
-  ]);
-  const data = await ff.readFile("out.mp4");
-  const blob = new Blob([data.buffer], { type: "video/mp4" });
-  const url = URL.createObjectURL(blob);
-  URL.revokeObjectURL(nativeUrl);
-  try { await ff.deleteFile(inName); } catch {}
-  onStatus?.("done");
-  return { url, converted: true };
+    if (ok) {
+      try {
+        const data = await ff.readFile("out.mp4");
+        const blob = new Blob([data.buffer], { type: "video/mp4" });
+        const url = URL.createObjectURL(blob);
+        onStatus?.("verify");
+        if (await canPlayUrl(url, 7000)) {
+          URL.revokeObjectURL(nativeUrl);
+          return { url, converted: true };
+        }
+        URL.revokeObjectURL(url);
+      } catch { /* fall through to transcode */ }
+    }
+
+    onStatus?.("transcode");
+    onProgress?.(0);
+    try { await ff.deleteFile("out.mp4"); } catch {}
+    await ff.exec([
+      "-i", inName,
+      "-map", "0:v:0?", "-map", "0:a:0?",
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+      "-vf", "scale='min(1280,iw)':-2",
+      "-c:a", "aac", "-b:a", "128k",
+      "-movflags", "+faststart",
+      "out.mp4"
+    ]);
+    const data = await ff.readFile("out.mp4");
+    const blob = new Blob([data.buffer], { type: "video/mp4" });
+    const url = URL.createObjectURL(blob);
+    URL.revokeObjectURL(nativeUrl);
+    try { await ff.deleteFile(inName); } catch {}
+    onStatus?.("done");
+    return { url, converted: true };
+  } catch (err) {
+    URL.revokeObjectURL(nativeUrl);
+    throw err;
+  }
 }

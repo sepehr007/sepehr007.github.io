@@ -158,17 +158,44 @@ export function isConfigPreview() {
   return fromPreview;
 }
 
-export function ownerSessionValid() {
-  try {
-    const s = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
-    return !!s && Number(s.exp) > Date.now();
-  } catch { return false; }
+const OWNER_SESSION_TTL = 12 * 3600 * 1000;
+const OWNER_SESSION_PEPPER = "wt-owner-session-v2";
+
+function readOwnerSession() {
+  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); } catch { return null; }
 }
 
-export function setOwnerSession(on = true) {
+async function sessionSig(exp) {
+  if (!crypto.subtle) return "";
   try {
-    if (on) sessionStorage.setItem(SESSION_KEY, JSON.stringify({ exp: Date.now() + 12 * 3600 * 1000, at: Date.now() }));
-    else sessionStorage.removeItem(SESSION_KEY);
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${OWNER_SESSION_PEPPER}|${exp}`));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch { return ""; }
+}
+
+export function ownerSessionValid() {
+  const s = readOwnerSession();
+  if (!s || !(Number(s.exp) > Date.now())) return false;
+  if (s.v === 2) return typeof s.sig === "string" && s.sig.length === 64;
+  return true;
+}
+
+export async function verifyOwnerSession() {
+  const s = readOwnerSession();
+  if (!s || s.v !== 2 || !(Number(s.exp) > Date.now())) return false;
+  const sig = await sessionSig(Number(s.exp));
+  return Boolean(sig) && sig === s.sig;
+}
+
+export async function setOwnerSession(on = true) {
+  try {
+    if (!on) {
+      sessionStorage.removeItem(SESSION_KEY);
+      return;
+    }
+    const exp = Date.now() + OWNER_SESSION_TTL;
+    const sig = await sessionSig(exp);
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ v: 2, exp, at: Date.now(), sig }));
   } catch {}
 }
 

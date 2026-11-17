@@ -327,8 +327,12 @@ export class Player {
   async toggleFullscreen() {
     const target = this.frame;
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await target.requestFullscreen();
+      if (document.fullscreenElement) return await document.exitFullscreen();
+      if (target.requestFullscreen) return await target.requestFullscreen();
+      if (target.webkitRequestFullscreen) return target.webkitRequestFullscreen();
+      const video = this.video;
+      if (video?.webkitEnterFullscreen) return video.webkitEnterFullscreen();
+      target.classList.toggle("theater");
     } catch {}
   }
   async togglePiP() {

@@ -1,4 +1,4 @@
-const CACHE = "wt-v64";
+const CACHE = "wt-v65";
 const SHELL = [
   "./",
   "./index.html",
@@ -76,7 +76,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
 
-  if (url.pathname.endsWith("/assets/data/site-config.json")) {
+  if (/\/assets\/data\/(?:site-config|runtime-config)\.json$/.test(url.pathname)) {
     event.respondWith(
       fetch(req, { cache: "no-store" })
         .then((res) => {

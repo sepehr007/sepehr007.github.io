@@ -252,8 +252,11 @@ export async function buildServer() {
     bodyLimit: 512 * 1024
   });
 
+  const corsEnv = String(process.env.CORS_ORIGIN || "").trim();
+  const corsOrigin = corsEnv ? corsEnv.split(",").map((s) => s.trim()).filter(Boolean) : true;
+
   await app.register(cors, {
-    origin: true,
+    origin: corsOrigin,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],

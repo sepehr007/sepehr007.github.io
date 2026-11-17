@@ -1,10 +1,10 @@
 import { $, $$, toast, store, applyUIPrefs, safeReload, onceAsync } from "./core.js";
 import {
   SITE_CONFIG_DEFAULTS, normalizeSiteConfig, loadSiteConfig, getSiteConfig,
-  ownerSessionValid, setOwnerSession, savePreviewDraft
+  verifyOwnerSession, setOwnerSession, savePreviewDraft
 } from "./site-config.js";
 import { readModLog, logModeration, clearModLog } from "./modlog.js";
-import { apiFetch } from "./api.js";
+import { apiFetch, getApiBase } from "./api.js";
 
 const DRAFT_KEY = "wt.ownerDraft";
 const CRED_KEY = "wt.ownerCred";
@@ -36,7 +36,10 @@ const VIEW_META = {
   limits: ["محدودیت‌ها", "ظرفیت اتاق و نرخ مجاز چت، آواتار و اکشن."],
   plans: ["پلن پریمیوم", "لینک پرداخت واقعی یا نمایش «به‌زودی»."],
   moderation: ["مدیریت محلی", "حساب‌های همین مرورگر و گزارش رخدادها."],
-  security: ["امنیت مالک", "رمز محلی و توکن گیت‌هاب."],
+  rooms: ["اتاق‌ها", "پایهٔ مدیریت اتاق‌ها؛ نسخهٔ فعلی اتاق سروری ندارد."],
+  system: ["سیستم", "وضعیت API، شبکه و محیط اجرا."],
+  security: ["امنیت مالک", "ورود، نشست و قفل کنسول."],
+  analytics: ["آمار", "پایهٔ شاخص‌های مصرف؛ دادهٔ سراسری در فاز بعد."],
   publish: ["انتشار تغییرات", "بازبینی، پیش‌نمایش و کامیت روی GitHub."]
 };
 
@@ -106,7 +109,7 @@ function noteOwnerFailure() {
   const l = store.get(LOCK_KEY, null) || { n: 0, until: 0 };
   if (Number(l.until) > Date.now()) return;
   l.n = (Number(l.n) || 0) + 1;
-  if (l.n >= 5) { l.n = 0; l.until = Date.now() + 2 * 60 * 1000; }
+  if (l.n >= 5) { l.n = 0; l.until = Date.now() + 5 * 60 * 1000; }
   store.set(LOCK_KEY, l);
 }
 function clearOwnerFailures() {
@@ -434,6 +437,7 @@ function showView(name) {
   if (name === "moderation") { renderUsers(); renderLog(); }
   if (name === "publish") refreshDiff();
   if (name === "security") refreshTokenState();
+  if (name === "system") refreshSystemView();
 }
 function goto(name) {
   showView(name);
@@ -464,7 +468,7 @@ function setGateTab(which) {
   $("#githubForm").classList.toggle("hidden", login);
 }
 async function unlock() {
-  setOwnerSession(true);
+  await setOwnerSession(true);
   $("#ownerGate").classList.add("hidden");
   $("#ownerApp").classList.remove("hidden");
   renderAll();
@@ -505,8 +509,8 @@ async function doPasswordLogin(e) {
     if (!ok) {
       noteOwnerFailure();
       const l = readLock();
-      err.textContent = l ? "پنج تلاش ناموفق؛ دو دقیقه قفل شد." : "رمز اشتباه است.";
-      if (l) logModeration("loginLock", "قفل دو دقیقه‌ای کنسول");
+      err.textContent = l ? "پنج تلاش ناموفق؛ پنج دقیقه قفل شد." : "رمز اشتباه است.";
+      if (l) logModeration("loginLock", "قفل پنج دقیقه‌ای کنسول");
       else logModeration("loginFail", "رمز مالک اشتباه");
       return;
     }
@@ -805,6 +809,42 @@ function renderAll() {
   showView("overview");
 }
 
+function refreshSystemView() {
+  const set = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = value; };
+  let base = "";
+  try { base = getApiBase(); } catch {}
+  set("sysApiBase", base || "تنظیم نشده (حالت محلی)");
+  set("sysOnline", navigator.onLine ? "آنلاین" : "آفلاین");
+  set("sysHost", location.host || "—");
+  set("sysMode", location.protocol === "https:" ? "HTTPS" : location.protocol === "http:" ? "HTTP" : "فایل محلی");
+}
+
+async function backendOwnerValid() {
+  let token = "";
+  try { token = sessionStorage.getItem(OWNER_JWT_KEY) || ""; } catch {}
+  if (!token) return null;
+  try {
+    const res = await apiFetch("/auth/me", { token, auth: false, timeoutMs: 6000 });
+    const role = res?.user?.role;
+    return role === "owner" || role === "super_owner";
+  } catch (err) {
+    if (err?.status === 401 || err?.status === 403) {
+      try { sessionStorage.removeItem(OWNER_JWT_KEY); } catch {}
+      return false;
+    }
+    return null;
+  }
+}
+
+async function validOwnerAccess() {
+  const remote = await backendOwnerValid();
+  if (remote === true) {
+    await setOwnerSession(true);
+    return true;
+  }
+  return verifyOwnerSession();
+}
+
 (async function bootOwner() {
   try {
     published = clone(await loadSiteConfig());
@@ -819,7 +859,9 @@ function renderAll() {
   try { sessionStorage.removeItem(TOKEN_KEY); } catch {}
   verifiedToken = "";
 
-  if (ownerSessionValid()) {
+  let allowed = false;
+  try { allowed = await validOwnerAccess(); } catch { allowed = false; }
+  if (allowed) {
     $("#ownerGate").classList.add("hidden");
     $("#ownerApp").classList.remove("hidden");
     renderAll();

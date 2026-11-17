@@ -501,7 +501,11 @@ export async function login({ username, password }) {
     logModeration("loginFail", `ورود حساب مسدود @${u}`);
     return { ok: false, error: "blocked" };
   }
-  const wait = lockedFor(u);
+  const users = readUsers();
+  const localLookup = users[u]
+    ? u
+    : Object.keys(users).find((key) => String(users[key]?.email || "").toLowerCase() === u) || "";
+  const wait = lockedFor(u) || (localLookup ? lockedFor(localLookup) : 0);
   if (wait) {
     logModeration("loginLock", `قفل ورود @${u}`);
     return { ok: false, error: "locked", wait };
@@ -526,18 +530,20 @@ export async function login({ username, password }) {
     }
   } catch (err) { apiErr = err; }
   if (apiErr?.status === 429) return { ok: false, error: "rate" };
-  const rec = readUsers()[u];
-  if (!rec) { noteFailure(u); logModeration("loginFail", `نام کاربری ناشناس @${u}`); return { ok: false, error: "credentials" }; }
+  const recKey = localLookup || u;
+  const rec = users[recKey];
+  if (!rec) { noteFailure(recKey); logModeration("loginFail", `نام کاربری ناشناس @${u}`); return { ok: false, error: "credentials" }; }
   let hashValue;
   try { hashValue = await hashPassword(password, rec.salt); }
   catch { return { ok: false, error: "secure" }; }
-  if (hashValue !== rec.hash) {
-    noteFailure(u);
+  if (!rec.hash || hashValue !== rec.hash) {
+    noteFailure(recKey);
     logModeration("loginFail", `رمز اشتباه @${u}`);
     return { ok: false, error: "credentials" };
   }
   clearThrottle(u);
-  saveSession(u);
+  if (recKey !== u) clearThrottle(recKey);
+  saveSession(recKey);
   return { ok: true, nick: rec.nick };
 }
 
