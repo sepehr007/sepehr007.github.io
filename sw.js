@@ -1,4 +1,4 @@
-const CACHE = "wt-v42";
+const CACHE = "wt-v43";
 const SHELL = [
   "./",
   "./index.html",
@@ -31,6 +31,10 @@ const SHELL = [
   "./assets/avatars/boy-5.webp",
   "./assets/avatars/boy-6.webp",
   "./assets/icon.svg",
+  "./assets/img/icon-192.png",
+  "./assets/img/icon-512.png",
+  "./assets/img/icon-maskable-512.png",
+  "./assets/img/apple-touch-icon.png",
   "./manifest.webmanifest"
 ];
 
