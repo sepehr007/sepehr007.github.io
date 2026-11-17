@@ -168,7 +168,8 @@ export function highlightMentions(text, nick) {
 
 export function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
-  if (location.protocol !== "https:" && location.hostname !== "localhost") return;
+  if (["localhost", "127.0.0.1"].includes(location.hostname)) return;
+  if (location.protocol !== "https:") return;
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   });

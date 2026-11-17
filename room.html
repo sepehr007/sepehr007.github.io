@@ -29,6 +29,10 @@
           </button>
           <span class="status-dot" id="netStatus" data-state="connecting"></span>
           <span class="status-label" id="netLabel">در حال اتصال…</span>
+          <button class="btn btn-primary btn-sm invite-btn" id="inviteBtn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M19 8v6M22 11h-6"/></svg>
+            <span data-i18n="room.invite">دعوت دوستان</span>
+          </button>
         </div>
       </div>
     </div>
@@ -62,6 +66,7 @@
               <button class="btn btn-primary" id="loadVideoBtn" type="button" data-i18n="room.load">پخش</button>
             </div>
             <p class="hint" data-i18n="room.urlHint">فقط لینک‌های مستقیم MP4 / M3U8 پشتیبانی می‌شوند.</p>
+            <button class="link-btn" id="sampleBtn" type="button" data-i18n="room.sample">یا با ویدیوی نمونه امتحان کن</button>
           </div>
         </div>
 
@@ -109,7 +114,12 @@
         <input class="search" id="chatSearch" type="search" data-i18n-ph="chat.search" placeholder="جستجو در پیام‌ها…">
       </div>
       <div class="pinned hidden" id="pinnedBar"></div>
-      <div class="chat-list" id="chatList"></div>
+      <div class="chat-empty" id="chatEmpty">
+        <span class="ico">💬</span>
+        <strong data-i18n="chat.emptyTitle">هنوز پیامی نیست</strong>
+        <span data-i18n="chat.emptySub">اولین سلام را تو بفرست.</span>
+      </div>
+      <div class="chat-list hidden" id="chatList"></div>
       <div class="typing-line" id="typingLine"></div>
       <form class="chat-form" id="chatForm" autocomplete="off">
         <div class="reply-bar hidden" id="replyBar">

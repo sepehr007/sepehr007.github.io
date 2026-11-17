@@ -178,6 +178,7 @@ function wireNet() {
     renderQueue(data.queue || []);
     applyRoomSettings(data.room);
     for (const msg of data.chat || []) appendMessage(msg, false);
+    syncChatEmpty();
     scrollChat(true);
     if (data.playback?.url) {
       currentPlayback = data.playback;
@@ -304,6 +305,9 @@ function wirePlayer() {
   });
 
   $("#loadVideoBtn").addEventListener("click", loadVideoFromInput);
+  $("#sampleBtn").addEventListener("click", () => {
+    net.command("loadVideo", { url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" });
+  });
   $("#videoUrlInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadVideoFromInput(); });
 
   video.addEventListener("click", () => player.togglePlay());
@@ -443,6 +447,15 @@ function appendMessage(msg, animate) {
   chatList.append(node);
   if (animate) node.animate?.([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 180 });
   refreshPinned();
+  syncChatEmpty();
+}
+
+function syncChatEmpty() {
+  const empty = $("#chatEmpty");
+  if (!empty) return;
+  const has = chatList.children.length > 0;
+  empty.classList.toggle("hidden", has);
+  chatList.classList.toggle("hidden", !has);
 }
 
 function buildMessage(msg) {
@@ -807,13 +820,15 @@ function renderVoiceTiles() {
 
 /* ================= misc ================= */
 function wireMisc() {
-  $("#copyLinkBtn").addEventListener("click", async () => {
+  const invite = async () => {
     const base = `${location.origin}${location.pathname.replace(/room\.html$/, "")}room.html`;
     const q = new URLSearchParams({ room: code });
     if (roomInfo?.privacy === "password") q.set("pwd", "1");
     const ok = await copyText(`${base}?${q.toString()}`);
     if (ok) toast(t("toast.copied"), "success");
-  });
+  };
+  $("#copyLinkBtn").addEventListener("click", invite);
+  $("#inviteBtn").addEventListener("click", invite);
 
   $("#leaveBtn").addEventListener("click", async () => {
     const ok = await confirmDialog({
