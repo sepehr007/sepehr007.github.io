@@ -1,8 +1,13 @@
 import { initI18n, t } from "./i18n.js";
 import { $, toast, makeCode, store, registerServiceWorker } from "./core.js";
+import { requireAuth, currentUser, mountUserChip, isRealName } from "./auth.js";
 
 initI18n();
 registerServiceWorker();
+
+const user = currentUser();
+if (!user) requireAuth("index.html");
+else mountUserChip();
 
 const nameInput = $("#createName");
 const createNick = $("#createNick");
@@ -13,7 +18,7 @@ const pwdInput = $("#createPassword");
 const joinCode = $("#joinCode");
 const joinNick = $("#joinNick");
 
-const savedNick = store.get("wt.nick", "");
+const savedNick = user?.nick || store.get("wt.nick", "");
 if (savedNick) { createNick.value = savedNick; joinNick.value = savedNick; }
 
 privacyInput.addEventListener("change", () => {
@@ -23,6 +28,7 @@ privacyInput.addEventListener("change", () => {
 $("#createBtn").addEventListener("click", () => {
   const nick = createNick.value.trim().slice(0, 20);
   if (!nick) return toast(t("toast.nameRequired"), "error");
+  if (!isRealName(nick)) return toast(t("toast.realName"), "error");
   const privacy = privacyInput.value;
   const pwd = pwdInput.value.trim();
   if (privacy === "password" && pwd.length < 3) {
@@ -49,6 +55,7 @@ joinNick.addEventListener("keydown", (e) => { if (e.key === "Enter") joinRoom();
 function joinRoom() {
   const nick = joinNick.value.trim().slice(0, 20);
   if (!nick) return toast(t("toast.nameRequired"), "error");
+  if (!isRealName(nick)) return toast(t("toast.realName"), "error");
   const raw = joinCode.value.trim();
   if (!raw) return toast(t("toast.roomRequired"), "error");
 

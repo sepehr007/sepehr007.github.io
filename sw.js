@@ -1,16 +1,19 @@
-const CACHE = "wt-v4";
+const CACHE = "wt-v6";
 const SHELL = [
   "./",
   "./index.html",
+  "./auth.html",
   "./room.html",
   "./assets/css/style.css",
   "./assets/js/core.js",
   "./assets/js/i18n.js",
+  "./assets/js/auth.js",
   "./assets/js/landing.js",
   "./assets/js/room.js",
   "./assets/js/net.js",
   "./assets/js/player.js",
   "./assets/js/voice.js",
+  "./assets/js/transcode.js",
   "./assets/icon.svg",
   "./manifest.webmanifest"
 ];

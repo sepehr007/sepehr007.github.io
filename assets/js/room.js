@@ -7,6 +7,7 @@ import {
 import { Net } from "./net.js";
 import { Player, parseSubtitles } from "./player.js";
 import { Voice } from "./voice.js";
+import { currentUser } from "./auth.js";
 
 initI18n();
 registerServiceWorker();
@@ -14,14 +15,20 @@ registerServiceWorker();
 const params = new URLSearchParams(location.search);
 const code = (params.get("room") || "").toUpperCase();
 const isHost = params.get("host") === "1";
-if (!code) location.replace("./");
+const authUser = currentUser();
+if (!code) {
+  location.replace("./");
+} else if (!authUser) {
+  const next = `room.html${location.search}`;
+  location.replace(`auth.html?next=${encodeURIComponent(next)}`);
+}
 
 const roomNameParam = params.get("name") || "";
 const capacityParam = Number(params.get("cap")) || 6;
 const privacyParam = params.get("privacy") === "password" ? "password" : "public";
 let roomPassword = sessionStorage.getItem(`pwd:${code}`) || "";
 
-let nick = (params.get("nick") || store.get("wt.nick") || "").trim();
+let nick = (authUser?.nick || params.get("nick") || store.get("wt.nick") || "").trim();
 const me = { id: "", role: "member", nick: "" };
 let net = null;
 let player = null;
@@ -31,6 +38,8 @@ let queueItems = [];
 let roomInfo = null;
 let selfVoice = false;
 let currentPlayback = null;
+let localMode = false;
+let currentLocalUrl = null;
 
 const chatList = $("#chatList");
 const peopleList = $("#peopleList");
@@ -42,7 +51,7 @@ let editingId = null;
 let searchTerm = "";
 
 /* ================= boot ================= */
-boot();
+if (code && authUser) boot();
 
 async function boot() {
   if (!nick) nick = await askName();
@@ -66,6 +75,7 @@ async function boot() {
     },
     onControl: ({ action, time, value, denied }) => {
       if (denied) { toast(t("toast.cantControl"), "error"); return; }
+      if (localMode) { applyLocalControl(action, time, value); return; }
       if (action === "play") net.command("control", { action: "play" });
       else if (action === "pause") net.command("control", { action: "pause", time });
       else if (action === "seek") net.command("control", { action: "seek", time });
@@ -75,7 +85,7 @@ async function boot() {
       $("#timeLabel").textContent = `${fmtTime(current)} / ${fmtTime(duration)}`;
       if (duration) $("#seek").value = String(Math.round((current / duration) * 1000));
     },
-    onLoaded: () => { $("#stageEmpty").classList.add("hidden"); },
+    onLoaded: () => syncStageEmpty(),
     onError: () => toast(t("toast.videoInvalid"), "error")
   });
 
@@ -95,6 +105,7 @@ async function boot() {
   wireSettings();
   wireVoice();
   wireMisc();
+  wireFileLoad();
 
   createNet();
 }
@@ -182,10 +193,10 @@ function wireNet() {
     scrollChat(true);
     if (data.playback?.url) {
       currentPlayback = data.playback;
-      $("#stageEmpty").classList.add("hidden");
       player.applyState(data.playback);
       updatePlayUI(data.playback.playing);
     }
+    syncStageEmpty();
     $("#netLabel").textContent = t("net.online");
   });
 
@@ -206,10 +217,12 @@ function wireNet() {
     renderTyping();
   });
   net.on("playback", (state) => {
+    if (state?.url && state.url !== player.url) localMode = false;
+    $("#localBadge").classList.add("hidden");
     currentPlayback = state;
-    $("#stageEmpty").classList.add("hidden");
     player.applyState(state);
     updatePlayUI(state.playing);
+    syncStageEmpty();
   });
   net.on("queue", (items) => renderQueue(items));
   net.on("room", (room) => { roomInfo = room; applyRoomSettings(room); });
@@ -341,11 +354,151 @@ function updatePlayUI(playing) {
   $("#playBtn .i-pause").classList.toggle("hidden", !playing);
 }
 
+function syncStageEmpty() {
+  const stageEmpty = $("#stageEmpty");
+  if (!stageEmpty) return;
+  stageEmpty.classList.toggle("hidden", !!player?.url);
+}
+
 function loadVideoFromInput() {
   const url = $("#videoUrlInput").value.trim();
   const v = validateMediaUrl(url);
   if (!v.ok) return toast(v.reason === "blocked" ? t("toast.blockedDomain") : t("toast.videoInvalid"), "error");
   net.command("loadVideo", { url: v.url });
+}
+
+/* ================= local files & conversion ================= */
+function applyLocalControl(action, time, value) {
+  const v = player.video;
+  if (action === "play") {
+    v.play().catch(() => {});
+    player.state = { ...player.state, url: player.url, playing: true, time: v.currentTime, at: Date.now() };
+  } else if (action === "pause") {
+    v.pause();
+    player.state = { ...player.state, url: player.url, playing: false, time: v.currentTime, at: Date.now() };
+  } else if (action === "seek") {
+    v.currentTime = Math.max(0, Number(time) || 0);
+    player.state = { ...player.state, url: player.url, time: v.currentTime, at: Date.now() };
+  } else if (action === "rate") {
+    v.playbackRate = Number(value) || 1;
+    player.state = { ...player.state, url: player.url, rate: v.playbackRate, time: v.currentTime, at: Date.now() };
+  }
+  updatePlayUI(!v.paused);
+}
+
+function wireFileLoad() {
+  const input = $("#fileInput");
+  const stage = $("#stage");
+  $("#pickFileBtn").addEventListener("click", () => {
+    if (!isHost) return toast(t("toast.hostOnlyFile"), "error");
+    input.click();
+  });
+  input.addEventListener("change", () => {
+    const f = input.files?.[0];
+    input.value = "";
+    if (f) loadLocalFile(f);
+  });
+  $("#changeSourceBtn").addEventListener("click", () => {
+    $("#stageEmpty").classList.remove("hidden");
+    $("#videoUrlInput").focus();
+  });
+
+  stage.addEventListener("dragover", (e) => {
+    if (!isHost) return;
+    e.preventDefault();
+    stage.classList.add("dragging");
+  });
+  stage.addEventListener("dragleave", () => stage.classList.remove("dragging"));
+  stage.addEventListener("drop", (e) => {
+    if (!isHost) return;
+    e.preventDefault();
+    stage.classList.remove("dragging");
+    const f = e.dataTransfer?.files?.[0];
+    if (f) loadLocalFile(f);
+  });
+}
+
+const PREP_TEXT = {
+  probe: ["در حال بررسی فرمت…", "Checking format…"],
+  loading: ["آماده‌سازی موتور تبدیل…", "Loading converter…"],
+  remux: ["بسته‌بندی مجدد (سریع)…", "Remuxing (fast)…"],
+  verify: ["تست پخش فایل ساخته‌شده…", "Verifying output…"],
+  transcode: ["تبدیل کامل به H.264 — ممکن است طول بکشد…", "Transcoding to H.264 — this can take a while…"],
+  done: ["آماده شد", "Ready"]
+};
+
+function prepText(key) {
+  const row = PREP_TEXT[key];
+  if (!row) return "";
+  return row[getLang() === "fa" ? 0 : 1];
+}
+
+function showPrep() {
+  $("#prepOverlay").classList.remove("hidden");
+  $("#prepBar").style.width = "0%";
+  $("#prepSub").textContent = "";
+  $("#prepTitle").textContent = getLang() === "fa" ? "در حال آماده‌سازی ویدیو…" : "Preparing video…";
+}
+
+function setPrepStatus(s) {
+  if (PREP_TEXT[s]) $("#prepSub").textContent = prepText(s);
+  if (s === "transcode") $("#prepBar").style.width = "0%";
+}
+
+function setPrepProgress(p) {
+  $("#prepBar").style.width = `${Math.round(p * 100)}%`;
+}
+
+function hidePrep() {
+  $("#prepOverlay").classList.add("hidden");
+}
+
+async function loadLocalFile(file) {
+  if (!isHost) return toast(t("toast.hostOnlyFile"), "error");
+  if (!/^video\//.test(file.type) && !/\.(mkv|avi|mov|flv|wmv|ts|m2ts|mpg|mpeg|webm|ogv|mp4|m4v)$/i.test(file.name)) {
+    return toast(t("toast.videoInvalid"), "error");
+  }
+  showPrep();
+  try {
+    const { prepareLocalVideo } = await import("./transcode.js");
+    const { url, converted } = await prepareLocalVideo(file, {
+      onStatus: setPrepStatus,
+      onProgress: setPrepProgress
+    });
+    if (currentLocalUrl) URL.revokeObjectURL(currentLocalUrl);
+    currentLocalUrl = url;
+    startLocalPlayback(url, file.name, converted);
+  } catch (err) {
+    console.error(err);
+    toast(t("toast.convertFailed"), "error");
+  } finally {
+    hidePrep();
+  }
+}
+
+function startLocalPlayback(url, fileName, converted) {
+  localMode = true;
+  player.destroyHls();
+  player.url = url;
+  player.state = { url, playing: false, time: 0, at: Date.now(), rate: 1 };
+  player.video.src = url;
+  player.video.load();
+  syncStageEmpty();
+  $("#localBadge").classList.remove("hidden");
+  updatePlayUI(false);
+  toast(
+    converted
+      ? (getLang() === "fa" ? `«${fileName}» آماده شد` : `"${fileName}" is ready`)
+      : (getLang() === "fa" ? `«${fileName}» در حال پخش` : `Playing "${fileName}"`),
+    "success"
+  );
+  if (isHost) {
+    net.command("chat", {
+      text: getLang() === "fa"
+        ? `🎬 ${nick} فایل محلی «${fileName}» را پخش می‌کند (فقط روی دستگاه میزبان).`
+        : `🎬 ${nick} is playing the local file "${fileName}" (host device only).`
+    });
+  }
 }
 
 /* ================= chat ================= */

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07080d">
+<title>ورود — هم‌تماشا</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%237c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
+</head>
+<body class="page-auth">
+
+<div class="bg-aurora" aria-hidden="true">
+  <span class="aurora a1"></span>
+  <span class="aurora a2"></span>
+  <span class="aurora a3"></span>
+  <div class="grid-overlay"></div>
+</div>
+
+<header class="site-header">
+  <a class="brand" href="./">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg>
+    </span>
+    <span class="brand-text">هم‌تماشا</span>
+  </a>
+  <div class="header-actions">
+    <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="Change language">EN</button>
+  </div>
+</header>
+
+<main class="auth-wrap">
+  <section class="card auth-card">
+    <div class="auth-tabs" role="tablist">
+      <button id="tabRegister" class="active" type="button" data-i18n="auth.register">ثبت‌نام</button>
+      <button id="tabLogin" type="button" data-i18n="auth.login">ورود</button>
+    </div>
+    <h1 id="authTitle">ساخت حساب</h1>
+    <p class="muted" id="authSub">برای ساخت و ورود به اتاق‌ها، اول حساب بساز.</p>
+
+    <form id="authForm" autocomplete="on">
+      <label class="field" id="nameField">
+        <span data-i18n="auth.name">اسم واقعی</span>
+        <input id="name" type="text" maxlength="24" autocomplete="name" data-i18n-ph="auth.namePh" placeholder="مثلاً علی رضایی">
+      </label>
+      <label class="field">
+        <span data-i18n="auth.username">نام کاربری</span>
+        <input id="username" type="text" maxlength="20" dir="ltr" autocomplete="username" spellcheck="false" data-i18n-ph="auth.usernamePh" placeholder="ali_2026">
+      </label>
+      <label class="field">
+        <span data-i18n="auth.password">رمز عبور</span>
+        <input id="password" type="password" maxlength="64" autocomplete="new-password">
+      </label>
+      <label class="field" id="confirmField">
+        <span data-i18n="auth.password2">تکرار رمز</span>
+        <input id="password2" type="password" maxlength="64" autocomplete="new-password">
+      </label>
+
+      <div class="field" id="captchaField">
+        <span data-i18n="auth.captcha">کپچا — حاصل را بنویس</span>
+        <div class="captcha-row">
+          <span class="captcha-q" id="captchaQ">?</span>
+          <button class="icon-btn" id="captchaRefresh" type="button" title="New question">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+          </button>
+          <input id="captchaA" type="text" inputmode="numeric" maxlength="4" dir="ltr" placeholder="13" autocomplete="off">
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-block" id="submitBtn" type="submit" data-i18n="auth.register">ساخت حساب</button>
+      <p class="auth-error" id="authError" role="alert"></p>
+      <p class="hint" data-i18n="auth.note">حسابت فقط روی همین مرورگر ذخیره می‌شود؛ این نسخه سرور ندارد.</p>
+    </form>
+  </section>
+</main>
+
+<script type="module">
+import { initI18n } from "./assets/js/i18n.js";
+import { initAuthPage } from "./assets/js/auth.js";
+initI18n();
+initAuthPage();
+</script>
+</body>
+</html>
