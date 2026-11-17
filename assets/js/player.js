@@ -27,13 +27,14 @@ export function parseSubtitles(raw) {
 }
 
 export class Player {
-  constructor({ video, frame, onControl, onTime, onLoaded, onError, canControl }) {
+  constructor({ video, frame, onControl, onTime, onLoaded, onError, onLevels, canControl }) {
     this.video = video;
     this.frame = frame;
     this.onControl = onControl;
     this.onTime = onTime;
     this.onLoaded = onLoaded;
     this.onError = onError;
+    this.onLevels = onLevels;
     this.canControl = canControl || (() => true);
 
     this.url = "";
@@ -81,6 +82,7 @@ export class Player {
     this.url = "";
     this.state = { url: "", playing: false, time: 0, at: Date.now(), rate: 1 };
     this.destroyHls();
+    this.onLevels?.(null);
     this.video.removeAttribute("src");
     this.video.load();
     this.cues = [];
@@ -106,11 +108,29 @@ export class Player {
     const isHls = /\.m3u8($|\?)/i.test(url);
     if (isHls && window.Hls?.isSupported()) {
       this.hls = new window.Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 30 });
+      this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => this.#emitLevels());
+      this.hls.on(window.Hls.Events.LEVEL_SWITCHED, () => this.#emitLevels());
       this.hls.loadSource(url);
       this.hls.attachMedia(this.video);
     } else {
+      this.onLevels?.(null);
       this.video.src = url;
     }
+  }
+
+  #emitLevels() {
+    if (!this.hls) return;
+    const levels = (this.hls.levels || []).map((l, i) => ({
+      i,
+      height: l.height || 0,
+      name: l.name || ""
+    }));
+    this.onLevels?.({ levels, current: this.hls.currentLevel, auto: this.hls.autoLevelEnabled });
+  }
+
+  setLevel(i) {
+    if (!this.hls) return;
+    this.hls.currentLevel = Number(i);
   }
 
   applyState(state) {

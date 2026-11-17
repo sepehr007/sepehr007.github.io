@@ -233,6 +233,12 @@
           <input type="checkbox" id="optApproval">
           <span class="switch"></span>
         </label>
+        <div class="setting hidden" id="qualityRow">
+          <label for="optQuality" data-i18n="settings.quality">کیفیت پخش</label>
+          <select id="optQuality">
+            <option value="-1" data-i18n="settings.qualityAuto">خودکار</option>
+          </select>
+        </div>
         <div class="setting">
           <label for="subsFile" data-i18n="settings.subs">زیرنویس (SRT / VTT)</label>
           <input type="file" id="subsFile" class="hidden" accept=".srt,.vtt,text/vtt,text/plain">
@@ -282,7 +288,7 @@
 <div class="toast-wrap" id="toasts" aria-live="polite"></div>
 <div class="ctx-menu hidden" id="ctxMenu"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<script src="assets/js/hls.min.js"></script>
 <script type="module" src="assets/js/room.js"></script>
 </body>
 </html>
