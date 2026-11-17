@@ -2,7 +2,7 @@
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#07080d">
 <title>هم‌تماشا — Watch Together</title>
 <meta name="description" content="تماشای هم‌زمان فیلم با دوستان؛ چت، صدا و پخش همگام در مرورگر.">
@@ -35,8 +35,10 @@
       <a class="btn btn-primary btn-sm" id="signupLink" href="auth.html?next=index.html" data-i18n="auth.register">ثبت‌نام</a>
     </div>
     <div class="user-chip hidden" id="userChip">
-      <span class="avatar" id="userAvatar">–</span>
-      <span class="u-name" id="userName"></span>
+      <a class="user-link" id="profileLink" href="profile.html" title="Profile">
+        <span class="avatar" id="userAvatar">–</span>
+        <span class="u-name" id="userName"></span>
+      </a>
       <button class="icon-btn" id="logoutBtn" type="button" aria-label="Sign out">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 17l5-5-5-5M20 12H9M12 20H5V4h7"/></svg>
       </button>

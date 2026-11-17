@@ -1,14 +1,16 @@
-const CACHE = "wt-v26";
+const CACHE = "wt-v27";
 const SHELL = [
   "./",
   "./index.html",
   "./auth.html",
+  "./profile.html",
   "./room.html",
   "./assets/css/style.css",
   "./assets/js/core.js",
   "./assets/js/i18n.js",
   "./assets/js/auth.js",
   "./assets/js/landing.js",
+  "./assets/js/profile.js",
   "./assets/js/room.js",
   "./assets/js/net.js",
   "./assets/js/player.js",
@@ -20,7 +22,16 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await Promise.all(SHELL.map(async (url) => {
+      try {
+        const res = await fetch(url, { cache: "reload" });
+        if (res.ok) await cache.put(url, res);
+      } catch {}
+    }));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (event) => {
@@ -29,6 +40,10 @@ self.addEventListener("activate", (event) => {
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("fetch", (event) => {

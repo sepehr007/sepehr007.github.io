@@ -112,6 +112,7 @@ async function boot() {
   wirePrefs();
   wireVoice();
   wireMisc();
+  wireViewport();
   wireFileLoad();
   setInterval(() => broadcastLocalState(), 4000);
 
@@ -651,23 +652,27 @@ function startLocalPlayback(url, fileName, converted) {
 
 /* ================= chat ================= */
 function wireChat() {
-  $("#chatForm").addEventListener("submit", (e) => {
+  const chatInput = $("#chatInput");
+  const chatForm = $("#chatForm");
+
+  chatForm.addEventListener("submit", (e) => {
     e.preventDefault();
-    const input = $("#chatInput");
-    const text = input.value.trim();
+    const text = chatInput.value.trim();
     if (!text) return;
     if (!canSend()) { toast(getLang() === "fa" ? "کمی صبر کن" : "Slow down", "error"); return; }
     if (editingId) {
       net.command("chatEdit", { id: editingId, text });
       editingId = null;
-      $("#chatInput").placeholder = t("chat.placeholder");
+      chatInput.placeholder = t("chat.placeholder");
       $("#replyBar").classList.add("hidden");
     } else {
       net.command("chat", { text, replyTo });
       replyTo = null;
       $("#replyBar").classList.add("hidden");
     }
-    input.value = "";
+    chatInput.value = "";
+    if (document.activeElement === chatInput) chatInput.focus({ preventScroll: true });
+    scrollChat(true);
   });
 
   $("#replyCancel").addEventListener("click", () => {
@@ -676,24 +681,88 @@ function wireChat() {
   });
 
   const sendTyping = debounce(() => net.command("typing", {}), 1200);
-  $("#chatInput").addEventListener("input", () => {
-    if ($("#chatInput").value.trim()) sendTyping();
+  chatInput.addEventListener("input", () => {
+    if (chatInput.value.trim()) sendTyping();
   });
 
-  $("#emojiBtn").addEventListener("click", () => $("#emojiPop").classList.toggle("hidden"));
-  const EMOJI = ["😀","😂","🥹","😍","😎","🤔","😴","🤯","😭","😡","👍","👎","🔥","❤️","🎉","🍿","👏","🙏","💯","😅","🤝","🫡","👀","✨"];
+  /* ---- emoji picker: never steal focus, follow the visual viewport ---- */
   const pop = $("#emojiPop");
-  for (const em of EMOJI) {
-    pop.append(el("button", { type: "button", text: em, onclick: () => {
-      const input = $("#chatInput");
-      input.value += em;
-      input.focus();
-      pop.classList.add("hidden");
-    } }));
-  }
-  document.addEventListener("click", (e) => {
-    if (!pop.contains(e.target) && e.target !== $("#emojiBtn")) pop.classList.add("hidden");
+  if (pop.parentElement !== document.body) document.body.append(pop);
+  pop.classList.add("hidden");
+
+  const placePop = () => {
+    if (pop.classList.contains("hidden")) return;
+    const btn = $("#emojiBtn");
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const vv = window.visualViewport;
+    const vw = vv ? vv.width : window.innerWidth;
+    const vh = vv ? vv.height : window.innerHeight;
+    const ox = vv ? vv.offsetLeft : 0;
+    const oy = vv ? vv.offsetTop : 0;
+    const w = Math.min(272, Math.max(200, vw - 16));
+    pop.style.width = `${w}px`;
+    pop.style.maxHeight = `${Math.max(150, Math.min(280, vh - 24))}px`;
+    const popH = Math.min(pop.scrollHeight || 240, Math.min(280, vh - 24));
+    let left = r.left + r.width / 2 - w / 2;
+    left = Math.max(ox + 8, Math.min(left, ox + vw - w - 8));
+    let top = r.top - 8 - popH;
+    if (top < oy + 8) top = Math.min(oy + vh - popH - 8, r.bottom + 8);
+    pop.style.left = `${left}px`;
+    pop.style.top = `${Math.max(oy + 8, top)}px`;
+  };
+  const setEmojiOpen = (on) => {
+    pop.classList.toggle("hidden", !on);
+    if (on) {
+      placePop();
+      requestAnimationFrame(placePop);
+    }
+  };
+
+  // preventDefault on pointerdown keeps the on-screen keyboard and caret intact
+  $("#emojiBtn").addEventListener("pointerdown", (e) => e.preventDefault());
+  $("#emojiBtn").addEventListener("click", (e) => {
+    e.preventDefault();
+    setEmojiOpen(pop.classList.contains("hidden"));
   });
+
+  const EMOJI = ["😀","😂","🥹","😍","😎","🤔","😴","🤯","😭","😡","👍","👎","🔥","❤️","🎉","🍿","👏","🙏","💯","😅","🤝","🫡","👀","✨"];
+  pop.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button")) e.preventDefault();
+  });
+  pop.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-emoji]");
+    if (!b) return;
+    const em = b.dataset.emoji;
+    const focused = document.activeElement === chatInput;
+    if (focused && typeof chatInput.setRangeText === "function") {
+      const start = chatInput.selectionStart ?? chatInput.value.length;
+      const end = chatInput.selectionEnd ?? chatInput.value.length;
+      chatInput.setRangeText(em, start, end, "end");
+    } else {
+      chatInput.value += em;
+    }
+    chatInput.dispatchEvent(new Event("input", { bubbles: true }));
+    if (focused) chatInput.focus({ preventScroll: true });
+    placePop();
+  });
+  for (const em of EMOJI) {
+    pop.append(el("button", { type: "button", text: em, "data-emoji": em, "aria-label": em }));
+  }
+
+  document.addEventListener("pointerdown", (e) => {
+    if (pop.classList.contains("hidden")) return;
+    if (pop.contains(e.target) || e.target.closest("#emojiBtn")) return;
+    setEmojiOpen(false);
+  }, true);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !pop.classList.contains("hidden")) setEmojiOpen(false);
+  });
+
+  const refollow = () => { placePop(); };
+  window.addEventListener("resize", refollow);
+  window.visualViewport?.addEventListener("resize", refollow);
+  window.visualViewport?.addEventListener("scroll", refollow);
 
   $("#chatSearch").addEventListener("input", (e) => {
     searchTerm = e.target.value.trim().toLowerCase();
@@ -1325,3 +1394,53 @@ document.addEventListener("click", (e) => {
   if (side.contains(e.target)) return;
   side.classList.remove("open");
 });
+
+/* keyboard-aware mobile layout: chat takes the visible area while typing */
+function wireViewport() {
+  const chatInput = $("#chatInput");
+  const mq = window.matchMedia("(max-width: 640px)");
+  const rootStyle = document.documentElement.style;
+  const vv = window.visualViewport;
+
+  const sync = () => {
+    if (!mq.matches || !vv) {
+      rootStyle.removeProperty("--vvh");
+      document.body.classList.remove("kb-open");
+      return;
+    }
+    const focused = document.activeElement === chatInput;
+    const kbOpen = vv.height < window.innerHeight - 90;
+    document.body.classList.toggle("kb-open", kbOpen);
+    if (focused || kbOpen) rootStyle.setProperty("--vvh", `${Math.round(vv.height)}px`);
+    else rootStyle.removeProperty("--vvh");
+  };
+
+  vv?.addEventListener("resize", sync);
+  vv?.addEventListener("scroll", sync);
+  window.addEventListener("resize", sync);
+  (mq.addEventListener ? mq.addEventListener.bind(mq) : mq.addListener.bind(mq))("change", sync);
+
+  chatInput.addEventListener("focus", () => {
+    if (!mq.matches) return;
+    document.body.classList.add("chat-focus");
+    sync();
+    setTimeout(() => { scrollChat(true); sync(); }, 180);
+    setTimeout(() => { scrollChat(true); sync(); }, 520);
+  });
+  chatInput.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (!mq.matches) return;
+      if (document.activeElement === chatInput) return;
+      document.body.classList.remove("chat-focus");
+      sync();
+    }, 160);
+  });
+  vv?.addEventListener("resize", () => {
+    if (mq.matches && document.body.classList.contains("chat-focus")) scrollChat(true);
+  });
+  $("#sidebar").addEventListener("click", (e) => {
+    if (mq.matches && e.target.closest(".tab") && !e.target.closest('[data-tab="chat"]')) {
+      chatInput.blur();
+    }
+  });
+}

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#07080d">
+<title>پروفایل — هم‌تماشا</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%237c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
+</head>
+<body class="page-profile">
+
+<div class="bg-aurora" aria-hidden="true">
+  <span class="aurora a1"></span>
+  <span class="aurora a2"></span>
+  <span class="aurora a3"></span>
+  <div class="grid-overlay"></div>
+</div>
+
+<header class="site-header">
+  <a class="brand" href="./">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg>
+    </span>
+    <span class="brand-text">هم‌تماشا</span>
+  </a>
+  <div class="header-actions">
+    <a class="btn btn-ghost btn-sm" href="./" aria-label="Home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>
+      <span data-i18n="common.back">بازگشت</span>
+    </a>
+    <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="Change language">EN</button>
+  </div>
+</header>
+
+<main class="profile-wrap">
+  <div class="profile-head">
+    <h1 data-i18n="profile.title">پروفایل من</h1>
+    <p class="muted" data-i18n="profile.sub">اطلاعات حسابت را کامل کن — همه‌چیز امن و فقط روی همین مرورگر ذخیره می‌شود.</p>
+  </div>
+
+  <div class="profile-grid">
+    <aside class="card profile-side">
+      <div class="avatar-xl" id="avatarBox"><span id="avatarInitials">–</span></div>
+      <input class="hidden" id="avatarInput" type="file" accept="image/png,image/jpeg,image/webp">
+      <div class="avatar-actions">
+        <button class="btn btn-secondary btn-sm" id="avatarPick" type="button" data-i18n="profile.avatarPick">بارگذاری تصویر</button>
+        <button class="link-btn hidden" id="avatarRemove" type="button" data-i18n="profile.avatarRemove">حذف</button>
+      </div>
+      <p class="hint avatar-hint" data-i18n="profile.avatarHint">JPG یا PNG — خودکار مربع، کوچک و فشرده می‌شود.</p>
+      <div class="profile-identity">
+        <h2 id="sideName">—</h2>
+        <p class="muted" id="sideUsername" dir="ltr">@—</p>
+        <p class="hint" id="memberSince"></p>
+      </div>
+      <button class="btn btn-secondary btn-sm btn-block" id="logoutBtn" type="button" data-i18n="profile.logout">خروج از حساب</button>
+    </aside>
+
+    <div class="profile-main">
+      <section class="card profile-card">
+        <h2 data-i18n="profile.account">اطلاعات حساب</h2>
+        <form id="accountForm" autocomplete="off" novalidate>
+          <label class="field">
+            <span data-i18n="profile.nick">اسم نمایشی</span>
+            <input id="pNick" type="text" maxlength="24">
+          </label>
+          <label class="field">
+            <span data-i18n="profile.username">نام کاربری</span>
+            <input id="pUsername" type="text" maxlength="20" dir="ltr" spellcheck="false">
+          </label>
+          <p class="hint" data-i18n="profile.accountNote">این اسم و نام کاربری در اتاق‌ها و فهرست افراد نمایش داده می‌شوند.</p>
+          <p class="form-msg" id="accountMsg" role="alert"></p>
+          <button class="btn btn-primary" type="submit" data-i18n="profile.save">ذخیره</button>
+        </form>
+      </section>
+
+      <section class="card profile-card">
+        <h2 data-i18n="profile.security">امنیت حساب</h2>
+        <form id="pwForm" autocomplete="off" novalidate>
+          <label class="field">
+            <span data-i18n="profile.currentPassword">رمز فعلی</span>
+            <input id="pCur" type="password" maxlength="64" autocomplete="current-password">
+          </label>
+          <label class="field">
+            <span data-i18n="profile.newPassword">رمز جدید</span>
+            <input id="pNew" type="password" maxlength="64" autocomplete="new-password">
+            <div class="pw-meter hidden" id="pMeter"><span></span></div>
+            <div class="pw-row">
+              <span class="pw-label" id="pLabel"></span>
+              <span class="hint pw-hint" data-i18n="auth.pwHint">حداقل ۸ کاراکتر، شامل حرف بزرگ، حرف کوچک و عدد.</span>
+            </div>
+          </label>
+          <label class="field">
+            <span data-i18n="profile.confirmPassword">تکرار رمز جدید</span>
+            <input id="pNew2" type="password" maxlength="64" autocomplete="new-password">
+          </label>
+          <p class="form-msg" id="pwMsg" role="alert"></p>
+          <button class="btn btn-primary" type="submit" data-i18n="profile.changePassword">تغییر رمز</button>
+        </form>
+      </section>
+
+      <section class="card profile-card">
+        <h2 data-i18n="profile.details">مشخصات</h2>
+        <form id="detailsForm" autocomplete="off" novalidate>
+          <div class="field-row">
+            <label class="field">
+              <span data-i18n="profile.birthdate">تاریخ تولد</span>
+              <input id="pBirth" type="date" dir="ltr">
+            </label>
+            <label class="field">
+              <span data-i18n="profile.city">شهر</span>
+              <input id="pCity" type="text" maxlength="40" data-i18n-ph="profile.cityPh" placeholder="مثلاً تهران">
+            </label>
+          </div>
+          <label class="field">
+            <span data-i18n="profile.bio">درباره من</span>
+            <textarea id="pBio" rows="3" maxlength="160" data-i18n-ph="profile.bioPh" placeholder="یک خط دربارهٔ خودت…"></textarea>
+          </label>
+          <p class="form-msg" id="detailsMsg" role="alert"></p>
+          <button class="btn btn-primary" type="submit" data-i18n="profile.save">ذخیره</button>
+        </form>
+      </section>
+
+      <section class="card profile-card">
+        <h2 data-i18n="profile.friends">دوستان</h2>
+        <p class="hint" data-i18n="profile.friendsNote">این نسخه سرور ندارد؛ فهرست دوستان فقط روی همین مرورگر ذخیره می‌شود و بین دستگاه‌ها هم‌گام نمی‌شود.</p>
+        <form class="friend-form" id="friendForm" autocomplete="off">
+          <input id="friendInput" type="text" maxlength="20" dir="ltr" spellcheck="false" data-i18n-ph="profile.friendPh" placeholder="نام کاربری دوست">
+          <button class="btn btn-primary btn-sm" type="submit" data-i18n="profile.addFriend">افزودن</button>
+        </form>
+        <ul class="friend-list" id="friendList"></ul>
+        <p class="form-msg" id="friendMsg" role="alert"></p>
+      </section>
+
+      <section class="card profile-card">
+        <h2 data-i18n="profile.appearance">ظاهر</h2>
+        <div class="field">
+          <span data-i18n="profile.accent">رنگ لهجه</span>
+          <div class="accent-row" id="accentRow" role="radiogroup" aria-label="Accent color"></div>
+        </div>
+        <button class="link-btn" id="lookReset" type="button" data-i18n="profile.lookReset">بازنشانی ظاهر</button>
+      </section>
+    </div>
+  </div>
+</main>
+
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
+<script type="module" src="assets/js/profile.js"></script>
+</body>
+</html>

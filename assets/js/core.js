@@ -218,7 +218,25 @@ export function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   if (["localhost", "127.0.0.1"].includes(location.hostname)) return;
   if (location.protocol !== "https:") return;
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  window.addEventListener("load", async () => {
+    try {
+      const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
+      reg.update().catch(() => {});
+      if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (!hadController || reloaded) return;
+        let seen = false;
+        try { seen = sessionStorage.getItem("wt.swReload") === "1"; } catch {}
+        if (seen) return;
+        reloaded = true;
+        try { sessionStorage.setItem("wt.swReload", "1"); } catch {}
+        location.reload();
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") reg.update().catch(() => {});
+      });
+    } catch {}
   });
 }

@@ -2,7 +2,7 @@
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#07080d">
 <title>ورود — هم‌تماشا</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -53,6 +53,11 @@
       <label class="field">
         <span data-i18n="auth.password">رمز عبور</span>
         <input id="password" type="password" maxlength="64" autocomplete="new-password">
+        <div class="pw-meter hidden" id="pwMeter"><span></span></div>
+        <div class="pw-row">
+          <span class="pw-label" id="pwLabel"></span>
+          <span class="hint pw-hint" data-i18n="auth.pwHint">حداقل ۸ کاراکتر، شامل حرف بزرگ، حرف کوچک و عدد.</span>
+        </div>
       </label>
       <label class="field" id="confirmField">
         <span data-i18n="auth.password2">تکرار رمز</span>
@@ -88,6 +93,7 @@
       <label class="field">
         <span data-i18n="auth.newPassword">رمز جدید</span>
         <input id="recPassword" type="password" maxlength="64" autocomplete="new-password">
+        <p class="hint" data-i18n="auth.pwHint">حداقل ۸ کاراکتر، شامل حرف بزرگ، حرف کوچک و عدد.</p>
       </label>
       <div class="field">
         <span data-i18n="auth.captcha">کپچا — حاصل را بنویس</span>
