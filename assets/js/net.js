@@ -1,30 +1,120 @@
-import { toast, validateMediaUrl, uid } from "./core.js";
+import { validateMediaUrl, uid } from "./core.js";
 
-const PREFIX = "wt";
+const SIGNAL_BASE = "https://ntfy.sh";
 const MAX_CHAT = 400;
+const JOIN_RETRY_MS = 2500;
+const JOIN_MAX_TRIES = 9;
 
 const ICE = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:global.stun.twilio.com:3478" },
+    { urls: "stun:stun1.l.google.com:19302" },
     { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
     { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" }
-  ],
-  sdpSemantics: "unified-plan"
+  ]
 };
 
-export const peerIdFor = (code) => `${PREFIX}${code.toUpperCase()}`;
-
-async function sha256(text) {
-  const data = new TextEncoder().encode(text);
-  const buf = await crypto.subtle.digest("SHA-256", data);
+async function sha256hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+async function topicFor(code) {
+  const h = await sha256hex(`watch-together:${code.toUpperCase()}`);
+  return `wt${h.slice(0, 24)}`;
+}
+
+/* ---------- signaling transport (ntfy public instance, no account) ---------- */
+class Signal {
+  constructor(topic) {
+    this.topic = topic;
+    this.es = null;
+    this.handlers = new Set();
+    this.closed = false;
+    this.ready = false;
+  }
+
+  on(fn) { this.handlers.add(fn); }
+
+  start() {
+    return new Promise((resolve) => {
+      const done = () => { if (!this.ready) { this.ready = true; resolve(true); } };
+      try {
+        this.es = new EventSource(`${SIGNAL_BASE}/${this.topic}/sse`);
+      } catch { resolve(false); return; }
+      this.es.addEventListener("open", done);
+      this.es.addEventListener("error", () => {
+        if (!this.ready) { setTimeout(done, 2500); } else if (this.es.readyState === 2 && !this.closed) {
+          setTimeout(() => this.#reconnect(), 2000);
+        }
+      });
+      this.es.addEventListener("message", (e) => {
+        done();
+        let outer;
+        try { outer = JSON.parse(e.data); } catch { return; }
+        if (outer.event !== "message" || !outer.message) return;
+        let msg;
+        try { msg = JSON.parse(outer.message); } catch { return; }
+        this.handlers.forEach((fn) => { try { fn(msg); } catch {} });
+      });
+      setTimeout(done, 6000);
+    });
+  }
+
+  #reconnect() {
+    if (this.closed || this.reconnectTimer) return;
+    try { this.es?.close(); } catch {}
+    this.ready = false;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.start();
+    }, 2000);
+  }
+
+  async send(obj) {
+    if (this.closed) return false;
+    try {
+      const res = await fetch(`${SIGNAL_BASE}/${this.topic}`, {
+        method: "POST",
+        body: JSON.stringify(obj),
+        headers: { "Content-Type": "text/plain" }
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  close() {
+    this.closed = true;
+    try { this.es?.close(); } catch {}
+  }
+}
+
+/* ---------- media connection shim (matches the shape voice.js expects) ---------- */
+class MediaConn {
+  constructor(net, peer, pc) {
+    this.net = net;
+    this.peer = peer;
+    this.pc = pc;
+    this.handlers = new Map();
+  }
+  on(type, fn) {
+    if (!this.handlers.has(type)) this.handlers.set(type, new Set());
+    this.handlers.get(type).add(fn);
+    return () => this.handlers.get(type)?.delete(fn);
+  }
+  emit(type, data) { this.handlers.get(type)?.forEach((fn) => { try { fn(data); } catch {} }); }
+  answer(stream) { this.net.answerCall(this, stream); }
+  close() {
+    this.net.closeVoice?.(this.peer);
+    try { this.pc.close(); } catch {}
+    this.emit("close");
+  }
+}
+
 /**
- * Room network layer.
- * Host: authoritative for members, playback, chat, queue and settings.
- * Guest: sends commands to host and receives broadcasts.
+ * Room network layer over WebRTC.
+ * Star topology for data (host <-> guests), mesh for voice.
+ * Signaling goes through the public ntfy instance — no account, static-host friendly.
  */
 export class Net {
   constructor({ code, nick, isHost, password = "", roomName = "", capacity = 6, privacy = "public" }) {
@@ -36,31 +126,34 @@ export class Net {
     this.capacity = capacity;
     this.privacy = privacy;
 
-    this.peer = null;
-    this.hostConn = null;
-    this.conns = new Map(); // host: peerId -> DataConnection
+    this.selfId = "";
+    this.topic = "";
+    this.signal = null;
     this.handlers = new Map();
+    this.pcs = new Map();      // key "d:<peer>" | "v:<peer>" -> {pc, pending, remoteSet}
+    this.conns = new Map();    // host: peerId -> {dc, pc}
+    this.hostConn = null;      // guest: {dc, pc}
+    this.hostId = null;
+    this.dc = null;
+    this.joined = false;
     this.destroyed = false;
-    this.selfId = null;
     this.role = isHost ? "owner" : "member";
+    this.joinTimer = null;
+    this.joinTries = 0;
+    this.presenceTimer = null;
 
     if (isHost) this.#initHostState();
-    this.peer = null;
   }
 
-  /* ---------- events ---------- */
   on(type, fn) {
     if (!this.handlers.has(type)) this.handlers.set(type, new Set());
     this.handlers.get(type).add(fn);
     return () => this.handlers.get(type)?.delete(fn);
   }
   emit(type, data) {
-    this.handlers.get(type)?.forEach((fn) => {
-      try { fn(data); } catch (err) { console.error(err); }
-    });
+    this.handlers.get(type)?.forEach((fn) => { try { fn(data); } catch (err) { console.error(err); } });
   }
 
-  /* ---------- host state ---------- */
   #initHostState() {
     this.room = {
       code: this.code,
@@ -73,133 +166,249 @@ export class Net {
     };
     this.members = new Map();
     this.banned = new Set();
+    this.pendingApprovals = new Map();
     this.playback = { url: "", playing: false, time: 0, at: Date.now(), rate: 1, by: "" };
     this.chat = [];
     this.queue = [];
     this.pwdHash = null;
-    if (this.privacy === "password" && this.password) {
-      sha256(this.password).then((h) => { this.pwdHash = h; });
-    }
   }
 
-  /* ---------- lifecycle ---------- */
   async start() {
+    if (this.started) return;
+    this.started = true;
     this.emit("status", "connecting");
-    if (this.isHost) return this.#startHost();
-    return this.#startGuest();
+    this.selfId = (this.isHost ? "h" : "g") + uid().slice(0, 7);
+    this.topic = await topicFor(this.code);
+    this.signal = new Signal(this.topic);
+    this.signal.on((msg) => this.#onSignal(msg));
+    const ok = await this.signal.start();
+    if (!ok) { this.emit("status", "offline"); this.emit("error", "net"); return; }
+    if (this.isHost) {
+      if (this.privacy === "password" && this.password) this.pwdHash = await sha256hex(this.password);
+      this.#hostOnline();
+    } else this.#guestJoin();
   }
 
-  #newPeer(id) {
-    return new Promise((resolve, reject) => {
-      const peer = id ? new Peer(id, { debug: 0, config: ICE }) : new Peer({ debug: 0, config: ICE });
-      const t = setTimeout(() => reject(new Error("peer-timeout")), 15000);
-      peer.on("open", (pid) => { clearTimeout(t); resolve({ peer, id: pid }); });
-      peer.on("error", (err) => {
-        clearTimeout(t);
-        if (err?.type === "unavailable-id") reject(err);
-      });
-    });
-  }
-
-  async #startHost() {
-    const wanted = peerIdFor(this.code);
-    let peer, id;
-    try {
-      ({ peer, id } = await this.#newPeer(wanted));
-    } catch (err) {
-      this.emit("status", "offline");
-      this.emit("error", err?.type === "unavailable-id" ? "code-taken" : "net");
-      return;
-    }
-    this.peer = peer;
-    this.selfId = peer.id;
-
-    const owner = {
-      id: peer.id,
-      nick: this.nick,
-      role: "owner",
-      muted: false,
-      voice: false,
-      joinedAt: Date.now()
-    };
-    this.members.set(peer.id, owner);
+  /* ================= host ================= */
+  #hostOnline() {
+    const owner = { id: this.selfId, nick: this.nick, role: "owner", muted: false, voice: false, joinedAt: Date.now() };
+    this.members.set(this.selfId, owner);
     this.emit("status", "online");
     this.emit("welcome", this.#snapshot(owner));
-
-    peer.on("connection", (conn) => this.#onIncoming(conn));
-    peer.on("call", (call) => this.emit("incomingCall", call));
-    peer.on("disconnected", () => {
-      this.emit("status", "offline");
-      try { peer.reconnect(); } catch {}
-    });
-    peer.on("error", (err) => {
-      if (err?.type === "peer-unavailable") return;
-      this.emit("error", "net");
-    });
+    const beat = () => this.#sig({ k: "presence", from: this.selfId, nick: this.nick, host: true });
+    beat();
+    this.presenceTimer = setInterval(beat, 15000);
   }
 
-  async #startGuest() {
-    let peer, id;
-    try {
-      ({ peer, id } = await this.#newPeer(null));
-    } catch { this.emit("status", "offline"); this.emit("error", "net"); return; }
-    this.peer = peer;
-    this.selfId = id;
-
-    const conn = peer.connect(peerIdFor(this.code), { reliable: true, serialization: "json" });
-    this.hostConn = conn;
-
-    const failTimer = setTimeout(() => {
-      if (!this.joined) {
+  async #guestJoin() {
+    const beat = async () => {
+      if (this.joined || this.destroyed) return;
+      if (this.joinTries++ > JOIN_MAX_TRIES) {
+        clearInterval(this.joinTimer);
         this.emit("status", "offline");
         this.emit("deny", "unreachable");
+        return;
       }
-    }, 16000);
+      await this.#sig({
+        k: "join", from: this.selfId, nick: this.nick,
+        pwdHash: this.password ? await sha256hex(this.password) : null
+      });
+    };
+    beat();
+    this.joinTimer = setInterval(beat, JOIN_RETRY_MS);
+  }
 
-    conn.on("open", async () => {
-      const pwdHash = this.password ? await sha256(this.password) : null;
-      conn.send({ t: "hello", nick: this.nick, pwdHash });
-    });
-    conn.on("data", (msg) => this.#onHostMessage(msg));
-    conn.on("close", () => {
-      clearTimeout(failTimer);
-      this.emit("status", "offline");
-      if (this.joined) this.emit("disconnected");
-    });
-    conn.on("error", () => {
-      clearTimeout(failTimer);
-      this.emit("status", "offline");
-    });
+  #sig(obj) {
+    return this.signal.send(obj);
+  }
 
-    peer.on("call", (call) => this.emit("incomingCall", call));
-    peer.on("error", (err) => {
-      if (err?.type === "peer-unavailable") {
-        clearTimeout(failTimer);
-        this.emit("status", "offline");
-        this.emit("deny", "not-found");
+  async #onSignal(msg) {
+    if (!msg || msg.from === this.selfId) return;
+    if (msg.to && msg.to !== this.selfId) return;
+
+    switch (msg.k) {
+      case "presence":
+        if (!this.isHost && !this.hostId) {
+          this.hostId = msg.from;
+          if (!this.conns.get("host-pending")) { /* join loop already running */ }
+        }
+        return;
+      case "join":
+        if (this.isHost) return this.#hostHandleJoin(msg);
+        return;
+      case "deny":
+        if (!this.isHost) {
+          clearInterval(this.joinTimer);
+          this.emit("status", "offline");
+          this.emit("deny", msg.reason);
+        }
+        return;
+      case "offer":
+        if (!this.isHost) return this.#guestAcceptOffer(msg);
+        return;
+      case "answer":
+        if (this.isHost) return this.#applyAnswer(msg);
+        return;
+      case "ice":
+        return this.#addIce(msg);
+      case "voff":
+        return this.#voiceOffer(msg);
+      case "vans":
+        return this.#applyAnswer(msg);
+      case "vice":
+        return this.#addIce(msg);
+      case "bye":
+        return this.#peerBye(msg);
+      default:
+        return;
+    }
+  }
+
+  async #hostHandleJoin(msg) {
+    const existing = this.conns.get(msg.from);
+    if (existing) {
+      if (existing.open) return;
+      try { existing.pc.close(); } catch {}
+      this.conns.delete(msg.from);
+      const old = this.pcs.get(`d:${msg.from}`);
+      if (old) { try { old.pc.close(); } catch {} this.pcs.delete(`d:${msg.from}`); }
+    }
+    const nick = String(msg.nick || "").trim().slice(0, 20) || "Guest";
+    if (this.room.locked) return this.#denyGuest(msg.from, "locked");
+    if (this.banned.has(nick.toLowerCase())) return this.#denyGuest(msg.from, "banned");
+    const guestCount = [...this.members.keys()].filter((id) => id !== this.selfId).length;
+    if (guestCount >= this.room.capacity) return this.#denyGuest(msg.from, "full");
+    if (this.pwdHash && msg.pwdHash !== this.pwdHash) return this.#denyGuest(msg.from, "password");
+
+    if (this.room.approval) {
+      if (!this.pendingApprovals.has(msg.from)) {
+        const ok = await new Promise((resolve) => {
+          this.pendingApprovals.set(msg.from, resolve);
+          this.emit("joinRequest", { peerId: msg.from, nick });
+          setTimeout(() => { if (this.pendingApprovals.delete(msg.from)) resolve(false); }, 45000);
+        });
+        if (!ok) return this.#denyGuest(msg.from, "rejected");
       }
-    });
+    }
+
+    const { pc } = this.#createPc(`d:${msg.from}`);
+    const dc = pc.createDataChannel("wt", { ordered: true });
+    this.#wireHostDc(msg.from, dc, pc, nick);
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await this.#sig({ k: "offer", to: msg.from, from: this.selfId, sdp: pc.localDescription.sdp });
   }
 
-  #onIncoming(conn) {
-    conn.on("data", (msg) => this.#onGuestMessage(conn, msg));
-    conn.on("close", () => this.#dropMember(conn.peer));
-    conn.on("error", () => this.#dropMember(conn.peer));
+  #wireHostDc(guestId, dc, pc, nick) {
+    const conn = { dc, pc, peer: guestId, nick, hello: false };
+    this.conns.set(guestId, conn);
+    dc.onopen = () => { conn.open = true; };
+    dc.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      this.#onGuestMessage(conn, msg);
+    };
+    dc.onclose = () => this.#dropMember(guestId);
+    pc.onconnectionstatechange = () => {
+      if (["failed", "closed", "disconnected"].includes(pc.connectionState)) {
+        setTimeout(() => { if (!dc || dc.readyState !== "open") this.#dropMember(guestId); }, 4000);
+      }
+    };
   }
 
-  #dropMember(peerId) {
-    if (!this.members.has(peerId)) return;
-    this.members.delete(peerId);
-    this.conns.delete(peerId);
-    this.#broadcastMembers();
-    this.emit("voice", { id: peerId, on: false, left: true });
+  #denyGuest(peerId, reason) {
+    this.#sig({ k: "deny", to: peerId, from: this.selfId, reason });
   }
 
-  /* ---------- guest -> host ---------- */
+  async #guestAcceptOffer(msg) {
+    if (this.pcs.has(`d:${msg.from}`)) return;
+    const { pc } = this.#createPc(`d:${msg.from}`);
+    pc.ondatachannel = (e) => {
+      this.dc = e.channel;
+      const conn = { dc: e.channel, pc, peer: msg.from, open: false };
+      this.hostConn = conn;
+      e.channel.onopen = () => {
+        conn.open = true;
+        this.sendHello();
+      };
+      e.channel.onmessage = (ev) => {
+        let m;
+        try { m = JSON.parse(ev.data); } catch { return; }
+        this.#onHostMessage(m);
+      };
+      e.channel.onclose = () => {
+        if (this.joined) this.emit("status", "offline");
+        if (this.joined) this.emit("disconnected");
+      };
+    };
+    await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
+    this.#flushIce(`d:${msg.from}`);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await this.#sig({ k: "answer", to: msg.from, from: this.selfId, sdp: pc.localDescription.sdp });
+  }
+
+  async #applyAnswer(msg) {
+    const key = (`${msg.k === "vans" ? "v" : "d"}:${msg.from}`);
+    const rec = this.pcs.get(key);
+    if (!rec) return;
+    if (rec.pc.signalingState === "have-local-offer") {
+      await rec.pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+      rec.remoteSet = true;
+      this.#flushIce(key);
+      if (msg.k === "vans") {
+        const mc = this.voiceCalls?.get(msg.from);
+        if (mc) mc.emit("connected");
+      }
+    }
+  }
+  #createPc(key) {
+    const pc = new RTCPeerConnection(ICE);
+    const rec = { pc, pending: [], remoteSet: false };
+    this.pcs.set(key, rec);
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) return;
+      const [kind, peer] = [key[0], key.slice(2)];
+      this.#sig({ k: kind === "v" ? "vice" : "ice", to: peer, from: this.selfId, cand: e.candidate.toJSON() });
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "failed") {
+        this.emit("error", "net");
+      }
+    };
+    return rec;
+  }
+
+  #addIce(msg) {
+    const kind = msg.k === "vice" ? "v" : "d";
+    const key = `${kind}:${msg.from}`;
+    const rec = this.pcs.get(key);
+    const cand = msg.cand;
+    if (!rec || !cand) return;
+    if (rec.remoteSet) {
+      rec.pc.addIceCandidate(cand).catch(() => {});
+    } else {
+      rec.pending.push(cand);
+    }
+  }
+
+  #flushIce(key) {
+    const rec = this.pcs.get(key);
+    if (!rec) return;
+    rec.pending.splice(0).forEach((c) => rec.pc.addIceCandidate(c).catch(() => {}));
+  }
+
+  #peerBye(msg) {
+    const key = `${msg.v ? "v" : "d"}:${msg.from}`;
+    const rec = this.pcs.get(key);
+    if (rec) { try { rec.pc.close(); } catch {} this.pcs.delete(key); }
+  }
+
+  /* ================= host message handling ================= */
   async #onGuestMessage(conn, msg) {
     if (!msg || typeof msg !== "object") return;
     if (msg.t === "hello") return this.#handleHello(conn, msg);
-
     const member = this.members.get(conn.peer);
     if (!member) return;
 
@@ -219,28 +428,16 @@ export class Net {
       case "mod": return this.#hostMod(member, msg);
       case "voice": return this.#hostVoice(member, !!msg.on);
       case "syncRequest": return this.#sendTo(conn.peer, { t: "playback", state: this.playback });
+      default: return;
     }
   }
 
   async #handleHello(conn, msg) {
-    const nick = String(msg.nick || "").trim().slice(0, 20) || "Guest";
-    if (this.room.locked) return this.#deny(conn, "locked");
-    if (this.banned.has(nick.toLowerCase())) return this.#deny(conn, "banned");
-    if (this.members.size >= this.room.capacity) return this.#deny(conn, "full");
-    if (this.pwdHash && msg.pwdHash !== this.pwdHash) return this.#deny(conn, "password");
-
-    if (this.room.approval) {
-      const ok = await new Promise((resolve) => {
-        if (!this.pendingApprovals) this.pendingApprovals = new Map();
-        this.pendingApprovals.set(conn.peer, resolve);
-        this.emit("joinRequest", { peerId: conn.peer, nick });
-        setTimeout(() => {
-          if (this.pendingApprovals?.delete(conn.peer)) resolve(false);
-        }, 45000);
-      });
-      if (!ok) return this.#deny(conn, "rejected");
+    if (this.members.has(conn.peer)) {
+      this.#sendTo(conn.peer, { t: "welcome", ...this.#snapshot(this.members.get(conn.peer)) });
+      return;
     }
-
+    const nick = String(msg.nick || conn.nick || "").trim().slice(0, 20) || "Guest";
     let finalNick = nick;
     const existing = [...this.members.values()].map((m) => m.nick.toLowerCase());
     if (existing.includes(finalNick.toLowerCase())) {
@@ -248,50 +445,60 @@ export class Net {
       while (existing.includes(`${finalNick} ${i}`.toLowerCase())) i++;
       finalNick = `${finalNick} ${i}`;
     }
-
-    const member = {
-      id: conn.peer, nick: finalNick, role: "member",
-      muted: false, voice: false, joinedAt: Date.now()
-    };
+    const member = { id: conn.peer, nick: finalNick, role: "member", muted: false, voice: false, joinedAt: Date.now() };
     this.members.set(conn.peer, member);
-    this.conns.set(conn.peer, conn);
-    conn.send({ t: "welcome", ...this.#snapshot(member) });
+    this.#sendTo(conn.peer, { t: "welcome", ...this.#snapshot(member) });
     this.#broadcastMembers();
     this.emit("system", { key: "join", nick: finalNick });
-  }
-
-  #deny(conn, reason) {
-    try { conn.send({ t: "deny", reason }); } catch {}
-    setTimeout(() => { try { conn.close(); } catch {} }, 120);
   }
 
   #snapshot(member) {
     return {
       self: { id: member.id, nick: member.nick, role: member.role },
       room: { ...this.room },
-      members: [...this.members.values()].map((m) => ({ id: m.id, nick: m.nick, role: m.role, muted: m.muted, voice: m.voice })),
+      members: this.#membersPublic(),
       playback: this.playback,
       chat: this.chat,
       queue: this.queue
     };
   }
 
+  #membersPublic() {
+    return [...this.members.values()].map((m) => ({ id: m.id, nick: m.nick, role: m.role, muted: m.muted, voice: m.voice }));
+  }
+
   #broadcastMembers() {
-    const members = [...this.members.values()].map((m) => ({ id: m.id, nick: m.nick, role: m.role, muted: m.muted, voice: m.voice }));
+    const members = this.#membersPublic();
     this.#broadcast({ t: "members", members });
     this.emit("members", members);
   }
 
+  #sendTo(peerId, msg) {
+    if (this.isHost) {
+      const conn = this.conns.get(peerId);
+      try { if (conn?.dc?.readyState === "open") conn.dc.send(JSON.stringify(msg)); } catch {}
+      return;
+    }
+    try { if (this.dc?.readyState === "open") this.dc.send(JSON.stringify(msg)); } catch {}
+  }
+
   #broadcast(msg, exceptId = null) {
+    if (!this.isHost) return;
+    const data = JSON.stringify(msg);
     for (const [id, conn] of this.conns) {
       if (id === exceptId) continue;
-      try { if (conn.open) conn.send(msg); } catch {}
+      try { if (conn.dc?.readyState === "open") conn.dc.send(data); } catch {}
     }
   }
-  #sendTo(id, msg) {
-    const conn = this.conns.get(id);
-    try { if (conn?.open) conn.send(msg); } catch {}
-    return !!(conn?.open);
+
+  #dropMember(peerId) {
+    if (!this.members.has(peerId)) return;
+    this.members.delete(peerId);
+    this.conns.delete(peerId);
+    const rec = this.pcs.get(`d:${peerId}`);
+    if (rec) { try { rec.pc.close(); } catch {} this.pcs.delete(`d:${peerId}`); }
+    this.#broadcastMembers();
+    this.emit("voice", { id: peerId, on: false, left: true });
   }
 
   canControl(member) {
@@ -306,8 +513,7 @@ export class Net {
   #hostChat(member, msg) {
     const text = String(msg.text || "").slice(0, 500).trim();
     if (!text) return;
-    const last = member.lastChatAt || 0;
-    if (Date.now() - last < 500) return;
+    if (Date.now() - (member.lastChatAt || 0) < 500) return;
     member.lastChatAt = Date.now();
     const entry = {
       id: uid(), by: member.id, nick: member.nick, role: member.role,
@@ -418,11 +624,10 @@ export class Net {
     if (member.role !== "owner" || !patch) return;
     const allowed = ["control", "locked", "approval", "capacity"];
     for (const k of allowed) {
-      if (k in patch) {
-        if (k === "capacity") this.room.capacity = Math.min(24, Math.max(2, Number(patch[k]) || 6));
-        else if (k === "control") this.room.control = ["host", "mods", "all"].includes(patch[k]) ? patch[k] : this.room.control;
-        else this.room[k] = !!patch[k];
-      }
+      if (!(k in patch)) continue;
+      if (k === "capacity") this.room.capacity = Math.min(24, Math.max(2, Number(patch[k]) || 6));
+      else if (k === "control") this.room.control = ["host", "mods", "all"].includes(patch[k]) ? patch[k] : this.room.control;
+      else this.room[k] = !!patch[k];
     }
     this.#broadcast({ t: "room", room: this.room });
     this.emit("room", this.room);
@@ -449,8 +654,7 @@ export class Net {
     if (action === "kick" || action === "ban") {
       if (action === "ban") this.banned.add(target.nick.toLowerCase());
       this.#sendTo(target.id, { t: "kicked", reason: action, by: member.nick });
-      setTimeout(() => { try { this.conns.get(target.id)?.close(); } catch {} }, 150);
-      this.#dropMember(target.id);
+      setTimeout(() => { this.#dropMember(target.id); }, 200);
     }
   }
 
@@ -462,19 +666,21 @@ export class Net {
     this.#broadcastMembers();
   }
 
-  /* ---------- host receive ---------- */
+  /* ================= guest side receive ================= */
   #onHostMessage(msg) {
     switch (msg.t) {
       case "welcome":
         this.joined = true;
+        clearInterval(this.joinTimer);
         this.self = msg.self;
-        this.role = msg.role || msg.self?.role || "member";
+        this.role = msg.self?.role || "member";
         this.roomState = msg.room;
         this.emit("status", "online");
         this.emit("welcome", msg);
         this.emit("members", msg.members);
         break;
       case "deny":
+        clearInterval(this.joinTimer);
         this.emit("status", "offline");
         this.emit("deny", msg.reason);
         break;
@@ -482,56 +688,37 @@ export class Net {
         this.members = msg.members;
         this.emit("members", msg.members);
         break;
-      case "chat":
-        this.emit("chat", msg.msg);
-        break;
-      case "chatUpdate":
-        this.emit("chatUpdate", msg.msg);
-        break;
-      case "typing":
-        this.emit("typing", { id: msg.id, nick: msg.nick });
-        break;
-      case "playback":
-        this.emit("playback", msg.state);
-        break;
-      case "room":
-        this.roomState = msg.room;
-        if (this.self && msg.room) {
-          const me = this.self;
-          // role changes come through members; keep self.role in sync there
-        }
-        this.emit("room", msg.room);
-        break;
-      case "queue":
-        this.emit("queue", msg.items);
-        break;
-      case "kick":
-      case "kicked":
-        this.emit("kicked", msg.reason);
-        break;
-      case "denied":
-        this.emit("denied", msg.reason);
-        break;
-      case "forceMute":
-        this.emit("forceMute", msg.muted);
-        break;
-      case "voice":
-        this.emit("voice", { id: msg.id, on: msg.on, nick: msg.nick });
-        break;
-      default:
-        break;
+      case "chat": this.emit("chat", msg.msg); break;
+      case "chatUpdate": this.emit("chatUpdate", msg.msg); break;
+      case "typing": this.emit("typing", { id: msg.id, nick: msg.nick }); break;
+      case "playback": this.emit("playback", msg.state); break;
+      case "room": this.roomState = msg.room; this.emit("room", msg.room); break;
+      case "queue": this.emit("queue", msg.items); break;
+      case "kicked": this.emit("kicked", msg.reason); break;
+      case "denied": this.emit("denied", msg.reason); break;
+      case "forceMute": this.emit("forceMute", msg.muted); break;
+      case "voice": this.emit("voice", { id: msg.id, on: msg.on, nick: msg.nick }); break;
+      default: break;
     }
   }
 
-  /* ---------- unified command API ---------- */
+  sendHello() {
+    const send = () => {
+      if (this.dc?.readyState !== "open") return;
+      this.dc.send(JSON.stringify({ t: "hello", nick: this.nick }));
+    };
+    send();
+    setTimeout(send, 400);
+  }
+
+  /* ================= unified command API ================= */
   command(type, payload = {}) {
     if (this.isHost) {
       const me = this.members.get(this.selfId);
-      if (!me) return;
-      this.#applyLocal(me, type, payload);
+      if (me) this.#applyLocal(me, type, payload);
       return;
     }
-    try { this.hostConn?.send({ t: type, ...payload }); } catch {}
+    try { if (this.dc?.readyState === "open") this.dc.send(JSON.stringify({ t: type, ...payload })); } catch {}
   }
 
   #applyLocal(me, type, payload) {
@@ -561,13 +748,63 @@ export class Net {
     resolve(!!ok);
   }
 
+  /* ================= voice (mesh) ================= */
   call(peerId, stream) {
-    if (!this.peer) return null;
-    return this.peer.call(peerId, stream, { metadata: { nick: this.nick } });
+    if (!this.voiceCalls) this.voiceCalls = new Map();
+    if (this.voiceCalls.has(peerId)) return this.voiceCalls.get(peerId);
+    const { pc } = this.#createPc(`v:${peerId}`);
+    const mc = new MediaConn(this, peerId, pc);
+    this.voiceCalls.set(peerId, mc);
+    pc.ontrack = (e) => mc.emit("stream", e.streams[0] || new MediaStream([e.track]));
+    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+    (async () => {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await this.#sig({ k: "voff", to: peerId, from: this.selfId, sdp: pc.localDescription.sdp });
+      } catch {}
+    })();
+    return mc;
+  }
+
+  async #voiceOffer(msg) {
+    if (!this.voiceCalls) this.voiceCalls = new Map();
+    if (this.voiceCalls.has(msg.from)) return;
+    const { pc } = this.#createPc(`v:${msg.from}`);
+    const mc = new MediaConn(this, msg.from, pc);
+    this.voiceCalls.set(msg.from, mc);
+    pc.ontrack = (e) => mc.emit("stream", e.streams[0] || new MediaStream([e.track]));
+    mc.pendingOffer = msg;
+    this.emit("incomingCall", mc);
+  }
+
+  async answerCall(mc, stream) {
+    const { pc } = mc;
+    await pc.setRemoteDescription({ type: "offer", sdp: mc.pendingOffer.sdp });
+    this.#flushIce(`v:${mc.peer}`);
+    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await this.#sig({ k: "vans", to: mc.peer, from: this.selfId, sdp: pc.localDescription.sdp });
+  }
+
+  closeVoice(peerId) {
+    const mc = this.voiceCalls?.get(peerId);
+    if (!mc) return;
+    this.#sig({ k: "bye", to: peerId, from: this.selfId, v: true });
+    try { mc.pc.close(); } catch {}
+    this.voiceCalls.delete(peerId);
+    const rec = this.pcs.get(`v:${peerId}`);
+    if (rec) this.pcs.delete(`v:${peerId}`);
   }
 
   destroy() {
     this.destroyed = true;
-    try { this.peer?.destroy(); } catch {}
+    clearInterval(this.presenceTimer);
+    clearInterval(this.joinTimer);
+    if (!this.isHost) this.signal?.send({ k: "bye", from: this.selfId });
+    this.signal?.close();
+    for (const [, rec] of this.pcs) { try { rec.pc.close(); } catch {} }
+    this.pcs.clear();
   }
 }

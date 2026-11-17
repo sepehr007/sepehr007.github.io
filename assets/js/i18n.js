@@ -212,8 +212,7 @@ export function getLang() {
     const saved = localStorage.getItem(KEY);
     if (saved === "fa" || saved === "en") return saved;
   } catch {}
-  const nav = (navigator.language || "fa").slice(0, 2).toLowerCase();
-  return nav === "fa" ? "fa" : "en";
+  return "fa";
 }
 
 export function t(key, vars) {
