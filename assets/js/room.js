@@ -1048,7 +1048,7 @@ function renderQuality(info) {
     return;
   }
   const heights = [...new Set(info.levels.map((l) => l.height).filter(Boolean))].sort((a, b) => b - a);
-  if (!heights.length) {
+  if (heights.length < 2) {
     row.classList.add("hidden");
     return;
   }
