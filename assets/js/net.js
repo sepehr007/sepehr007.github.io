@@ -585,11 +585,13 @@ export class Net {
   #hostChat(member, msg) {
     const text = String(msg.text || "").slice(0, 500).trim();
     if (!text) return;
-    if (Date.now() - (member.lastChatAt || 0) < 500) return;
-    member.lastChatAt = Date.now();
+    const now = Date.now();
+    member.chatHits = (member.chatHits || []).filter((t) => now - t < 3000);
+    if (member.chatHits.length >= 6) return;
+    member.chatHits.push(now);
     const entry = {
       id: uid(), by: member.id, nick: member.nick, role: member.role,
-      text, at: Date.now(), replyTo: msg.replyTo || null,
+      text, at: now, replyTo: msg.replyTo || null,
       edited: false, deleted: false, pinned: false, reactions: {}
     };
     this.chat.push(entry);

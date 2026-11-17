@@ -38,6 +38,8 @@ let voice = null;
 let members = [];
 let queueItems = [];
 let roomInfo = null;
+let activeTabName = "chat";
+let unreadChat = 0;
 const WAKE_KEY = "wt.wake";
 let wakeWanted = store.get(WAKE_KEY, true) !== false;
 let wakeSentinel = null;
@@ -229,7 +231,7 @@ function wireNet() {
     if (selfVoice) voices.forEach((id) => voice.peerVoice(id, true));
   });
 
-  net.on("chat", (msg) => { appendMessage(msg, true); scrollChat(); });
+  net.on("chat", (msg) => { appendMessage(msg, true); noteIncomingChat(); scrollChat(); });
   net.on("chatUpdate", (msg) => updateMessage(msg));
   net.on("typing", ({ id, nick: n }) => {
     if (id === me.id) return;
@@ -1336,11 +1338,35 @@ function wirePrefs() {
 }
 
 /* ================= tabs ================= */
+function paintUnreadChat() {
+  const badge = $("#chatBadge");
+  if (!badge) return;
+  badge.textContent = unreadChat > 9 ? "9+" : String(unreadChat);
+  badge.classList.toggle("hidden", unreadChat === 0);
+}
+
+function noteIncomingChat() {
+  if (activeTabName === "chat" && document.visibilityState === "visible") return;
+  unreadChat = Math.min(99, unreadChat + 1);
+  paintUnreadChat();
+}
+
+function clearUnreadChat() {
+  if (!unreadChat) return;
+  unreadChat = 0;
+  paintUnreadChat();
+}
+
 function wireTabs() {
   $$(".tab").forEach((tab) => tab.addEventListener("click", () => activateTab(tab.dataset.tab)));
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && activeTabName === "chat") clearUnreadChat();
+  });
 }
 
 function activateTab(name) {
+  activeTabName = name;
+  if (name === "chat") clearUnreadChat();
   $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
   $("#sidebar").classList.add("open");

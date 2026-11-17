@@ -136,7 +136,10 @@
       <span class="grip-bar"></span>
     </button>
     <div class="tabs" role="tablist">
-      <button class="tab active" data-tab="chat" type="button" data-i18n="tab.chat">چت</button>
+      <button class="tab active" data-tab="chat" type="button">
+        <span data-i18n="tab.chat">چت</span>
+        <span class="tab-badge hidden" id="chatBadge" aria-live="polite"></span>
+      </button>
       <button class="tab" data-tab="people" type="button" data-i18n="tab.people">افراد</button>
       <button class="tab" data-tab="queue" type="button" data-i18n="tab.queue">صف</button>
       <button class="tab" data-tab="settings" type="button" data-i18n="tab.settings">تنظیمات</button>
