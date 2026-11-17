@@ -17,6 +17,10 @@ export const SITE_CONFIG_DEFAULTS = {
     nameEn: "Watch Together",
     taglineFa: "تماشای هم‌زمان فیلم با دوستان؛ چت، صدا و پخش همگام در مرورگر.",
     taglineEn: "Watch together in sync, with chat and live voice in your browser.",
+    metaTitleFa: "",
+    metaTitleEn: "",
+    metaDescFa: "",
+    metaDescEn: "",
     defaultTheme: "dark",
     accent: "#7c5cff",
     accent2: "#22d3ee",
@@ -123,6 +127,11 @@ export function normalizeSiteConfig(raw) {
   };
   merged.site.supportUrl = httpUrl(merged.site.supportUrl);
   merged.plans.premiumUrl = httpUrl(merged.plans.premiumUrl);
+  const text = (v, max) => String(v ?? "").trim().slice(0, max);
+  merged.site.metaTitleFa = text(merged.site.metaTitleFa, 70);
+  merged.site.metaTitleEn = text(merged.site.metaTitleEn, 70);
+  merged.site.metaDescFa = text(merged.site.metaDescFa, 160);
+  merged.site.metaDescEn = text(merged.site.metaDescEn, 160);
   return merged;
 }
 
@@ -227,9 +236,14 @@ export function applySiteConfig(cfg = current, { root = document } = {}) {
   const name = fa ? cfg.site.nameFa : cfg.site.nameEn;
 
   root.querySelectorAll(".brand-text").forEach((n) => { n.textContent = name; });
-  if (document.title) document.title = document.title.replace("هم‌تماشا", cfg.site.nameFa).replace("Watch Together", cfg.site.nameEn);
+  const metaTitle = (fa ? cfg.site.metaTitleFa : cfg.site.metaTitleEn).trim();
+  if (metaTitle) document.title = metaTitle;
+  else if (document.title) document.title = document.title.replace("هم‌تماشا", cfg.site.nameFa).replace("Watch Together", cfg.site.nameEn);
   const desc = root.querySelector('meta[name="description"]');
-  if (desc) desc.content = fa ? cfg.site.taglineFa : cfg.site.taglineEn;
+  const metaDesc = (fa ? cfg.site.metaDescFa : cfg.site.metaDescEn).trim();
+  if (desc) desc.content = metaDesc || (fa ? cfg.site.taglineFa : cfg.site.taglineEn);
+  const ogTitle = root.querySelector('meta[property="og:title"]');
+  if (ogTitle && metaTitle) ogTitle.content = metaTitle;
   const ogSite = root.querySelector('meta[property="og:site_name"]');
   if (ogSite) ogSite.content = name;
 

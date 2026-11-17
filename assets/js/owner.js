@@ -5,6 +5,9 @@ import {
 } from "./site-config.js";
 import { readModLog, logModeration, clearModLog } from "./modlog.js";
 import { apiFetch, getApiBase } from "./api.js";
+import { logAudit } from "./owner-audit.js";
+import { createCenter, getUi, setUi } from "./owner-center.js";
+import { pageDef } from "./owner-registry.js";
 
 const DRAFT_KEY = "wt.ownerDraft";
 const CRED_KEY = "wt.ownerCred";
@@ -26,9 +29,10 @@ let draft = null;
 let verifiedToken = "";
 let saveTimer = 0;
 let lockDeadline = 0;
+const committed = new Map();
 
 const VIEW_META = {
-  overview: ["نمای کلی", "وضعیت سایت، تنظیمات منتشرشده و پیش‌نویس محلی."],
+  overview: ["داشبورد", "وضعیت زندهٔ پلتفرم، اقدام‌های سریع و آخرین تغییرات."],
   branding: ["هویت سایت", "نام، شعار، تم و رنگ‌های پیش‌فرض سراسری."],
   content: ["اطلاعیه و تعمیرات", "پیام سراسری و قفل موقت سایت."],
   access: ["دسترسی‌ها", "کنترل ثبت‌نام، ورود، ساخت و پیوستن به اتاق."],
@@ -224,6 +228,8 @@ function renderInputs() {
   refreshAnnouncePreview();
   refreshOverview();
   refreshDiff();
+  committed.clear();
+  for (const [path] of Object.entries(flatten(draft))) committed.set(path, getPath(draft, path));
 }
 
 function refreshAnnouncePreview() {
@@ -374,24 +380,26 @@ function toggleBan(username, banned) {
   if (banned) writeBans(bans.filter((x) => x !== u));
   else writeBans([...bans, u]);
   logModeration(banned ? "unban" : "ban", `@${u}`);
+  logAudit({ kind: "user", action: banned ? "رفع مسدودی" : "مسدودسازی", target: `@${u}` });
   renderUsers();
   refreshOverview();
   renderLog();
   toast(banned ? "مسدودی محلی برداشته شد." : "این حساب روی همین مرورگر مسدود شد.", "success");
 }
-function deleteLocalUser(username) {
+function deleteLocalUser(username, opts = {}) {
   const u = String(username || "").toLowerCase();
   const users = readUsers();
   if (!users[u]) return;
-  if (!confirm(`حساب @${u} و رمز هش‌شدهٔ آن از این مرورگر حذف شود؟ این کار برگشت‌پذیر نیست.`)) return;
+  if (!opts.silent && !confirm(`حساب @${u} و رمز هش‌شدهٔ آن از این مرورگر حذف شود؟ این کار برگشت‌پذیر نیست.`)) return;
   delete users[u];
   store.set(USERS_KEY, users);
   writeBans(readBans().filter((x) => x !== u));
   logModeration("deleteAccount", `@${u}`);
+  logAudit({ kind: "user", action: "حذف حساب", target: `@${u}` });
   renderUsers();
   refreshOverview();
   renderLog();
-  toast("حساب محلی حذف شد.", "success");
+  if (!opts.silent) toast("حساب محلی حذف شد.", "success");
 }
 function renderLog() {
   const box = $("#modLogList");
@@ -426,18 +434,28 @@ function renderLog() {
 }
 
 /* ---------- overview + views ---------- */
+function metaFor(name) {
+  const def = pageDef(name);
+  if (VIEW_META[name]) {
+    return { view: def?.view || name, page: def?.id || name, title: VIEW_META[name][0], sub: VIEW_META[name][1] };
+  }
+  if (def) return { view: def.view, page: def.id, title: def.title, sub: def.sub };
+  return { view: "overview", page: "dashboard", title: VIEW_META.overview[0], sub: VIEW_META.overview[1] };
+}
 function showView(name) {
-  if (!VIEW_META[name]) name = "overview";
-  $$("[data-view]").forEach((v) => v.classList.toggle("active", v.dataset.view === name));
-  $$("[data-nav]").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
-  const [title, sub] = VIEW_META[name];
-  $("#viewTitle").textContent = title;
-  $("#viewSub").textContent = sub;
+  const info = metaFor(name);
+  center.renderPage(info.page);
+  $$("[data-view]").forEach((v) => v.classList.toggle("active", v.dataset.view === info.view));
+  $$("[data-nav]").forEach((b) => b.classList.toggle("active", b.dataset.nav === info.view));
+  $("#viewTitle").textContent = info.title;
+  $("#viewSub").textContent = info.sub;
   $("#ownerSide")?.classList.remove("open");
-  if (name === "moderation") { renderUsers(); renderLog(); }
-  if (name === "publish") refreshDiff();
-  if (name === "security") refreshTokenState();
-  if (name === "system") refreshSystemView();
+  document.getElementById("owBackdrop")?.classList.add("hidden");
+  if (!$("#ownerApp")?.classList.contains("hidden")) setUi({ view: info.page });
+  if (info.view === "moderation") { renderUsers(); renderLog(); }
+  if (info.view === "publish") refreshDiff();
+  if (info.view === "security") refreshTokenState();
+  if (info.view === "system") refreshSystemView();
 }
 function goto(name) {
   showView(name);
@@ -474,6 +492,7 @@ async function unlock() {
   renderAll();
   try { history.replaceState(null, "", location.pathname); } catch {}
   logModeration("ownerLogin", "ورود موفق به کنسول");
+  logAudit({ kind: "security", action: "ورود مالک به کنسول" });
 }
 async function storeOwnerToken(pass) {
   try {
@@ -637,6 +656,7 @@ async function importJson(file) {
     draft = normalizeSiteConfig(raw);
     saveDraft();
     renderAll();
+    logAudit({ kind: "config", action: "بارگذاری فایل تنظیمات", target: file.name || "" });
     toast("فایل تنظیمات بارگذاری شد.", "success");
   } catch {
     toast("فایل JSON معتبر نیست.", "error");
@@ -646,12 +666,14 @@ function resetDraft() {
   if (!confirm("همهٔ تغییرات محلی دور انداخته شود و نسخهٔ منتشرشده بازگردد؟")) return;
   draft = clone(published);
   store.set(DRAFT_KEY, draft);
+  logAudit({ kind: "config", action: "بازنشانی پیش‌نویس تنظیمات" });
   renderAll();
   toast("پیش‌نویس بازنشانی شد.");
 }
 function previewSite() {
   savePreviewDraft(draft);
   window.open("index.html?preview=1", "_blank");
+  logAudit({ kind: "action", action: "بازکردن پیش‌نمایش سایت" });
   toast("پیش‌نمایش در تب تازه باز شد (فقط برای مالک).", "success");
 }
 function setPubState(text, cls = "") {
@@ -759,6 +781,13 @@ function bindInputs() {
   document.addEventListener("change", (e) => {
     const input = e.target.closest?.("[data-cfg]");
     if (!input) return;
+    const path = input.dataset.cfg;
+    const before = committed.get(path);
+    const after = getPath(draft, path);
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      logAudit({ kind: "config", action: "تغییر تنظیمات", target: path, before, after });
+      committed.set(path, after);
+    }
     saveDraft();
   });
 }
@@ -770,15 +799,7 @@ function bindChrome() {
 
   $$("[data-nav]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.nav)));
   $$("[data-goto]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.goto)));
-  $("#menuBtn").addEventListener("click", () => $("#ownerSide").classList.toggle("open"));
-  $("#lockBtn").addEventListener("click", () => {
-    if (!confirm("کنسول قفل شود؟ برای ورود دوباره رمز مالک لازم است.")) return;
-    setOwnerSession(false);
-    try { sessionStorage.removeItem(TOKEN_KEY); } catch {}
-    try { sessionStorage.removeItem(OWNER_JWT_KEY); } catch {}
-    verifiedToken = "";
-    safeReload();
-  });
+  $("#lockBtn").addEventListener("click", lockConsole);
 
   $("#passForm").addEventListener("submit", changePass);
   $("#tokenForm").addEventListener("submit", verifySessionToken);
@@ -799,6 +820,42 @@ function bindChrome() {
   });
 }
 
+function setCfg(path, value) {
+  if (!draft) return;
+  setPath(draft, path, value);
+  saveDraft();
+  renderInputs();
+}
+function lockConsole() {
+  if (!confirm("کنسول قفل شود؟ برای ورود دوباره رمز مالک لازم است.")) return;
+  setOwnerSession(false);
+  try { sessionStorage.removeItem(TOKEN_KEY); } catch {}
+  try { sessionStorage.removeItem(OWNER_JWT_KEY); } catch {}
+  verifiedToken = "";
+  logAudit({ kind: "security", action: "قفل کنسول" });
+  safeReload();
+}
+const center = createCenter({
+  getDraft: () => draft,
+  getPublished: () => published,
+  isDirty,
+  setCfg,
+  renderInputs,
+  toast,
+  showView,
+  readUsers,
+  readBans,
+  toggleBan,
+  deleteLocalUser,
+  readModLog,
+  previewSite,
+  downloadJson,
+  importJsonFile: importJson,
+  resetDraft,
+  lockConsole,
+  getApiBase
+});
+
 function renderAll() {
   configureGate();
   renderInputs();
@@ -806,7 +863,10 @@ function renderAll() {
   renderLog();
   refreshTokenState();
   markDirty();
-  showView("overview");
+  center.ensureExtras();
+  center.refreshAll();
+  const saved = getUi().view;
+  showView(pageDef(saved) ? saved : "dashboard");
 }
 
 function refreshSystemView() {
@@ -852,6 +912,7 @@ async function validOwnerAccess() {
     published = clone(SITE_CONFIG_DEFAULTS);
   }
   loadDraft();
+  center.init();
   bindChrome();
   bindInputs();
   configureGate();

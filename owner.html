@@ -92,37 +92,26 @@
 
 <!-- ================= app ================= -->
 <div class="owner-app hidden" id="ownerApp">
+  <div class="ow-backdrop hidden" id="owBackdrop"></div>
+
   <aside class="owner-side" id="ownerSide">
     <div class="os-brand">
       <span class="os-mark" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2l7 3v6c0 5-3.4 8.4-7 11-3.6-2.6-7-6-7-11V5l7-3z"/></svg>
       </span>
-      <div>
+      <div class="os-brand-txt">
         <b>کنسول مالک</b>
-        <span>Site Owner Console</span>
+        <span>Owner Control Center</span>
       </div>
+      <button class="os-collapse" id="owCollapse" type="button" aria-label="جمع کردن منو" title="جمع کردن منو">«</button>
     </div>
 
-    <nav class="os-nav" aria-label="بخش‌های مدیریت">
-      <button class="active" data-nav="overview" type="button"><span class="ni">◈</span>نمای کلی</button>
-      <button data-nav="branding" type="button"><span class="ni">✎</span>هویت سایت</button>
-      <button data-nav="content" type="button"><span class="ni">◫</span>اطلاعیه و تعمیرات</button>
-      <button data-nav="access" type="button"><span class="ni">⌘</span>دسترسی‌ها</button>
-      <button data-nav="features" type="button"><span class="ni">◧</span>قابلیت‌ها</button>
-      <button data-nav="limits" type="button"><span class="ni">⏱</span>محدودیت‌ها</button>
-      <button data-nav="plans" type="button"><span class="ni">◇</span>پلن پریمیوم</button>
-      <button data-nav="moderation" type="button"><span class="ni">⚑</span>مدیریت محلی</button>
-      <button data-nav="rooms" type="button"><span class="ni">▤</span>اتاق‌ها</button>
-      <button data-nav="security" type="button"><span class="ni">⌂</span>امنیت مالک</button>
-      <button data-nav="system" type="button"><span class="ni">⚙</span>سیستم</button>
-      <button data-nav="analytics" type="button"><span class="ni">◔</span>آمار</button>
-      <button data-nav="publish" type="button"><span class="ni">↑</span>انتشار تغییرات</button>
-    </nav>
+    <nav class="os-nav" id="osNav" aria-label="بخش‌های مدیریت"></nav>
 
     <div class="os-foot">
       <a href="./" class="os-site" target="_blank" rel="noopener">مشاهده سایت ↗</a>
       <button class="os-lock" id="lockBtn" type="button">قفل کنسول</button>
-      <span class="os-version">Static owner plane · v1</span>
+      <span class="os-version">Owner Control Center · Piece 3</span>
     </div>
   </aside>
 
@@ -130,11 +119,23 @@
     <header class="owner-top">
       <button class="om-menu" id="menuBtn" type="button" aria-label="منو">☰</button>
       <div class="ot-titles">
-        <h1 id="viewTitle">نمای کلی</h1>
-        <p id="viewSub">وضعیت سایت، تنظیمات منتشرشده و پیش‌نویس محلی.</p>
+        <h1 id="viewTitle">داشبورد</h1>
+        <p id="viewSub">وضعیت زندهٔ سایت، تغییرات و فعالیت اخیر.</p>
       </div>
+
+      <div class="ot-search">
+        <input id="owSearch" type="search" placeholder="جستجو در صفحه‌ها، تنظیمات و کاربران…" autocomplete="off" aria-label="جستجوی سراسری">
+        <div class="ow-search-results hidden" id="owSearchResults"></div>
+      </div>
+
       <div class="ot-actions">
         <span class="dirty-badge hidden" id="dirtyBadge">تغییر ذخیره‌نشده</span>
+        <div class="ow-notif">
+          <button class="ow-icon-btn" id="owNotifBtn" type="button" aria-label="اعلان‌ها" title="اعلان‌ها">
+            🔔<span class="ow-notif-badge hidden" id="owNotifBadge">0</span>
+          </button>
+          <div class="ow-notif-panel hidden" id="owNotifPanel"></div>
+        </div>
         <button class="btn btn-ghost btn-sm" id="previewBtn" type="button">پیش‌نمایش</button>
         <button class="btn btn-primary btn-sm" id="publishTop" type="button">انتشار</button>
       </div>
@@ -142,7 +143,7 @@
 
     <div class="owner-content">
 
-      <!-- overview -->
+      <!-- overview / dashboard -->
       <section class="oview active" data-view="overview">
         <div class="stat-grid">
           <article class="ostat">
@@ -167,6 +168,39 @@
           </article>
         </div>
 
+        <div class="dash-strip">
+          <article class="ostat dash-card">
+            <span class="ostat-lbl">قابلیت‌های فعال</span>
+            <strong id="dashFeatures">—</strong>
+            <small>از ۷ قابلیت اتاق</small>
+          </article>
+          <article class="ostat dash-card">
+            <span class="ostat-lbl">کاربران محلی</span>
+            <strong id="dashUsers">0</strong>
+            <small>حساب‌های این مرورگر</small>
+          </article>
+          <article class="ostat dash-card">
+            <span class="ostat-lbl">مسدودها</span>
+            <strong id="dashBans">0</strong>
+            <small>وضعیت محلی</small>
+          </article>
+          <article class="ostat dash-card">
+            <span class="ostat-lbl">رویدادهای کنسول</span>
+            <strong id="dashEvents">0</strong>
+            <small>گزارش اقدامات مالک</small>
+          </article>
+        </div>
+
+        <article class="ocard dash-quick">
+          <h2>دسترسی سریع</h2>
+          <div class="dash-quick-row">
+            <button class="qa-btn" id="qaPreview" type="button"><b>پیش‌نمایش سایت</b><span>بازکردن تب preview با پیش‌نویس فعلی</span></button>
+            <button class="qa-btn" id="qaFeature" type="button"><b>مرکز قابلیت‌ها</b><span>خاموش/روشن کردن بخش‌های اتاق</span></button>
+            <button class="qa-btn" id="qaBackup" type="button"><b>پشتیبان تنظیمات</b><span>دانلود JSON تنظیمات فعلی</span></button>
+            <button class="qa-btn qa-danger" id="qaLock" type="button"><b>قفل کنسول</b><span>خروج امن و پاک‌کردن نشست</span></button>
+          </div>
+        </article>
+
         <div class="ov-grid">
           <article class="ocard">
             <h2>وضعیت زنده</h2>
@@ -187,11 +221,17 @@
             <h2>وضعیت پیش‌نویس</h2>
             <p class="ohint">تغییرات اول در همین مرورگر ذخیره می‌شوند. تا وقتی «انتشار» را نزنی، سایت عمومی عوض نمی‌شود.</p>
             <div class="draft-state" id="draftState">هم‌سان با نسخهٔ منتشرشده</div>
+            <p class="ohint" id="dashChanges" style="margin-top:10px">هم‌سان با نسخهٔ منتشرشده</p>
             <div class="ov-actions">
               <button class="btn btn-ghost btn-sm" id="discardTop" type="button">دور انداختن تغییرات</button>
             </div>
           </article>
         </div>
+
+        <article class="ocard">
+          <h2>فعالیت اخیر</h2>
+          <div class="log-list" id="dashActivity"></div>
+        </article>
 
         <article class="ocard honesty">
           <h2>مرزهای صادقانهٔ معماری</h2>
@@ -451,6 +491,9 @@
           <p>رمز مالک داخل کد سمت مرورگر بررسی می‌شود؛ بنابراین نقش یک قفل سادهٔ ورود را دارد و مرز امنیتی واقعی مخزن نیست. رمز را جایی منتشر نکن و تغییرات حساس را از مسیر امن خود گیت‌هاب اعمال کن.</p>
         </article>
       </section>
+
+      <!-- dynamically generated owner pages -->
+      <div id="dynViews"></div>
 
     </div>
   </main>
