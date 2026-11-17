@@ -45,6 +45,8 @@ const WAKE_KEY = "wt.wake";
 let wakeWanted = store.get(WAKE_KEY, true) !== false;
 let wakeSentinel = null;
 let wakePending = false;
+const QUEUE_AUTO_KEY = "wt.queueAuto";
+let queueAuto = store.get(QUEUE_AUTO_KEY, true) !== false;
 let selfVoice = false;
 let currentPlayback = null;
 let localMode = false;
@@ -120,6 +122,7 @@ async function boot() {
   wireSettings();
   wireWakeLock();
   wireSleepTimer();
+  wireQueueAuto();
   wireReactions();
   wirePrefs();
   wireVoice();
@@ -1316,6 +1319,33 @@ function wireSleepTimer() {
       if (!$("#video")?.paused) player.togglePlay();
       toast(t("toast.sleepDone"), "info", 5000);
     }, minutes * 60000);
+  });
+}
+
+/* ================= queue auto-advance ================= */
+function queueTitle(url) {
+  try {
+    const name = decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() || "");
+    return name || url;
+  } catch { return url; }
+}
+
+function wireQueueAuto() {
+  const input = $("#optQueueAuto");
+  if (!input) return;
+  if (!isHost) { $("#queueAutoRow")?.classList.add("hidden"); return; }
+  input.checked = queueAuto;
+  input.addEventListener("change", () => {
+    queueAuto = input.checked;
+    store.set(QUEUE_AUTO_KEY, queueAuto);
+  });
+  $("#video").addEventListener("ended", () => {
+    if (!isHost || !queueAuto || !queueItems.length) return;
+    const best = [...queueItems].sort((a, b) => b.votes.length - a.votes.length || a.at - b.at)[0];
+    if (!best) return;
+    toast(t("toast.queueNext", { name: queueTitle(best.url) }), "info", 4500);
+    net.command("queuePlay", { id: best.id });
+    setTimeout(() => net.command("control", { action: "play" }), 250);
   });
 }
 

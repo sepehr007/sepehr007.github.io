@@ -707,7 +707,10 @@ export class Net {
     if (!this.canControl(member)) return this.#sendTo(member.id, { t: "denied", reason: "control" });
     const item = this.queue.find((q) => q.id === id);
     if (!item) return;
+    this.queue = this.queue.filter((q) => q.id !== id);
     this.playback = { kind: "url", url: item.url, playing: false, time: 0, at: Date.now(), rate: 1, by: member.nick };
+    this.#broadcast({ t: "queue", items: this.queue });
+    this.emit("queue", this.queue);
     this.#broadcast({ t: "playback", state: this.playback });
     this.emit("playback", this.playback);
   }
