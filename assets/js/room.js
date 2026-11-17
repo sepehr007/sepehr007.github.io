@@ -231,6 +231,7 @@ function wireNet() {
     const dot = $("#netStatus");
     dot.dataset.state = s;
     $("#netLabel").textContent = s === "online" ? t("net.online") : s === "connecting" ? t("net.connecting") : t("net.offline");
+    if (s === "online") $("#connLostBar")?.classList.add("hidden");
   });
 
   net.on("welcome", (data) => {
@@ -255,6 +256,7 @@ function wireNet() {
     }
     syncStageEmpty();
     $("#netLabel").textContent = t("net.online");
+    $("#connLostBar")?.classList.add("hidden");
   });
 
   net.on("members", (list) => {
@@ -355,18 +357,20 @@ function wireNet() {
       rejected: getLang() === "fa" ? "میزبان ورود را تأیید نکرد" : "Host declined the request"
     };
     toast(map[reason] || t("toast.connLost"), "error");
+    $("#connLostBar")?.classList.add("hidden");
     const netLabel = $("#netLabel");
     if (netLabel) netLabel.textContent = t("net.offline");
     setTimeout(() => location.replace("./"), 2200);
   });
 
   net.on("kicked", () => {
+    $("#connLostBar")?.classList.add("hidden");
     toast(t("toast.youWereKicked"), "error");
     setTimeout(() => location.replace("./"), 1500);
   });
 
   net.on("disconnected", () => {
-    toast(t("toast.connLost"), "error");
+    $("#connLostBar")?.classList.remove("hidden");
   });
 
   net.on("denied", (reason) => {
@@ -2127,6 +2131,8 @@ function wireMisc() {
     cleanup();
     location.replace("./");
   });
+
+  $("#reconnectBtn")?.addEventListener("click", () => location.reload());
 
   $("#sideBtn")?.addEventListener("click", () => {
     if (window.matchMedia("(max-width:1080px)").matches) {

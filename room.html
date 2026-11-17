@@ -122,6 +122,15 @@
         </div>
         <div class="local-badge hidden" id="localBadge" data-i18n="room.localBadge">پخش محلی — فقط روی دستگاه میزبان</div>
 
+        <div class="conn-lost hidden" id="connLostBar" role="status">
+          <span class="conn-ico" aria-hidden="true">⚠</span>
+          <div class="conn-body">
+            <strong data-i18n="net.lostTitle">ارتباط با اتاق قطع شد</strong>
+            <span data-i18n="net.lostSub">میزبان در دسترس نیست. بعد از برگشتن شبکه دوباره وصل شو.</span>
+          </div>
+          <button class="btn btn-primary btn-sm" id="reconnectBtn" type="button" data-i18n="net.reconnect">اتصال دوباره</button>
+        </div>
+
         <div class="file-offer hidden" id="fileOfferBar">
           <span class="fo-ico">📥</span>
           <div class="fo-body">
