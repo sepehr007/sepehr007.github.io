@@ -605,7 +605,7 @@ async function loadLocalFile(file) {
     startLocalPlayback(url, file.name, converted);
   } catch (err) {
     console.error(err);
-    toast(t("toast.convertFailed"), "error");
+    toast(t(err?.message === "cdn-unavailable" ? "toast.converterOffline" : "toast.convertFailed"), "error");
   } finally {
     hidePrep();
   }
