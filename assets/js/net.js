@@ -1,6 +1,15 @@
 import { validateMediaUrl, uid } from "./core.js";
 
-const SIGNAL_BASE = "https://ntfy.sh";
+const DEFAULT_SIGNAL_BASE = "https://ntfy.sh";
+const SIGNAL_BASE = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get("signal");
+    if (q) return q.replace(/\/+$/, "");
+    const saved = localStorage.getItem("wt.signal");
+    if (saved) return saved.replace(/\/+$/, "");
+  } catch {}
+  return DEFAULT_SIGNAL_BASE;
+})();
 const MAX_CHAT = 400;
 const JOIN_RETRY_MS = 2500;
 const JOIN_MAX_TRIES = 9;
@@ -18,6 +27,20 @@ const ICE = {
 async function sha256hex(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function waitIceGathering(pc, timeout = 4000) {
+  return new Promise((resolve) => {
+    if (!pc || pc.iceGatheringState === "complete") return resolve();
+    const check = () => {
+      if (pc.iceGatheringState === "complete") {
+        pc.removeEventListener("icegatheringstatechange", check);
+        resolve();
+      }
+    };
+    pc.addEventListener("icegatheringstatechange", check);
+    setTimeout(resolve, timeout);
+  });
 }
 
 async function topicFor(code) {
@@ -271,6 +294,7 @@ export class Net {
     const existing = this.conns.get(msg.from);
     if (existing) {
       if (existing.open) return;
+      if (Date.now() - (existing.createdAt || 0) < 12000) return;
       try { existing.pc.close(); } catch {}
       this.conns.delete(msg.from);
       const old = this.pcs.get(`d:${msg.from}`);
@@ -300,11 +324,12 @@ export class Net {
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
+    await waitIceGathering(pc);
     await this.#sig({ k: "offer", to: msg.from, from: this.selfId, sdp: pc.localDescription.sdp });
   }
 
   #wireHostDc(guestId, dc, pc, nick) {
-    const conn = { dc, pc, peer: guestId, nick, hello: false };
+    const conn = { dc, pc, peer: guestId, nick, hello: false, createdAt: Date.now() };
     dc.binaryType = "arraybuffer";
     this.conns.set(guestId, conn);
     dc.onopen = () => { conn.open = true; };
@@ -326,8 +351,15 @@ export class Net {
   }
 
   async #guestAcceptOffer(msg) {
-    if (this.pcs.has(`d:${msg.from}`)) return;
-    const { pc } = this.#createPc(`d:${msg.from}`);
+    const key = `d:${msg.from}`;
+    if (this.pcs.has(key)) {
+      if (this.dc?.readyState === "open") return;
+      const rec = this.pcs.get(key);
+      try { rec.pc.close(); } catch {}
+      this.pcs.delete(key);
+      this.dc = null;
+    }
+    const { pc } = this.#createPc(key);
     pc.ondatachannel = (e) => {
       this.dc = e.channel;
       e.channel.binaryType = "arraybuffer";
@@ -352,6 +384,7 @@ export class Net {
     this.#flushIce(`d:${msg.from}`);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
+    await waitIceGathering(pc);
     await this.#sig({ k: "answer", to: msg.from, from: this.selfId, sdp: pc.localDescription.sdp });
   }
 
@@ -373,11 +406,6 @@ export class Net {
     const pc = new RTCPeerConnection(ICE);
     const rec = { pc, pending: [], remoteSet: false };
     this.pcs.set(key, rec);
-    pc.onicecandidate = (e) => {
-      if (!e.candidate) return;
-      const [kind, peer] = [key[0], key.slice(2)];
-      this.#sig({ k: kind === "v" ? "vice" : "ice", to: peer, from: this.selfId, cand: e.candidate.toJSON() });
-    };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "failed") {
         this.emit("error", "net");
@@ -844,6 +872,7 @@ export class Net {
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        await waitIceGathering(pc);
         await this.#sig({ k: "voff", to: peerId, from: this.selfId, sdp: pc.localDescription.sdp });
       } catch {}
     })();
@@ -868,6 +897,7 @@ export class Net {
     stream.getTracks().forEach((t) => pc.addTrack(t, stream));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
+    await waitIceGathering(pc);
     await this.#sig({ k: "vans", to: mc.peer, from: this.selfId, sdp: pc.localDescription.sdp });
   }
 

@@ -394,7 +394,9 @@ function updatePlayUI(playing) {
 function syncStageEmpty() {
   const stageEmpty = $("#stageEmpty");
   if (!stageEmpty) return;
-  stageEmpty.classList.toggle("hidden", !!player?.url);
+  const has = !!player?.url;
+  stageEmpty.classList.toggle("hidden", has);
+  $("#videoFrame").classList.toggle("has-media", has);
 }
 
 function loadVideoFromInput() {
