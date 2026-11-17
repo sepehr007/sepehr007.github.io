@@ -1200,7 +1200,17 @@ function wireMisc() {
     location.replace("./");
   });
 
-  $("#sideBtn")?.addEventListener("click", () => $("#sidebar").classList.toggle("open"));
+  $("#sideBtn")?.addEventListener("click", () => {
+    if (window.matchMedia("(max-width:1080px)").matches) {
+      $("#sidebar").classList.toggle("open");
+      return;
+    }
+    const hidden = $(".room-shell").classList.toggle("chat-hidden");
+    store.set("wt.chatHidden", hidden);
+  });
+  if (store.get("wt.chatHidden", false) && window.matchMedia("(min-width:1081px)").matches) {
+    $(".room-shell").classList.add("chat-hidden");
+  }
 
   document.addEventListener("langchange", () => {
     renderMembers();

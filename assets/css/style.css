@@ -25,6 +25,8 @@
   --font:"Vazirmatn",system-ui,-apple-system,"Segoe UI",sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
+html{color-scheme:dark}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
 html,body{height:100%}
 body{
   font-family:var(--font);
@@ -155,8 +157,9 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .topbar-right{display:flex;align-items:center;gap:6px}
 .invite-btn{height:26px;padding:0 11px;border-radius:99px;font-size:12px;margin-inline-start:4px;box-shadow:0 6px 20px -10px rgba(124,92,255,.95)}
 .invite-btn svg{width:13px;height:13px}
-.side-toggle{display:none}
-@media (max-width:1080px){.side-toggle{display:grid}}
+.side-toggle{display:grid}
+.room-shell.chat-hidden{grid-template-columns:minmax(0,1fr) 0}
+.room-shell.chat-hidden .sidebar{display:none}
 .icon-btn{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;color:var(--text-dim);border:1px solid transparent;transition:.2s}
 .icon-btn:hover{background:var(--panel-strong);color:var(--text);border-color:var(--border)}
 .icon-btn.active{background:rgba(52,211,153,.14);color:var(--success);border-color:rgba(52,211,153,.3)}
