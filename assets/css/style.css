@@ -631,6 +631,13 @@ html[dir="rtl"] .avatar-choice.active::after{right:auto;left:5px}
 .pref-row label{font-size:12px;color:var(--text-dim)}
 .pref-row input[type=range]{width:100%;padding:0;height:4px;border:none;border-radius:99px;background:rgba(255,255,255,.18);appearance:none;accent-color:var(--accent);cursor:pointer}
 .pref-val{font-size:11px;color:var(--text-faint);text-align:end;font-variant-numeric:tabular-nums}
+.pref-live{margin-top:14px;padding:10px 11px;border:1px dashed rgba(124,92,255,.36);border-radius:12px;background:rgba(124,92,255,.07)}
+.pref-live-label{display:block;margin-bottom:7px;font-size:10.5px;font-weight:700;letter-spacing:.02em;color:var(--text-faint);text-transform:uppercase}
+.pref-live-bubble{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:10px;background:rgba(9,10,17,calc(var(--side-alpha,.72) + .16));border:1px solid var(--border);min-width:0}
+.pref-live-bubble b{font-size:11.5px;color:var(--accent-2)}
+.pref-live-text{font-size:var(--chat-size,13.4px);line-height:1.65;color:#cfd7e8;filter:brightness(var(--chat-bright,1));word-break:break-word}
+html[data-theme="light"] .pref-live-bubble{background:rgba(255,255,255,.9)}
+html[data-theme="light"] .pref-live-text{color:#303a4d}
 .pref-note{margin-top:12px}
 .subs-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
 .subs-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;border:1px solid var(--border);background:rgba(255,255,255,.03)}
