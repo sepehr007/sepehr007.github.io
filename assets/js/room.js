@@ -114,6 +114,7 @@ async function boot() {
   wireVoice();
   wireMisc();
   wireViewport();
+  wireSheet();
   wireFileLoad();
   setInterval(() => broadcastLocalState(), 4000);
 
@@ -1420,6 +1421,80 @@ document.addEventListener("click", (e) => {
   if (side.contains(e.target)) return;
   side.classList.remove("open");
 });
+
+/* draggable split between video and chat on phones */
+function wireSheet() {
+  const grip = $("#sheetGrip");
+  const shell = $(".room-shell");
+  const sidebar = $("#sidebar");
+  if (!grip || !shell || !sidebar) return;
+  const mq = window.matchMedia("(max-width: 640px)");
+  const KEY = "wt.sheetH";
+  const PEEK = 190;
+  const topbarH = () => $(".topbar")?.offsetHeight || 56;
+  const maxH = () => Math.max(PEEK + 90, window.innerHeight - topbarH() - 148);
+  const midH = () => Math.min(maxH() - 70, Math.max(PEEK + 110, Math.round(window.innerHeight * 0.46)));
+  const clamp = (v) => Math.max(PEEK, Math.min(maxH(), v));
+  let current = 0;
+  let drag = null;
+
+  const setH = (v) => {
+    current = clamp(v);
+    shell.style.setProperty("--sheet-h", `${Math.round(current)}px`);
+    grip.setAttribute("aria-expanded", String(current > midH() + 40));
+  };
+  const save = () => {
+    try { sessionStorage.setItem(KEY, String(Math.round(current))); } catch {}
+  };
+  const snapTo = (v) => { setH(v); save(); };
+  const snap = () => {
+    const pts = [PEEK, midH(), maxH()];
+    snapTo(pts.reduce((a, b) => (Math.abs(b - current) < Math.abs(a - current) ? b : a)));
+  };
+  const init = () => {
+    if (!mq.matches) { shell.style.removeProperty("--sheet-h"); return; }
+    let saved = 0;
+    try { saved = Number(sessionStorage.getItem(KEY)) || 0; } catch {}
+    setH(saved || midH());
+  };
+
+  grip.addEventListener("pointerdown", (e) => {
+    if (!mq.matches || document.body.classList.contains("chat-focus")) return;
+    e.preventDefault();
+    drag = { y: e.clientY, h: sidebar.getBoundingClientRect().height, moved: 0, id: e.pointerId };
+    try { grip.setPointerCapture(e.pointerId); } catch {}
+    document.body.classList.add("sheet-drag");
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dy = drag.y - e.clientY;
+    drag.moved = Math.max(drag.moved, Math.abs(dy));
+    setH(drag.h + dy);
+  });
+  const stop = (e) => {
+    if (!drag || (e && e.pointerId !== drag.id)) return;
+    document.body.classList.remove("sheet-drag");
+    try { grip.releasePointerCapture(drag.id); } catch {}
+    if (drag.moved < 7) snapTo(current > (midH() + maxH()) / 2 ? midH() : maxH());
+    else snap();
+    drag = null;
+  };
+  grip.addEventListener("pointerup", stop);
+  grip.addEventListener("pointercancel", stop);
+  grip.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    snapTo(current > midH() + 40 ? midH() : maxH());
+  });
+
+  mq.addEventListener?.("change", init);
+  window.addEventListener("resize", () => {
+    if (!mq.matches) return;
+    if (drag) setH(current);
+    else snapTo(clamp(current || midH()));
+  });
+  init();
+}
 
 /* keyboard-aware mobile layout: chat takes the visible area while typing */
 function wireViewport() {

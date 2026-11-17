@@ -214,6 +214,112 @@ export function highlightMentions(text, nick) {
   return safe.split(mention).join(`<span class="mention">${mention}</span>`);
 }
 
+/* custom pull-to-refresh that also works on the fixed room layout */
+let ptrWired = false;
+function wirePullToRefresh() {
+  if (ptrWired || typeof document === "undefined") return;
+  if (!window.matchMedia("(pointer: coarse)").matches) return;
+  ptrWired = true;
+
+  const box = document.createElement("div");
+  box.className = "ptr";
+  box.setAttribute("aria-hidden", "true");
+  box.innerHTML = '<span class="ptr-spinner"></span><span class="ptr-label"></span>';
+  document.body.append(box);
+  const label = box.querySelector(".ptr-label");
+  const fa = () => document.documentElement.lang === "fa";
+  const THRESHOLD = 76;
+  const state = { startY: 0, startX: 0, tracking: false, pulling: false, pull: 0, ready: false, busy: false };
+
+  const atTop = (target) => {
+    for (let n = target instanceof Element ? target : null; n && n !== document.body; n = n.parentElement) {
+      const st = getComputedStyle(n);
+      if (/(auto|scroll)/.test(st.overflowY) && n.scrollHeight > n.clientHeight + 2) return n.scrollTop <= 0;
+    }
+    return (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
+  };
+  const blocked = (target) => !!target?.closest?.(
+    "input, textarea, select, [contenteditable='true'], .sheet-grip, .ptr, .modal-backdrop, [data-no-ptr]"
+  );
+  const paint = (pull) => {
+    state.pull = pull;
+    const p = Math.min(1, pull / THRESHOLD);
+    box.style.setProperty("--ptr-y", `${Math.round(pull)}px`);
+    box.style.setProperty("--ptr-rot", `${Math.round(p * 280)}deg`);
+    const ready = pull >= THRESHOLD;
+    if (ready !== state.ready) {
+      state.ready = ready;
+      box.classList.toggle("ready", ready);
+      label.textContent = ready ? (fa() ? "رها کن" : "Release") : (fa() ? "برای به‌روزرسانی بکش" : "Pull to refresh");
+      if (ready && navigator.vibrate) { try { navigator.vibrate(8); } catch {} }
+    }
+  };
+  const refresh = async () => {
+    state.busy = true;
+    state.pulling = false;
+    box.classList.add("loading");
+    box.style.setProperty("--ptr-y", "58px");
+    label.textContent = fa() ? "به‌روزرسانی…" : "Refreshing…";
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration?.();
+      if (reg) await Promise.race([reg.update(), new Promise((r) => setTimeout(r, 700))]);
+    } catch {}
+    setTimeout(() => location.reload(), 240);
+  };
+
+  document.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1 || state.busy) return;
+    const t = e.target;
+    if (blocked(t) || !atTop(t)) return;
+    state.startX = e.touches[0].clientX;
+    state.startY = e.touches[0].clientY;
+    state.tracking = true;
+    state.pulling = false;
+    state.ready = false;
+    state.pull = 0;
+  }, { passive: true });
+
+  document.addEventListener("touchmove", (e) => {
+    if (!state.tracking || e.touches.length !== 1 || state.busy) return;
+    const dy = e.touches[0].clientY - state.startY;
+    const dx = e.touches[0].clientX - state.startX;
+    if (!state.pulling) {
+      if (dy < 6) {
+        if (dy < -8 || Math.abs(dx) > 14) state.tracking = false;
+        return;
+      }
+      if (Math.abs(dx) > dy * 0.9) { state.tracking = false; return; }
+      if (!atTop(e.target)) { state.tracking = false; return; }
+      state.pulling = true;
+      document.body.classList.add("ptr-active");
+      label.textContent = fa() ? "برای به‌روزرسانی بکش" : "Pull to refresh";
+    }
+    if (e.cancelable) e.preventDefault();
+    paint(Math.min(118, Math.max(0, dy) * 0.72));
+  }, { passive: false });
+
+  const end = () => {
+    if (!state.tracking || state.busy) return;
+    const should = state.ready && state.pull >= THRESHOLD;
+    state.tracking = false;
+    if (state.pulling && should) return refresh();
+    if (state.pulling) {
+      document.body.classList.remove("ptr-active");
+      state.pulling = false;
+      state.ready = false;
+      box.classList.remove("ready");
+      box.style.setProperty("--ptr-y", "0px");
+    }
+  };
+  document.addEventListener("touchend", end, { passive: true });
+  document.addEventListener("touchcancel", end, { passive: true });
+}
+
+if (typeof document !== "undefined") {
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wirePullToRefresh, { once: true });
+  else wirePullToRefresh();
+}
+
 export function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   if (["localhost", "127.0.0.1"].includes(location.hostname)) return;
