@@ -85,6 +85,9 @@ let lastChatMsgAt = 0;
 const CHAT_TIMER_KEY = "wt.chatTimer";
 let chatTimerElapsed = 0;
 let chatTimerSince = null;
+const ALWAYS_SCROLL_KEY = "wt.alwaysScroll";
+let alwaysScroll = store.get(ALWAYS_SCROLL_KEY, false) === true;
+let chatHidden = store.get("wt.chatHidden", false) === true;
 
 /* ================= boot ================= */
 if (code && authUser) boot();
@@ -274,10 +277,12 @@ function wireNet() {
 
   net.on("chat", (msg) => {
     const near = isChatNearBottom();
+    const mine = msg.by === me.id;
     appendMessage(msg, true);
     noteIncomingChat();
-    scrollChat();
-    if (near) chatJumpCount = 0;
+    if (alwaysScroll || mine || near) scrollChatSoon(true);
+    else paintChatJump();
+    if (near || mine) chatJumpCount = 0;
     else if (msg.by !== me.id) chatJumpCount = Math.min(99, chatJumpCount + 1);
     paintChatJump();
   });
@@ -941,6 +946,23 @@ function wireChat() {
   const chatInput = $("#chatInput");
   const chatForm = $("#chatForm");
 
+  const scrollOpt = $("#optAlwaysScroll");
+  if (scrollOpt) {
+    scrollOpt.checked = alwaysScroll;
+    scrollOpt.addEventListener("change", () => {
+      alwaysScroll = scrollOpt.checked;
+      store.set(ALWAYS_SCROLL_KEY, alwaysScroll);
+      toast(t(alwaysScroll ? "toast.alwaysScrollOn" : "toast.alwaysScrollOff"), "info");
+      if (alwaysScroll) scrollChatSoon(true);
+    });
+  }
+  const hideOpt = $("#optHideChat");
+  if (hideOpt) {
+    hideOpt.checked = chatHidden;
+    hideOpt.addEventListener("change", () => setChatHidden(hideOpt.checked));
+  }
+  $("#chatRestoreBtn")?.addEventListener("click", () => setChatHidden(false));
+
   chatForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const text = chatInput.value.trim();
@@ -1315,6 +1337,24 @@ function isChatNearBottom() {
 function scrollChat(force = false) {
   if (force || isChatNearBottom()) chatList.scrollTop = chatList.scrollHeight;
   paintChatJump();
+}
+
+function scrollChatSoon(force = false) {
+  requestAnimationFrame(() => {
+    scrollChat(force);
+    requestAnimationFrame(() => { if (force) scrollChat(true); });
+  });
+}
+
+function setChatHidden(hidden, persist = true) {
+  chatHidden = !!hidden;
+  $(".room-shell")?.classList.toggle("chat-hidden", chatHidden);
+  $("#chatRestoreBtn")?.classList.toggle("hidden", !chatHidden);
+  const opt = $("#optHideChat");
+  if (opt) opt.checked = chatHidden;
+  if (chatHidden) $("#sidebar")?.classList.remove("open");
+  if (persist) store.set("wt.chatHidden", chatHidden);
+  if (!chatHidden) scrollChatSoon(true);
 }
 
 function paintChatJump() {
@@ -1868,7 +1908,7 @@ function activateTab(name) {
   $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
   $("#sidebar").classList.add("open");
-  if (name === "chat") setTimeout(() => scrollChat(true), 50);
+  if (name === "chat") setTimeout(() => scrollChatSoon(true), 50);
 }
 
 /* ================= voice ================= */
@@ -2224,16 +2264,14 @@ function wireMisc() {
   $("#reconnectBtn")?.addEventListener("click", () => location.reload());
 
   $("#sideBtn")?.addEventListener("click", () => {
+    if (chatHidden) return setChatHidden(false);
     if (window.matchMedia("(max-width:1080px)").matches) {
       $("#sidebar").classList.toggle("open");
       return;
     }
-    const hidden = $(".room-shell").classList.toggle("chat-hidden");
-    store.set("wt.chatHidden", hidden);
+    setChatHidden(!chatHidden);
   });
-  if (store.get("wt.chatHidden", false) && window.matchMedia("(min-width:1081px)").matches) {
-    $(".room-shell").classList.add("chat-hidden");
-  }
+  setChatHidden(chatHidden, false);
 
   document.addEventListener("langchange", () => {
     renderMembers();

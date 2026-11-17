@@ -524,6 +524,8 @@ html[dir="rtl"] .avatar-choice.active::after{right:auto;left:5px}
   .features{grid-template-columns:1fr;margin-top:36px}
   .field-row{flex-direction:column}
   .room-shell{--sheet-h:46dvh;grid-template-rows:var(--topbar-h) minmax(0,1fr) var(--sheet-h);height:var(--vvh,100dvh);transition:height .16s ease,grid-template-rows .24s cubic-bezier(.22,.9,.3,1)}
+  .room-shell.chat-hidden{grid-template-rows:var(--topbar-h) minmax(0,1fr)}
+  .room-shell.chat-hidden .sidebar,.room-shell.chat-hidden .sheet-grip{display:none}
   .page-room.sheet-drag .room-shell{transition:height .16s ease,grid-template-rows 0s}
   .page-room.chat-focus .stage-wrap{display:none}
   .page-room.chat-focus .room-shell{grid-template-rows:var(--topbar-h) minmax(0,1fr)}
