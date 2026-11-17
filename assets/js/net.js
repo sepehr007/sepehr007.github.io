@@ -151,7 +151,7 @@ class MediaConn {
  * Signaling goes through the public ntfy instance — no account, static-host friendly.
  */
 export class Net {
-  constructor({ code, nick, isHost, password = "", roomName = "", capacity = 6, privacy = "public", avatar = "" }) {
+  constructor({ code, nick, isHost, password = "", roomName = "", capacity = 6, privacy = "public", avatar = "", limits = null }) {
     this.code = code.toUpperCase();
     this.nick = nick;
     this.avatar = cleanAvatar(avatar);
@@ -160,6 +160,7 @@ export class Net {
     this.roomName = roomName;
     this.capacity = capacity;
     this.privacy = privacy;
+    this.limits = limits || {};
 
     this.selfId = "";
     this.topic = "";
@@ -646,7 +647,9 @@ export class Net {
       if (wait > 0) { this.#sendTo(member.id, { t: "slow", wait: Math.ceil(wait / 1000) }); return; }
     }
     member.lastChatAt = now;
-    if (!this.#allow(member, "chat", 6, 3000)) return;
+    const chatMax = Math.max(1, Number(this.limits.chatPerWindow) || 6);
+    const chatWindow = Math.max(300, Number(this.limits.chatWindowMs) || 3000);
+    if (!this.#allow(member, "chat", chatMax, chatWindow)) return;
     const entry = {
       id: uid(), by: member.id, nick: member.nick, role: member.role,
       text, at: now, replyTo: msg.replyTo || null,

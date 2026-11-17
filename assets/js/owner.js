@@ -102,13 +102,13 @@ function clearOwnerFailures() {
 
 /* ---------- github api ---------- */
 function repoSlug() {
-  return draft?.owner?.repo || SITE_CONFIG_DEFAULTS.owner.repo;
+  return published?.owner?.repo || SITE_CONFIG_DEFAULTS.owner.repo;
 }
 function branchName() {
-  return draft?.owner?.branch || "main";
+  return published?.owner?.branch || SITE_CONFIG_DEFAULTS.owner.branch || "main";
 }
 function ownerLogin() {
-  return (draft?.owner?.login || SITE_CONFIG_DEFAULTS.owner.login).toLowerCase();
+  return (published?.owner?.login || SITE_CONFIG_DEFAULTS.owner.login).toLowerCase();
 }
 async function gh(path, token, options = {}) {
   const res = await fetch(`https://api.github.com${path}`, {
@@ -137,7 +137,7 @@ async function verifyOwnerToken(token) {
   if (!tok) throw new Error("توکن خالی است.");
   const user = await gh("/user", tok);
   if (String(user?.login || "").toLowerCase() !== ownerLogin()) {
-    throw new Error(`این توکن به حساب «${user?.login || "?"}» است، نه «${draft.owner.login}».`);
+    throw new Error(`این توکن به حساب «${user?.login || "?"}» است، نه «${published?.owner?.login || SITE_CONFIG_DEFAULTS.owner.login}».`);
   }
   const repo = await gh(`/repos/${repoSlug()}`, tok);
   const canPush = repo?.permissions?.push === true || repo?.permissions?.admin === true || repo?.permissions?.maintain === true;
@@ -391,7 +391,8 @@ function renderLog() {
   const labels = {
     ban: "مسدودسازی", unban: "رفع مسدودی", deleteAccount: "حذف حساب",
     loginFail: "ورود ناموفق", loginLock: "قفل ورود", throttle: "محدودیت اسپم",
-    ownerLogin: "ورود مالک", publish: "انتشار", passChange: "تغییر رمز مالک"
+    ownerLogin: "ورود مالک", publish: "انتشار", passChange: "تغییر رمز مالک",
+    register: "ثبت‌نام", login: "ورود", recover: "بازیابی رمز", recoverFail: "بازیابی ناموفق"
   };
   for (const item of log) {
     const row = document.createElement("div");
@@ -427,8 +428,8 @@ function goto(name) {
 
 /* ---------- gate ---------- */
 function configureGate() {
-  const login = draft?.owner?.login || SITE_CONFIG_DEFAULTS.owner.login;
-  const repo = draft?.owner?.repo || SITE_CONFIG_DEFAULTS.owner.repo;
+  const login = ownerLogin();
+  const repo = repoSlug();
   $("#ghLogin").value = login;
   $("#ghRepo").textContent = repo;
   $("#repoLink").href = `https://github.com/${repo}`;
@@ -510,7 +511,7 @@ async function doGithubActivate(e) {
   btn.textContent = "در حال بررسی با گیت‌هاب…";
   try {
     const tok = await verifyOwnerToken(token);
-    await writeCred(pass, draft.owner.login);
+    await writeCred(pass, ownerLogin());
     verifiedToken = tok;
     try { sessionStorage.setItem(TOKEN_KEY, tok); } catch {}
     clearOwnerFailures();
@@ -558,7 +559,7 @@ async function changePass(e) {
   try {
     const hash = await pbkdf2(cur, cred.salt);
     if (hash !== cred.hash) { err.textContent = "رمز فعلی اشتباه است."; return; }
-    await writeCred(next, draft.owner.login);
+    await writeCred(next, ownerLogin());
     $("#curPass").value = $("#nextPass").value = $("#nextPass2").value = "";
     logModeration("passChange", "رمز مالک عوض شد");
     toast("رمز مالک به‌روز شد.", "success");
@@ -624,7 +625,7 @@ function resetDraft() {
 }
 function previewSite() {
   savePreviewDraft(draft);
-  window.open("index.html?preview=1", "_blank", "noopener");
+  window.open("index.html?preview=1", "_blank");
   toast("پیش‌نمایش در تب تازه باز شد (فقط برای مالک).", "success");
 }
 function setPubState(text, cls = "") {

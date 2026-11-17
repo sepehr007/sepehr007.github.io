@@ -79,7 +79,7 @@ const chatList = $("#chatList");
 const peopleList = $("#peopleList");
 const queueList = $("#queueList");
 const typingUsers = new Map();
-const canSend = createLimiter(12, 8000);
+let canSend = createLimiter(12, 8000);
 let replyTo = null;
 let editingId = null;
 let searchTerm = "";
@@ -108,6 +108,9 @@ async function boot() {
     setTimeout(() => location.replace("./"), 1400);
     return;
   }
+  const chatMax = Math.max(1, Number(siteCfg.limits.chatPerWindow) || 6);
+  const chatWindow = Math.max(500, Number(siteCfg.limits.chatWindowMs) || 3000);
+  canSend = createLimiter(chatMax * 2, chatWindow * 2);
   if (!nick) nick = await askName();
   if (!nick) { location.replace("./"); return; }
   store.set("wt.nick", nick);
@@ -224,7 +227,8 @@ function createNet() {
     roomName: roomNameParam,
     capacity: Math.min(capacityParam, maxCap),
     privacy: privacyParam,
-    avatar: me.avatar
+    avatar: me.avatar,
+    limits: siteCfg.limits
   });
   voice.net = net;
   wireNet();
@@ -2328,6 +2332,7 @@ function wireMisc() {
   setChatHidden(chatHidden, false);
 
   document.addEventListener("langchange", () => {
+    if (siteCfg) applySiteConfig(siteCfg);
     renderMembers();
     renderQueue(queueItems);
     applyRoomSettings(roomInfo);

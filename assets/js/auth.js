@@ -559,6 +559,7 @@ export async function initAuthPage() {
   setMode(mode);
   applyAccess();
   document.addEventListener("langchange", () => {
+    applySiteConfig(cfg);
     if (recovering) showRecover(true); else setMode(mode);
     applyAccess();
   });

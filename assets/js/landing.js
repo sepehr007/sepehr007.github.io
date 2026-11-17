@@ -21,7 +21,12 @@ async function bootSite() {
   applySiteConfig(siteCfg);
   roomCreateOpen = accessOn("roomCreate", siteCfg);
   roomJoinOpen = accessOn("roomJoin", siteCfg);
+  const roomMax = Math.max(1, Number(siteCfg.limits.roomActions) || 2);
+  const roomWindow = Math.max(300, Number(siteCfg.limits.roomWindowMs) || 1800);
+  createGuard = createLimiter(roomMax, roomWindow);
+  joinGuard = createLimiter(roomMax * 2, roomWindow);
   applyAccessState();
+  applyAuthLinks();
   applyCapacityOptions();
   if (user) resumePendingRoom();
   if (isConfigPreview()) {
@@ -30,7 +35,11 @@ async function bootSite() {
     badge.textContent = "پیش‌نمایش مالک";
     document.body.append(badge);
   }
-  document.addEventListener("langchange", () => applySiteConfig(siteCfg));
+  document.addEventListener("langchange", () => {
+    applySiteConfig(siteCfg);
+    applyAccessState();
+    applyAuthLinks();
+  });
 }
 bootSite();
 
@@ -54,6 +63,15 @@ function applyAccessState() {
     const hint = $("#joinHint");
     if (hint && !roomJoinOpen) hint.textContent = getLang() === "fa" ? "ورود به اتاق موقتاً بسته است." : "Joining rooms is temporarily closed.";
   }
+}
+
+function applyAuthLinks() {
+  if (!siteCfg) return;
+  const regOpen = accessOn("registration", siteCfg);
+  const loginOpen = accessOn("login", siteCfg);
+  $("#signupLink")?.classList.toggle("hidden", !regOpen);
+  $("#loginLink")?.classList.toggle("hidden", !loginOpen);
+  if (!currentUser()) $("#authActions")?.classList.toggle("hidden", !regOpen && !loginOpen);
 }
 
 function applyCapacityOptions() {
@@ -101,8 +119,8 @@ const pwdInput = $("#createPassword");
 const joinCode = $("#joinCode");
 const joinNick = $("#joinNick");
 
-const createGuard = createLimiter(1, 1800);
-const joinGuard = createLimiter(2, 1800);
+let createGuard = createLimiter(1, 1800);
+let joinGuard = createLimiter(2, 1800);
 let guardWarnAt = 0;
 function guardWarn() {
   const now = Date.now();

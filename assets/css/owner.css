@@ -525,8 +525,8 @@
   .owner-app { grid-template-columns: 1fr; }
   .owner-side {
     position: fixed;
-    inset: 0 auto 0 0;
-    width: 278px;
+    inset: 0 0 0 auto;
+    width: min(278px, 86vw);
     transform: translateX(105%);
     transition: transform .24s ease;
     box-shadow: -20px 0 60px rgba(0, 0, 0, .5);
@@ -555,3 +555,9 @@
   .ot-actions #previewBtn { display: none; }
   .owner-top h1 { max-width: 36vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
+.gate-help{margin:14px 0 0;padding:12px 14px;border:1px solid rgba(255,255,255,.09);border-radius:12px;background:rgba(255,255,255,.025);font-size:12.5px;line-height:1.9;color:var(--o-dim,#a6aec4)}
+.gate-help summary{cursor:pointer;color:var(--o-fg,#eef1fa);font-weight:600;font-size:13px}
+.gate-help ol{margin:10px 0 8px;padding-inline-start:20px}
+.gate-help li{margin:4px 0}
+.gate-help a{color:#8ea6ff;text-decoration:none;font-weight:600}
+.gate-help a:hover{text-decoration:underline}

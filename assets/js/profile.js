@@ -18,6 +18,7 @@ registerServiceWorker();
 let profile = null;
 let saving = false;
 let avatarGender = "girl";
+let siteCfg = null;
 
 const me = currentUser();
 if (!me) {
@@ -27,7 +28,7 @@ if (!me) {
 }
 
 async function boot() {
-  const siteCfg = await loadSiteConfig();
+  siteCfg = await loadSiteConfig();
   applySiteConfig(siteCfg);
   if (isMaintenanceBlocked(siteCfg)) return;
   if (isLocallyBanned(me.username)) {
@@ -57,6 +58,7 @@ async function boot() {
   wireAppearance();
   wireMisc();
   document.addEventListener("langchange", () => {
+    applySiteConfig(siteCfg);
     document.title = `${t("profile.title")} — هم‌تماشا`;
     paintAvatar();
     renderAvatarGallery();
@@ -241,7 +243,9 @@ function wireDetails() {
 
 /* ---------- avatar ---------- */
 function wireAvatar() {
-  const avatarGuard = createLimiter(3, 1200);
+  const maxChanges = Math.max(1, Number(siteCfg?.limits?.avatarChanges) || 3);
+  const windowMs = Math.max(300, Number(siteCfg?.limits?.avatarWindowMs) || 1200);
+  const avatarGuard = createLimiter(maxChanges, windowMs);
   let warnAt = 0;
   const allowAvatar = () => {
     if (avatarGuard()) return true;

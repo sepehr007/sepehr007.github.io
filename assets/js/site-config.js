@@ -114,12 +114,15 @@ export function normalizeSiteConfig(raw) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(merged.owner.repo)) merged.owner.repo = SITE_CONFIG_DEFAULTS.owner.repo;
   if (!/^[A-Za-z0-9_.-]+$/.test(merged.owner.branch)) merged.owner.branch = "main";
   if (!/^[A-Za-z0-9-]+$/.test(merged.owner.login)) merged.owner.login = SITE_CONFIG_DEFAULTS.owner.login;
-  try {
-    if (merged.site.supportUrl && !new URL(merged.site.supportUrl).protocol.startsWith("http")) merged.site.supportUrl = "";
-  } catch { merged.site.supportUrl = ""; }
-  try {
-    if (merged.plans.premiumUrl && !new URL(merged.plans.premiumUrl).protocol.startsWith("http")) merged.plans.premiumUrl = "";
-  } catch { merged.plans.premiumUrl = ""; }
+  const httpUrl = (value) => {
+    if (!value) return "";
+    try {
+      const u = new URL(value);
+      return u.protocol === "http:" || u.protocol === "https:" ? u.href : "";
+    } catch { return ""; }
+  };
+  merged.site.supportUrl = httpUrl(merged.site.supportUrl);
+  merged.plans.premiumUrl = httpUrl(merged.plans.premiumUrl);
   return merged;
 }
 
@@ -259,6 +262,29 @@ export function applySiteConfig(cfg = current, { root = document } = {}) {
     box.append(logo, h, p);
     back.append(box);
     root.body.append(back);
+  }
+
+  root.querySelectorAll("[data-wt-tagline]").forEach((n) => n.remove());
+  const footer = root.querySelector(".site-footer");
+  const tagline = fa ? cfg.site.taglineFa : cfg.site.taglineEn;
+  if (footer && tagline.trim()) {
+    const p = document.createElement("p");
+    p.className = "site-tagline";
+    p.dataset.wtTagline = "1";
+    p.textContent = tagline.trim();
+    footer.prepend(p);
+  }
+
+  root.querySelectorAll("[data-wt-support]").forEach((n) => n.remove());
+  if (footer && /^https?:\/\//i.test(cfg.site.supportUrl || "")) {
+    const a = document.createElement("a");
+    a.className = "site-support";
+    a.dataset.wtSupport = "1";
+    a.href = cfg.site.supportUrl;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = fa ? "پشتیبانی سایت ↗" : "Site support ↗";
+    footer.prepend(a);
   }
 
   const premiumCard = root.querySelector(".price-soon");

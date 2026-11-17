@@ -70,7 +70,18 @@
           <input id="newOwnerPass2" type="password" autocomplete="new-password">
         </label>
       </div>
-      <p class="gate-hint">توکن باید به مخزن <code id="ghRepo">sepehr007/sepehr007.github.io</code> دسترسی نوشتن داشته باشد. توکن را در چت یا جای دیگری ارسال نکن؛ فقط همین‌جا وارد کن.</p>
+      <details class="gate-help">
+        <summary>چطور توکن امن بسازم؟</summary>
+        <ol>
+          <li>وارد GitHub شو → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token.</li>
+          <li>در Repository access گزینهٔ <b>Only select repositories</b> را بزن و مخزن <code id="ghRepo">sepehr007/sepehr007.github.io</code> را انتخاب کن.</li>
+          <li>در Repository permissions فقط <b>Contents</b> را روی <b>Read and write</b> بگذار. Metadata خودکار Read-only است.</li>
+          <li>Expiration را کوتاه بگذار (مثلاً ۹۰ روز)، توکن را کپی کن و فقط در همین کادر بچسبان.</li>
+          <li>توکن را در چت، Issue، اسکرین‌شات یا کد نگذار. این صفحه آن را فقط در حافظهٔ همین تب نگه می‌دارد.</li>
+        </ol>
+        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">ساخت توکن در GitHub ↗</a>
+      </details>
+      <p class="gate-hint">توکن باید به مخزن <code id="ghRepoTxt">sepehr007/sepehr007.github.io</code> دسترسی نوشتن داشته باشد.</p>
       <p class="gate-err" id="githubErr" role="alert"></p>
       <button class="btn btn-primary btn-block" id="githubBtn" type="submit">تأیید با گیت‌هاب و فعال‌سازی</button>
     </form>
