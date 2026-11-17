@@ -1,5 +1,6 @@
 import { $, colorFor, initials, applyUIPrefs } from "./core.js";
 import { t } from "./i18n.js";
+import { avatarId, avatarSrc, isAvatarId, presetValue } from "./avatars.js";
 
 const USERS_KEY = "wt.users";
 const SESSION_KEY = "wt.session";
@@ -217,13 +218,14 @@ export async function changePassword({ current, next }) {
   return { ok: true };
 }
 
-export function setAvatar(dataUrl) {
+export function setAvatar(value) {
   const { users, rec, key } = requireSessionUser();
   const profile = { ...(rec.profile || {}) };
-  const val = String(dataUrl || "");
+  const val = String(value || "");
   if (!val) delete profile.avatar;
-  else if (!/^data:image\/(png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(val)) return { ok: false, error: "image" };
-  else profile.avatar = val;
+  else if (isAvatarId(val)) profile.avatar = presetValue(avatarId(val));
+  else if (val.length <= 500000 && /^data:image\/(png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(val)) profile.avatar = val;
+  else return { ok: false, error: "image" };
   users[key] = { ...rec, profile };
   writeUsers(users);
   return { ok: true, avatar: profile.avatar || "" };
@@ -381,10 +383,11 @@ export function mountUserChip() {
   chip.classList.remove("hidden");
   const av = $("#userAvatar");
   if (av) {
-    av.textContent = user.avatar ? "" : initials(user.nick);
+    const src = avatarSrc(user.avatar);
+    av.textContent = src ? "" : initials(user.nick);
     av.style.background = user.color;
-    av.style.backgroundImage = user.avatar ? `url("${user.avatar}")` : "";
-    if (user.avatar) { av.style.backgroundSize = "cover"; av.style.backgroundPosition = "center"; }
+    av.style.backgroundImage = src ? `url("${src}")` : "";
+    if (src) { av.style.backgroundSize = "cover"; av.style.backgroundPosition = "center"; }
   }
   const nm = $("#userName");
   if (nm) nm.textContent = user.nick;

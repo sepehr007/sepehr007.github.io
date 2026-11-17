@@ -1,4 +1,5 @@
 import { validateMediaUrl, uid } from "./core.js";
+import { avatarId } from "./avatars.js";
 
 const DEFAULT_SIGNAL_BASE = "https://ntfy.sh";
 const SIGNAL_BASE = (() => {
@@ -17,8 +18,10 @@ const PRESENCE_MS = 30000;
 const AVATAR_RE = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
 
 function cleanAvatar(value) {
+  const id = avatarId(value);
+  if (id) return `preset:${id}`;
   const s = typeof value === "string" ? value : "";
-  return s.length <= 400000 && AVATAR_RE.test(s) ? s : "";
+  return s.length <= 500000 && AVATAR_RE.test(s) ? s : "";
 }
 
 const ICE = {

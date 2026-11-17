@@ -1,12 +1,13 @@
 import { initI18n, t } from "./i18n.js";
 import {
-  $, el, toast, initials, applyUIPrefs, getPrefs, savePrefs, resetPrefs,
+  $, $$, el, toast, initials, applyUIPrefs, getPrefs, savePrefs, resetPrefs,
   ACCENTS, registerServiceWorker
 } from "./core.js";
 import {
   currentUser, getProfile, saveProfile, changeUsername, changePassword,
   setAvatar, addFriend, removeFriend, logout, passwordScore, isPassword
 } from "./auth.js";
+import { AVATAR_PRESETS, avatarId, avatarSrc, presetValue } from "./avatars.js";
 
 applyUIPrefs();
 initI18n();
@@ -14,6 +15,7 @@ registerServiceWorker();
 
 let profile = null;
 let saving = false;
+let avatarGender = "girl";
 
 const me = currentUser();
 if (!me) {
@@ -33,7 +35,9 @@ function boot() {
   if (birth) birth.max = new Date().toISOString().slice(0, 10);
 
   fillForm();
+  avatarGender = avatarId(profile.avatar)?.startsWith("boy-") ? "boy" : "girl";
   paintAvatar();
+  renderAvatarGallery();
   renderFriends();
   wireAccount();
   wirePassword();
@@ -45,6 +49,7 @@ function boot() {
   document.addEventListener("langchange", () => {
     document.title = `${t("profile.title")} — هم‌تماشا`;
     paintAvatar();
+    renderAvatarGallery();
     renderFriends();
     paintMemberSince();
   });
@@ -73,12 +78,34 @@ function paintMemberSince() {
 function paintAvatar() {
   const box = $("#avatarBox");
   const span = $("#avatarInitials");
+  const src = avatarSrc(profile.avatar);
   box.style.background = profile.color;
-  box.style.backgroundImage = profile.avatar ? `url("${profile.avatar}")` : "";
+  box.style.backgroundImage = src ? `url("${src}")` : "";
   box.style.backgroundSize = "cover";
   box.style.backgroundPosition = "center";
-  span.textContent = profile.avatar ? "" : initials(profile.nick);
-  $("#avatarRemove").classList.toggle("hidden", !profile.avatar);
+  box.classList.toggle("has-img", !!src);
+  span.textContent = src ? "" : initials(profile.nick);
+  $("#avatarRemove").classList.toggle("hidden", !src);
+}
+
+function renderAvatarGallery() {
+  const grid = $("#avatarGallery");
+  if (!grid) return;
+  grid.innerHTML = "";
+  const fa = document.documentElement.lang === "fa";
+  for (const p of AVATAR_PRESETS.filter((x) => x.gender === avatarGender)) {
+    const label = fa ? p.labelFa : p.labelEn;
+    const btn = el("button", {
+      type: "button",
+      class: `avatar-choice${profile.avatar === presetValue(p.id) ? " active" : ""}`,
+      "data-avatar": p.id,
+      title: label,
+      "aria-label": label
+    });
+    btn.append(el("img", { src: p.src, alt: "", loading: "lazy", draggable: "false" }));
+    grid.append(btn);
+  }
+  $$(".avatar-filter").forEach((b) => b.classList.toggle("active", b.dataset.avatarGender === avatarGender));
 }
 
 function msg(node, text, ok = false) {
@@ -204,55 +231,33 @@ function wireDetails() {
 
 /* ---------- avatar ---------- */
 function wireAvatar() {
-  $("#avatarPick").addEventListener("click", () => $("#avatarInput").click());
-  $("#avatarInput").addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
+  $("#avatarGallery").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-avatar]");
+    if (!btn) return;
     try {
-      const dataUrl = await fileToAvatar(file);
-      const res = setAvatar(dataUrl);
+      const res = setAvatar(presetValue(btn.dataset.avatar));
       if (!res.ok) throw new Error(res.error);
       profile.avatar = res.avatar;
       paintAvatar();
+      renderAvatarGallery();
       toast(t("profile.saved"), "success");
-    } catch (err) {
-      toast(t(err?.message === "image" ? "profile.image" : "profile.saveFailed"), "error");
+    } catch {
+      toast(t("profile.saveFailed"), "error");
     }
   });
+  $$(".avatar-filter").forEach((b) => b.addEventListener("click", () => {
+    avatarGender = b.dataset.avatarGender;
+    renderAvatarGallery();
+  }));
   $("#avatarRemove").addEventListener("click", () => {
     try {
       setAvatar("");
       profile.avatar = "";
       paintAvatar();
+      renderAvatarGallery();
       toast(t("profile.saved"), "success");
     } catch { toast(t("profile.saveFailed"), "error"); }
   });
-}
-
-async function fileToAvatar(file) {
-  if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) throw new Error("image");
-  if (file.size > 8 * 1024 * 1024) throw new Error("image");
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error("image"));
-      i.src = url;
-    });
-    const S = 192;
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = S;
-    const ctx = canvas.getContext("2d");
-    const scale = Math.max(S / img.width, S / img.height);
-    const w = img.width * scale;
-    const h = img.height * scale;
-    ctx.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
-    return canvas.toDataURL("image/jpeg", 0.85);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
 }
 
 /* ---------- friends ---------- */
@@ -295,10 +300,11 @@ function renderFriends() {
     if (!rec) continue;
     const li = el("li", { class: "friend-item" });
     const av = el("span", { class: "avatar" });
-    av.textContent = rec.avatar ? "" : initials(rec.nick);
+    const src = avatarSrc(rec.avatar);
+    av.textContent = src ? "" : initials(rec.nick);
     av.style.background = rec.color;
-    if (rec.avatar) {
-      av.style.backgroundImage = `url("${rec.avatar}")`;
+    if (src) {
+      av.style.backgroundImage = `url("${src}")`;
       av.style.backgroundSize = "cover";
       av.style.backgroundPosition = "center";
     }

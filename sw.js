@@ -1,4 +1,4 @@
-const CACHE = "wt-v29";
+const CACHE = "wt-v30";
 const SHELL = [
   "./",
   "./index.html",
@@ -9,6 +9,7 @@ const SHELL = [
   "./assets/js/core.js",
   "./assets/js/i18n.js",
   "./assets/js/auth.js",
+  "./assets/js/avatars.js",
   "./assets/js/landing.js",
   "./assets/js/profile.js",
   "./assets/js/room.js",
@@ -17,6 +18,18 @@ const SHELL = [
   "./assets/js/hls.min.js",
   "./assets/js/voice.js",
   "./assets/js/transcode.js",
+  "./assets/avatars/girl-1.webp",
+  "./assets/avatars/girl-2.webp",
+  "./assets/avatars/girl-3.webp",
+  "./assets/avatars/girl-4.webp",
+  "./assets/avatars/girl-5.webp",
+  "./assets/avatars/girl-6.webp",
+  "./assets/avatars/boy-1.webp",
+  "./assets/avatars/boy-2.webp",
+  "./assets/avatars/boy-3.webp",
+  "./assets/avatars/boy-4.webp",
+  "./assets/avatars/boy-5.webp",
+  "./assets/avatars/boy-6.webp",
   "./assets/icon.svg",
   "./manifest.webmanifest"
 ];

@@ -46,12 +46,15 @@
   <div class="profile-grid">
     <aside class="card profile-side">
       <div class="avatar-xl" id="avatarBox"><span id="avatarInitials">–</span></div>
-      <input class="hidden" id="avatarInput" type="file" accept="image/png,image/jpeg,image/webp">
-      <div class="avatar-actions">
-        <button class="btn btn-secondary btn-sm" id="avatarPick" type="button" data-i18n="profile.avatarPick">بارگذاری تصویر</button>
-        <button class="link-btn hidden" id="avatarRemove" type="button" data-i18n="profile.avatarRemove">حذف</button>
+      <p class="hint avatar-hint" data-i18n="profile.avatarHint">یکی از آواتارهای کارتونی سیستم را انتخاب کن.</p>
+      <div class="avatar-picker">
+        <div class="avatar-filters" role="tablist">
+          <button class="avatar-filter active" type="button" data-avatar-gender="girl" data-i18n="profile.avatarGirls">دخترانه</button>
+          <button class="avatar-filter" type="button" data-avatar-gender="boy" data-i18n="profile.avatarBoys">پسرانه</button>
+        </div>
+        <div class="avatar-gallery" id="avatarGallery"></div>
       </div>
-      <p class="hint avatar-hint" data-i18n="profile.avatarHint">JPG یا PNG — خودکار مربع، کوچک و فشرده می‌شود.</p>
+      <button class="link-btn avatar-clear hidden" id="avatarRemove" type="button" data-i18n="profile.avatarRemove">حذف آواتار</button>
       <div class="profile-identity">
         <h2 id="sideName">—</h2>
         <p class="muted" id="sideUsername" dir="ltr">@—</p>

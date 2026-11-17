@@ -8,6 +8,7 @@ import { Net } from "./net.js";
 import { Player, parseSubtitles } from "./player.js";
 import { Voice } from "./voice.js";
 import { currentUser } from "./auth.js";
+import { avatarSrc } from "./avatars.js";
 
 initI18n();
 applyUIPrefs();
@@ -976,7 +977,8 @@ function avatarFor(id) {
   return members.find((m) => m.id === id)?.avatar || "";
 }
 
-function paintAvatar(node, src, label, colorSeed) {
+function paintAvatar(node, value, label, colorSeed) {
+  const src = avatarSrc(value);
   node.classList.toggle("has-img", !!src);
   node.style.backgroundImage = src ? `url("${src}")` : "";
   if (src) node.textContent = "";
