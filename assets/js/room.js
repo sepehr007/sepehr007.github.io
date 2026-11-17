@@ -891,6 +891,8 @@ function wireChat() {
     $("#replyBar").classList.add("hidden");
   });
 
+  $("#chatExportBtn")?.addEventListener("click", exportChat);
+
   const sendTyping = debounce(() => net.command("typing", {}), 1200);
   chatInput.addEventListener("input", () => {
     if (chatInput.value.trim()) sendTyping();
@@ -1075,6 +1077,41 @@ function clearChatHistory() {
   refreshPinned();
   syncChatEmpty();
   paintChatJump();
+}
+
+function exportChat() {
+  const nodes = [...chatList.querySelectorAll(".msg")];
+  if (!nodes.length) { toast(t("toast.chatExportEmpty"), "error"); return; }
+  const fa = getLang() === "fa";
+  const roomName = roomInfo?.name || $("#roomTitle").textContent.trim() || code;
+  const lines = [
+    fa ? "هم‌تماشا — خروجی گفتگو" : "Watch Together — chat transcript",
+    `${fa ? "اتاق" : "Room"}: ${roomName} (${code})`,
+    `${fa ? "تاریخ" : "Date"}: ${new Date().toLocaleString(fa ? "fa-IR" : "en-US")}`,
+    `${fa ? "اعضا" : "Members"}: ${members.map((m) => m.nick).filter(Boolean).join(", ")}`,
+    "-".repeat(48)
+  ];
+  for (const node of nodes) {
+    let data = {};
+    try { data = JSON.parse(node.dataset.msg || "{}"); } catch {}
+    const time = node.querySelector(".msg-time")?.textContent?.trim() || "";
+    const pinned = node.classList.contains("pinned-msg") ? "📌 " : "";
+    const edited = node.classList.contains("edited") ? (fa ? " (ویرایش‌شده)" : " (edited)") : "";
+    const reactions = [...node.querySelectorAll(".reaction")].map((b) => b.textContent.trim()).join(" ");
+    const text = data.text || t("chat.deleted");
+    lines.push(`[${time}] ${pinned}${data.nick || "?"}: ${text}${edited}${reactions ? ` [${reactions}]` : ""}`);
+  }
+  lines.push("", fa ? "پایان گفتگو" : "End of transcript");
+  const blob = new Blob([lines.join("\r\n")], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const safeCode = String(code).replace(/[^\w-]/g, "") || "room";
+  const a = el("a", { href: url, download: `watch-together-${safeCode}-${stamp}.txt` });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(t("toast.chatExported"), "success");
 }
 
 function formatChatText(raw) {

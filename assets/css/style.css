@@ -272,6 +272,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .chat-timer-btn svg{width:14px;height:14px}
 .chat-timer-reset{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;color:var(--text-faint);font-size:15px;line-height:1;transition:.15s}
 .chat-timer-reset:hover{background:var(--panel-strong);color:var(--text)}
+.chat-export-btn{padding:6px}
 
 /* chat */
 .chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:26px 18px;text-align:center;color:var(--text-faint);font-size:12.5px}
