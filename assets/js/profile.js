@@ -6,7 +6,7 @@ import {
 import {
   currentUser, getProfile, saveProfile, changeUsername, changePassword,
   setAvatar, addFriend, removeFriend, logout, passwordScore, isPassword,
-  isLocallyBanned
+  isLocallyBanned, syncRemoteSession
 } from "./auth.js";
 import { AVATAR_PRESETS, avatarId, avatarSrc, presetValue } from "./avatars.js";
 import { loadSiteConfig, applySiteConfig, isMaintenanceBlocked } from "./site-config.js";
@@ -16,18 +16,22 @@ initI18n();
 registerServiceWorker();
 
 let profile = null;
+let remoteProfile = null;
 let saving = false;
 let avatarGender = "girl";
 let siteCfg = null;
 
-const me = currentUser();
-if (!me) {
-  location.replace("auth.html?next=profile.html");
-} else {
-  boot();
-}
+(async () => {
+  remoteProfile = await syncRemoteSession();
+  const me = currentUser();
+  if (!me) {
+    location.replace("auth.html?next=profile.html");
+    return;
+  }
+  await boot(me);
+})();
 
-async function boot() {
+async function boot(me) {
   siteCfg = await loadSiteConfig();
   applySiteConfig(siteCfg);
   if (isMaintenanceBlocked(siteCfg)) return;
@@ -37,6 +41,8 @@ async function boot() {
     return;
   }
   profile = getProfile(me.username);
+  if (profile && remoteProfile?.email) profile.email = remoteProfile.email;
+  if (profile && !profile.email && me.email) profile.email = me.email;
   if (!profile) {
     location.replace("auth.html?next=profile.html&force=1");
     return;
@@ -70,6 +76,8 @@ async function boot() {
 function fillForm() {
   $("#pNick").value = profile.nick;
   $("#pUsername").value = profile.username;
+  const mail = $("#pEmail");
+  if (mail) mail.value = profile.email || remoteProfile?.email || "";
   $("#pBirth").value = profile.birthdate || "";
   $("#pCity").value = profile.city || "";
   $("#pBio").value = profile.bio || "";

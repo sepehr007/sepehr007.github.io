@@ -49,8 +49,12 @@
         <input id="name" type="text" maxlength="24" autocomplete="name" data-i18n-ph="auth.namePh" placeholder="مثلاً علی رضایی">
       </label>
       <label class="field">
-        <span data-i18n="auth.username">نام کاربری</span>
-        <input id="username" type="text" maxlength="20" dir="ltr" autocomplete="username" spellcheck="false" data-i18n-ph="auth.usernamePh" placeholder="ali_2026">
+        <span id="usernameLabel" data-i18n="auth.username">نام کاربری</span>
+        <input id="username" type="text" maxlength="160" dir="ltr" autocomplete="username" spellcheck="false" data-i18n-ph="auth.usernamePh" placeholder="ali_2026">
+      </label>
+      <label class="field hidden" id="emailField">
+        <span data-i18n="auth.email">ایمیل</span>
+        <input id="email" type="email" maxlength="160" dir="ltr" autocomplete="email" spellcheck="false" data-i18n-ph="auth.emailPh" placeholder="you@example.com">
       </label>
       <label class="field">
         <span data-i18n="auth.password">رمز عبور</span>

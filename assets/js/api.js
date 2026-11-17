@@ -1,4 +1,5 @@
-const TOKEN_KEY = "wt.apiToken";
+const TOKEN_KEY = "wt.jwt";
+const LEGACY_TOKEN_KEY = "wt.apiToken";
 const BASE_KEY = "wt.apiBase";
 const DEFAULT_BASE = "http://localhost:3001/api";
 
@@ -55,16 +56,26 @@ export function apiUrl(path = "") {
 }
 
 export function apiGetToken() {
-  return readStorage(TOKEN_KEY);
+  const token = readStorage(TOKEN_KEY);
+  if (token) return token;
+  const legacy = readStorage(LEGACY_TOKEN_KEY);
+  if (legacy) {
+    writeStorage(TOKEN_KEY, legacy);
+    writeStorage(LEGACY_TOKEN_KEY, "");
+    return legacy;
+  }
+  return "";
 }
 
 export function apiSetToken(token) {
   writeStorage(TOKEN_KEY, String(token || ""));
+  writeStorage(LEGACY_TOKEN_KEY, "");
   return apiGetToken();
 }
 
 export function apiClearToken() {
   writeStorage(TOKEN_KEY, "");
+  writeStorage(LEGACY_TOKEN_KEY, "");
 }
 
 export function apiHasToken() {
@@ -162,11 +173,11 @@ export const authApi = {
       body: { username, email, password, avatar }
     });
   },
-  login({ email, username, password }) {
+  login({ identifier, email, username, password }) {
     return apiFetch("/auth/login", {
       method: "POST",
       auth: false,
-      body: { email, username, password }
+      body: { identifier: identifier || email || username, password }
     }).then((res) => {
       if (res?.token) apiSetToken(res.token);
       return res;

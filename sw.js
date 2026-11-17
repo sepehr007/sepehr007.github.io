@@ -1,4 +1,4 @@
-const CACHE = "wt-v62";
+const CACHE = "wt-v64";
 const SHELL = [
   "./",
   "./index.html",
@@ -10,6 +10,7 @@ const SHELL = [
   "./assets/css/owner.css",
   "./assets/data/site-config.json",
   "./assets/js/site-config.js",
+  "./assets/js/api.js",
   "./assets/js/modlog.js",
   "./assets/js/owner.js",
   "./assets/js/core.js",

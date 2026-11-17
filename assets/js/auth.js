@@ -3,9 +3,11 @@ import { t } from "./i18n.js";
 import { avatarId, avatarSrc, isAvatarId, presetValue } from "./avatars.js";
 import { loadSiteConfig, applySiteConfig, accessOn } from "./site-config.js";
 import { logModeration } from "./modlog.js";
+import { apiFetch, apiGetToken, apiSetToken, apiClearToken } from "./api.js";
 
 const USERS_KEY = "wt.users";
 const SESSION_KEY = "wt.session";
+const API_USER_KEY = "wt.user";
 const LOCAL_BANS_KEY = "wt.localBans";
 const SESSION_DAYS = 30;
 const PBKDF2_ITER = 120000;
@@ -40,6 +42,85 @@ function readUsers() {
 }
 function writeUsers(users) {
   try { localStorage.setItem(USERS_KEY, JSON.stringify(users)); } catch {}
+}
+function readApiUser() {
+  try {
+    const u = JSON.parse(localStorage.getItem(API_USER_KEY) || "null");
+    return u && typeof u === "object" && u.username ? u : null;
+  } catch { return null; }
+}
+function writeApiUser(user) {
+  if (!user?.username) return null;
+  const safe = {
+    id: user.id || "",
+    username: user.username,
+    email: user.email || "",
+    role: user.role || "user",
+    avatar: user.avatar || "",
+    createdAt: user.createdAt || null
+  };
+  try { localStorage.setItem(API_USER_KEY, JSON.stringify(safe)); } catch {}
+  return safe;
+}
+function clearApiAuth() {
+  apiClearToken();
+  try { localStorage.removeItem(API_USER_KEY); } catch {}
+}
+function localKey(name) {
+  return String(name || "").trim().toLowerCase();
+}
+function readLocalSession() {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch { return null; }
+}
+function emailLooksValid(raw) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(raw || "").trim());
+}
+function backendUnavailable(err) {
+  if (!err) return true;
+  if (err.status === 0 || err.status === 404 || err.status === 503) return true;
+  return err.status >= 500;
+}
+async function mirrorApiAccount(apiUser, { password = "", nick = "" } = {}) {
+  const key = localKey(apiUser?.username);
+  if (!key) return "";
+  const users = readUsers();
+  const existing = users[key];
+  const session = readLocalSession();
+  const sessionActive = Boolean(session?.u) && (!session.exp || Date.now() <= session.exp);
+  if (!existing && sessionActive && session.u !== key) return "";
+  if (existing) {
+    let changed = false;
+    if (!existing.email && apiUser.email) { existing.email = apiUser.email; changed = true; }
+    if (password && !existing.hash) {
+      try {
+        existing.salt = existing.salt || randHex(16);
+        existing.hash = await hashPassword(password, existing.salt);
+        changed = true;
+      } catch {}
+    }
+    if (changed) {
+      users[key] = existing;
+      writeUsers(users);
+    }
+    return key;
+  }
+  const salt = randHex(16);
+  let hashValue = "";
+  if (password) {
+    try { hashValue = await hashPassword(password, salt); } catch { hashValue = ""; }
+  }
+  users[key] = {
+    u: apiUser.username,
+    nick: normalizeName(nick) || apiUser.username,
+    salt,
+    hash: hashValue,
+    email: apiUser.email || "",
+    createdAt: Date.parse(apiUser.createdAt) || Date.now(),
+    profile: { avatar: apiUser.avatar || "" },
+    friends: []
+  };
+  writeUsers(users);
+  return key;
 }
 function locallyBanned(username) {
   const u = String(username || "").toLowerCase();
@@ -109,7 +190,7 @@ export function normalizeDigits(raw) {
 }
 
 /* ---------- session ---------- */
-export function currentUser() {
+function localSessionUser() {
   try {
     const s = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
     if (!s || !s.u || !s.exp || Date.now() > s.exp) return null;
@@ -129,6 +210,48 @@ export function currentUser() {
   } catch { return null; }
 }
 
+function remoteUser() {
+  if (!apiGetToken()) return null;
+  const remote = readApiUser();
+  if (!remote?.username) return null;
+  const key = localKey(remote.username);
+  const rec = readUsers()[key] || null;
+  const created = rec?.createdAt || (remote.createdAt ? Date.parse(remote.createdAt) : 0);
+  return {
+    username: remote.username,
+    nick: rec?.nick || remote.username,
+    color: colorFor(remote.username),
+    avatar: rec?.profile?.avatar || remote.avatar || "",
+    city: rec?.profile?.city || "",
+    birthdate: rec?.profile?.birthdate || "",
+    bio: rec?.profile?.bio || "",
+    createdAt: Number.isFinite(created) && created > 0 ? created : null,
+    friends: Array.isArray(rec?.friends) ? [...rec.friends] : [],
+    email: remote.email || rec?.email || "",
+    role: remote.role || "user"
+  };
+}
+
+export function currentUser() {
+  return localSessionUser() || remoteUser();
+}
+
+export async function syncRemoteSession() {
+  if (!apiGetToken()) return null;
+  try {
+    const res = await apiFetch("/auth/me", { timeoutMs: 8000 });
+    const user = res?.user;
+    if (!user?.username) return null;
+    writeApiUser(user);
+    const key = await mirrorApiAccount(user);
+    if (key) saveSession(key);
+    return user;
+  } catch (err) {
+    if (err?.status === 401) clearApiAuth();
+    return null;
+  }
+}
+
 export function getProfile(username) {
   const u = String(username || "").trim().toLowerCase();
   const rec = readUsers()[u];
@@ -141,6 +264,7 @@ export function getProfile(username) {
     city: rec.profile?.city || "",
     birthdate: rec.profile?.birthdate || "",
     bio: rec.profile?.bio || "",
+    email: rec.email || "",
     createdAt: rec.createdAt || null,
     friends: Array.isArray(rec.friends) ? [...rec.friends] : [],
     hasPassword: !!rec.hash
@@ -277,7 +401,12 @@ export function requireAuth(nextPath) {
 }
 
 export function logout() {
+  const token = apiGetToken();
   try { localStorage.removeItem(SESSION_KEY); } catch {}
+  clearApiAuth();
+  if (token) {
+    apiFetch("/auth/logout", { method: "POST", token, auth: false, timeoutMs: 4000 }).catch(() => {});
+  }
 }
 
 function saveSession(username) {
@@ -318,29 +447,56 @@ function clearThrottle(u) {
   writeThrottle(map);
 }
 
-export async function register({ name, username, password }) {  const nick = normalizeName(name);
+export async function register({ name, username, email, password }) {
+  const nick = normalizeName(name);
   const u = String(username || "").trim().toLowerCase();
+  const mail = String(email || "").trim().toLowerCase();
   if (locallyBanned(u)) {
     logModeration("loginFail", `تلاش ثبت‌نام حساب مسدود @${u}`);
     return { ok: false, error: "blocked" };
   }
   if (!isRealName(nick)) return { ok: false, error: "name" };
   if (!isUsername(u)) return { ok: false, error: "username" };
+  if (!emailLooksValid(mail)) return { ok: false, error: "email" };
   if (!isPassword(password)) return { ok: false, error: "password" };
+  let apiErr = null;
+  try {
+    const res = await apiFetch("/auth/register", {
+      method: "POST",
+      auth: false,
+      timeoutMs: 12000,
+      body: { username: u, email: mail, password }
+    });
+    if (res?.token && res.user) {
+      apiSetToken(res.token);
+      writeApiUser(res.user);
+      const key = await mirrorApiAccount(res.user, { password, nick });
+      if (key) saveSession(key);
+      clearThrottle(u);
+      return { ok: true, nick, remote: true };
+    }
+  } catch (err) { apiErr = err; }
+  if (apiErr && !backendUnavailable(apiErr)) {
+    if (apiErr.status === 429) return { ok: false, error: "rate" };
+    const code = apiErr.payload?.error || "";
+    const map = { invalid_username: "username", invalid_email: "email", invalid_password: "password", already_exists: "exists" };
+    return { ok: false, error: map[code] || "server" };
+  }
   const users = readUsers();
   if (users[u]) return { ok: false, error: "exists" };
   const salt = randHex(16);
   let hashValue;
   try { hashValue = await hashPassword(password, salt); }
   catch { return { ok: false, error: "secure" }; }
-  users[u] = { u, nick, salt, hash: hashValue, createdAt: Date.now(), profile: {}, friends: [] };
+  users[u] = { u, nick, salt, hash: hashValue, email: mail, createdAt: Date.now(), profile: {}, friends: [] };
   writeUsers(users);
   saveSession(u);
   return { ok: true, nick };
 }
 
 export async function login({ username, password }) {
-  const u = String(username || "").trim().toLowerCase();
+  const identifier = String(username || "").trim();
+  const u = identifier.toLowerCase();
   if (locallyBanned(u)) {
     logModeration("loginFail", `ورود حساب مسدود @${u}`);
     return { ok: false, error: "blocked" };
@@ -350,6 +506,26 @@ export async function login({ username, password }) {
     logModeration("loginLock", `قفل ورود @${u}`);
     return { ok: false, error: "locked", wait };
   }
+  let apiErr = null;
+  try {
+    const res = await apiFetch("/auth/login", {
+      method: "POST",
+      auth: false,
+      timeoutMs: 12000,
+      body: { identifier, password }
+    });
+    if (res?.token && res.user) {
+      apiSetToken(res.token);
+      writeApiUser(res.user);
+      const key = await mirrorApiAccount(res.user, { password });
+      const localRec = key ? readUsers()[key] : null;
+      saveSession(key || localKey(res.user.username));
+      clearThrottle(u);
+      if (key) clearThrottle(key);
+      return { ok: true, nick: localRec?.nick || res.user.username, remote: true };
+    }
+  } catch (err) { apiErr = err; }
+  if (apiErr?.status === 429) return { ok: false, error: "rate" };
   const rec = readUsers()[u];
   if (!rec) { noteFailure(u); logModeration("loginFail", `نام کاربری ناشناس @${u}`); return { ok: false, error: "credentials" }; }
   let hashValue;
@@ -489,6 +665,11 @@ export async function initAuthPage() {
     nameField?.classList.toggle("hidden", m === "login");
     confirmField?.classList.toggle("hidden", m === "login");
     captchaField?.classList.toggle("hidden", m === "login");
+    $("#emailField")?.classList.toggle("hidden", m === "login");
+    const idLabel = $("#usernameLabel");
+    const idInput = $("#username");
+    if (idLabel) idLabel.textContent = t(m === "login" ? "auth.identifier" : "auth.username");
+    if (idInput) idInput.placeholder = t(m === "login" ? "auth.identifierPh" : "auth.usernamePh");
     const title = $("#authTitle");
     const sub = $("#authSub");
     if (title) title.textContent = t(m === "login" ? "auth.loginTitle" : "auth.registerTitle");
@@ -548,6 +729,7 @@ export async function initAuthPage() {
   $("#tabRegister")?.addEventListener("click", () => setMode("register"));
   $("#captchaRefresh")?.addEventListener("click", drawCaptcha);
 
+  await syncRemoteSession();
   const user = currentUser();
   if (user && !new URLSearchParams(location.search).get("force")) {
     location.replace(next);
@@ -624,10 +806,12 @@ export async function initAuthPage() {
     const username = $("#username").value.trim();
     const password = $("#password").value;
     const name = $("#name")?.value || "";
+    const email = $("#email")?.value.trim() || "";
 
     if (mode === "register") {
       if (!isRealName(name)) return err(fa ? "اسم واقعی را کامل بنویس (حداقل ۳ حرف، مثل علی یا Ali)." : "Enter your real name (at least 3 letters).");
       if (!isUsername(username)) return err(fa ? "نام کاربری باید ۳ تا ۲۰ کاراکتر لاتین باشد و با حرف شروع شود." : "Username must be 3–20 latin characters and start with a letter.");
+      if (!emailLooksValid(email)) return err(fa ? "ایمیل معتبر وارد کن." : "Enter a valid email.");
       if (!isPassword(password)) return err(t("auth.pwWeak"));
       if (password !== $("#password2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
       if (Number(normalizeDigits($("#captchaA").value)) !== captcha.a) {
@@ -635,7 +819,7 @@ export async function initAuthPage() {
         return err(fa ? "جواب کپچا درست نیست؛ دوباره تلاش کن." : "Captcha answer is wrong, try again.");
       }
     } else {
-      if (!username || !password) return err(fa ? "نام کاربری و رمز را وارد کن." : "Enter username and password.");
+      if (!username || !password) return err(fa ? "ایمیل یا نام کاربری و رمز را وارد کن." : "Enter your email or username and password.");
     }
 
     busy = true;
@@ -644,7 +828,7 @@ export async function initAuthPage() {
     submit.textContent = fa ? "کمی صبر…" : "Please wait…";
 
     const res = mode === "register"
-      ? await register({ name, username, password })
+      ? await register({ name, username, email, password })
       : await login({ username, password });
 
     busy = false;
@@ -655,11 +839,14 @@ export async function initAuthPage() {
       const map = {
         name: fa ? "اسم واقعی معتبر نیست." : "Invalid real name.",
         username: fa ? "نام کاربری معتبر نیست." : "Invalid username.",
+        email: fa ? "ایمیل معتبر وارد کن." : "Enter a valid email.",
         password: t("auth.pwWeak"),
-        exists: fa ? "این نام کاربری قبلاً روی این مرورگر ساخته شده." : "This username already exists on this browser.",
-        credentials: fa ? "نام کاربری یا رمز اشتباه است." : "Wrong username or password.",
+        exists: fa ? "این ایمیل یا نام کاربری قبلاً ثبت شده است." : "This email or username is already registered.",
+        credentials: fa ? "ایمیل یا نام کاربری، یا رمز اشتباه است." : "Wrong email/username or password.",
         locked: t("auth.locked"),
         blocked: fa ? "این حساب به‌دست مدیر سایت مسدود شده است." : "This account is blocked by the site owner.",
+        rate: fa ? "درخواست‌های زیادی فرستادی؛ کمی صبر کن." : "Too many attempts; wait a moment.",
+        server: fa ? "ارتباط با سرور برقرار نشد؛ دوباره تلاش کن." : "Could not reach the server; try again.",
         secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https."
       };
       if (res.error === "blocked") logModeration("loginFail", `ورود حساب مسدود @${username.trim().toLowerCase()}`);

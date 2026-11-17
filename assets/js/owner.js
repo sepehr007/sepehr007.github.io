@@ -4,10 +4,12 @@ import {
   ownerSessionValid, setOwnerSession, savePreviewDraft
 } from "./site-config.js";
 import { readModLog, logModeration, clearModLog } from "./modlog.js";
+import { apiFetch } from "./api.js";
 
 const DRAFT_KEY = "wt.ownerDraft";
 const CRED_KEY = "wt.ownerCred";
 const TOKEN_KEY = "wt.ownerToken";
+const OWNER_JWT_KEY = "wt.ownerJwt";
 const LOCK_KEY = "wt.ownerLock";
 const BANS_KEY = "wt.localBans";
 const USERS_KEY = "wt.users";
@@ -469,6 +471,21 @@ async function unlock() {
   try { history.replaceState(null, "", location.pathname); } catch {}
   logModeration("ownerLogin", "ورود موفق به کنسول");
 }
+async function storeOwnerToken(pass) {
+  try {
+    const res = await apiFetch("/auth/login", {
+      method: "POST",
+      auth: false,
+      timeoutMs: 10000,
+      body: { identifier: "owner@qoder.local", password: pass }
+    });
+    if (res?.token && (res.user?.role === "super_owner" || res.user?.role === "owner")) {
+      try { sessionStorage.setItem(OWNER_JWT_KEY, res.token); } catch {}
+      return true;
+    }
+  } catch {}
+  return false;
+}
 async function doPasswordLogin(e) {
   e.preventDefault();
   const err = $("#loginErr");
@@ -495,6 +512,7 @@ async function doPasswordLogin(e) {
     }
     clearOwnerFailures();
     $("#ownerPass").value = "";
+    await storeOwnerToken(pass);
     await unlock();
   } catch {
     err.textContent = "رمزنگاری مرورگر در دسترس نیست؛ سایت را روی HTTPS باز کن.";
@@ -753,6 +771,7 @@ function bindChrome() {
     if (!confirm("کنسول قفل شود؟ برای ورود دوباره رمز مالک لازم است.")) return;
     setOwnerSession(false);
     try { sessionStorage.removeItem(TOKEN_KEY); } catch {}
+    try { sessionStorage.removeItem(OWNER_JWT_KEY); } catch {}
     verifiedToken = "";
     safeReload();
   });

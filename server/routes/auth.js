@@ -175,7 +175,7 @@ export default async function authRoutes(app) {
       return fail(reply, 503, "database_unavailable", "Database is not connected yet. Try again shortly.");
     }
     const body = req.body && typeof req.body === "object" ? req.body : {};
-    const identifier = cleanString(body.email || body.username || body.identifier, 160).toLowerCase();
+    const identifier = cleanString(body.identifier || body.email || body.username, 160).toLowerCase();
     const password = String(body.password ?? "");
 
     if (!identifier || !password) {
