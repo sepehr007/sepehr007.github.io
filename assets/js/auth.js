@@ -87,8 +87,7 @@ function saveSession(username) {
 }
 
 /* ---------- auth actions ---------- */
-export async function register({ name, username, password }) {
-  const nick = normalizeName(name);
+export async function register({ name, username, password }) {  const nick = normalizeName(name);
   const u = String(username || "").trim().toLowerCase();
   if (!isRealName(nick)) return { ok: false, error: "name" };
   if (!isUsername(u)) return { ok: false, error: "username" };
@@ -113,6 +112,23 @@ export async function login({ username, password }) {
   try { hashValue = await hashPassword(password, rec.salt); }
   catch { return { ok: false, error: "secure" }; }
   if (hashValue !== rec.hash) return { ok: false, error: "credentials" };
+  saveSession(u);
+  return { ok: true, nick: rec.nick };
+}
+
+export async function recover({ username, name, password }) {
+  const u = String(username || "").trim().toLowerCase();
+  const nick = normalizeName(name);
+  const users = readUsers();
+  const rec = users[u];
+  if (!rec || normalizeName(rec.nick) !== nick) return { ok: false, error: "credentials" };
+  if (!isPassword(password)) return { ok: false, error: "password" };
+  const salt = randHex(16);
+  let hashValue;
+  try { hashValue = await hashPassword(password, salt); }
+  catch { return { ok: false, error: "secure" }; }
+  users[u] = { ...rec, salt, hash: hashValue, updatedAt: Date.now() };
+  writeUsers(users);
   saveSession(u);
   return { ok: true, nick: rec.nick };
 }
@@ -157,7 +173,9 @@ export function initAuthPage() {
 
   let mode = new URLSearchParams(location.search).get("mode") === "login" ? "login" : "register";
   let captcha = makeCaptcha();
+  let recCaptcha = makeCaptcha();
   let busy = false;
+  let recovering = false;
 
   const nextRaw = new URLSearchParams(location.search).get("next") || "";
   const next = safeNext(nextRaw);
@@ -176,6 +194,14 @@ export function initAuthPage() {
     if (inp) inp.value = "";
   }
 
+  function drawRecCaptcha() {
+    recCaptcha = makeCaptcha();
+    const q = $("#recCaptchaQ");
+    if (q) q.textContent = `${recCaptcha.q} = ?`;
+    const inp = $("#recCaptchaA");
+    if (inp) inp.value = "";
+  }
+
   function setMode(m) {
     mode = m;
     const fa = document.documentElement.lang === "fa";
@@ -190,8 +216,25 @@ export function initAuthPage() {
     if (sub) sub.textContent = t(m === "login" ? "auth.loginSub" : "auth.registerSub");
     if (submit) submit.textContent = t(m === "login" ? "auth.login" : "auth.register");
     if (errLine) errLine.textContent = "";
+    $("#forgotLink")?.classList.toggle("hidden", m !== "login");
     if (m === "register") drawCaptcha();
     $("#username")?.focus();
+  }
+
+  function showRecover(on) {
+    recovering = on;
+    $("#authForm")?.classList.toggle("hidden", on);
+    $("#recoverForm")?.classList.toggle("hidden", !on);
+    document.querySelector(".auth-tabs")?.classList.toggle("hidden", on);
+    const title = $("#authTitle");
+    const sub = $("#authSub");
+    if (title) title.textContent = t(on ? "auth.recoverTitle" : mode === "login" ? "auth.loginTitle" : "auth.registerTitle");
+    if (sub) sub.textContent = t(on ? "auth.recoverSub" : mode === "login" ? "auth.loginSub" : "auth.registerSub");
+    if (on) {
+      $("#recError").textContent = "";
+      drawRecCaptcha();
+      $("#recUsername")?.focus();
+    }
   }
 
   $("#tabLogin")?.addEventListener("click", () => setMode("login"));
@@ -205,7 +248,46 @@ export function initAuthPage() {
   }
 
   setMode(mode);
-  document.addEventListener("langchange", () => setMode(mode));
+  document.addEventListener("langchange", () => { if (recovering) showRecover(true); else setMode(mode); });
+
+  $("#forgotLink")?.addEventListener("click", () => showRecover(true));
+  $("#recoverBack")?.addEventListener("click", () => { showRecover(false); setMode("login"); });
+  $("#recCaptchaRefresh")?.addEventListener("click", drawRecCaptcha);
+
+  $("#recoverForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    const fa = document.documentElement.lang === "fa";
+    const err = (m) => { const el = $("#recError"); if (el) el.textContent = m; };
+    const username = $("#recUsername").value.trim();
+    const name = $("#recName").value;
+    const password = $("#recPassword").value;
+    if (!username) return err(fa ? "نام کاربری را وارد کن." : "Enter your username.");
+    if (!isRealName(name)) return err(fa ? "اسم واقعیِ ثبت‌شده را کامل بنویس." : "Enter the real name used at signup.");
+    if (!isPassword(password)) return err(fa ? "رمز جدید حداقل ۶ کاراکتر باشد." : "New password must be at least 6 characters.");
+    if (Number($("#recCaptchaA").value) !== recCaptcha.a) {
+      drawRecCaptcha();
+      return err(fa ? "جواب کپچا درست نیست؛ دوباره تلاش کن." : "Captcha answer is wrong, try again.");
+    }
+    busy = true;
+    const btn = $("#recSubmit");
+    const old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = fa ? "کمی صبر…" : "Please wait…";
+    const res = await recover({ username, name, password });
+    busy = false;
+    btn.disabled = false;
+    btn.textContent = old;
+    if (!res.ok) {
+      const map = {
+        credentials: fa ? "این نام کاربری و اسم واقعی با هم هم‌خوانی ندارند." : "Username and real name do not match.",
+        password: fa ? "رمز کوتاه است." : "Password too short.",
+        secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https."
+      };
+      return err(map[res.error] || "Error");
+    }
+    location.replace(next);
+  });
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();

@@ -53,10 +53,16 @@
       <span class="grad-text" data-i18n="hero.title2">دقیق، ثانیه‌به‌ثانیه</span>
     </h1>
     <p class="hero-sub" data-i18n="hero.sub">یک حساب بساز، اتاق بساز، لینک بفرست و هم‌زمان با چت و صدای زنده تماشا کنید. هیچ نصبی لازم نیست.</p>
+    <div class="hero-stats">
+      <span class="stat-chip"><span class="stat-dot"></span><span data-i18n="stats.sync">همگام‌سازی زیر ۱ ثانیه</span></span>
+      <span class="stat-chip" data-i18n="stats.formats">MKV · AVI · MOV · HLS</span>
+      <span class="stat-chip" data-i18n="stats.voice">چت و صدای زنده</span>
+      <span class="stat-chip" data-i18n="stats.free">بدون محدودیت زمان</span>
+    </div>
   </section>
 
   <section class="entry-grid">
-    <article class="card entry-card">
+    <article class="card entry-card" id="create">
       <h2 data-i18n="create.title">ساخت اتاق</h2>
       <p class="muted" data-i18n="create.sub">اتاق بساز و لینکش رو برای دوستات بفرست.</p>
       <label class="field">
@@ -114,12 +120,95 @@
     </article>
   </section>
 
-  <section class="features">
-    <div class="feature"><span class="ico">⏱</span><h3 data-i18n="feat.sync.t">همگام‌سازی دقیق</h3><p data-i18n="feat.sync.d">پخش، توقف و جابه‌جایی برای همه هم‌زمان.</p></div>
-    <div class="feature"><span class="ico">💬</span><h3 data-i18n="feat.chat.t">چت زنده</h3><p data-i18n="feat.chat.d">ری‌اکشن، پاسخ، سنجاق و تایپینگ.</p></div>
-    <div class="feature"><span class="ico">🎙</span><h3 data-i18n="feat.voice.t">صدای زنده</h3><p data-i18n="feat.voice.d">میکروفون و کنترل صدا، داخل مرورگر.</p></div>
-    <div class="feature"><span class="ico">🎬</span><h3 data-i18n="feat.player.t">پلیر سینمایی</h3><p data-i18n="feat.player.d">MP4 و HLS، زیرنویس، سرعت و PiP.</p></div>
+  <section class="steps-section">
+    <div class="section-head">
+      <h2 data-i18n="steps.title">در سه قدم شروع کن</h2>
+      <p data-i18n="steps.sub">بدون نصب، بدون پیچیدگی.</p>
+    </div>
+    <div class="steps">
+      <article class="step-card">
+        <span class="step-num">1</span>
+        <h3 data-i18n="steps.s1.t">حساب بساز</h3>
+        <p data-i18n="steps.s1.d">با کپچای ساده ثبت‌نام کن و اسم واقعی‌ات را بنویس.</p>
+      </article>
+      <article class="step-card">
+        <span class="step-num">2</span>
+        <h3 data-i18n="steps.s2.t">اتاق بساز</h3>
+        <p data-i18n="steps.s2.d">ظرفیت و رمز دلخواه بگذار و لینک دعوت را بفرست.</p>
+      </article>
+      <article class="step-card">
+        <span class="step-num">3</span>
+        <h3 data-i18n="steps.s3.t">هم‌زمان تماشا کن</h3>
+        <p data-i18n="steps.s3.d">چت کن، صدا وصل کن و ثانیه‌به‌ثانیه هم‌گام بمان.</p>
+      </article>
+    </div>
   </section>
+
+  <section class="features">
+    <div class="feature">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></span>
+      <h3 data-i18n="feat.sync.t">همگام‌سازی دقیق</h3><p data-i18n="feat.sync.d">پخش، توقف و جابه‌جایی برای همه هم‌زمان.</p>
+    </div>
+    <div class="feature">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/></svg></span>
+      <h3 data-i18n="feat.chat.t">چت زنده</h3><p data-i18n="feat.chat.d">ری‌اکشن، پاسخ، سنجاق و تایپینگ.</p>
+    </div>
+    <div class="feature">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
+      <h3 data-i18n="feat.voice.t">صدای زنده</h3><p data-i18n="feat.voice.d">میکروفون و کنترل صدا، داخل مرورگر.</p>
+    </div>
+    <div class="feature">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5L10 9.5z"/></svg></span>
+      <h3 data-i18n="feat.player.t">پلیر سینمایی</h3><p data-i18n="feat.player.d">MP4 و HLS، زیرنویس، سرعت و PiP.</p>
+    </div>
+    <div class="feature">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 13h4M7 15.5h7M14 13h3"/></svg></span>
+      <h3 data-i18n="feat.subs.t">زیرنویس و ظاهر شخصی</h3><p data-i18n="feat.subs.d">زیرنویس SRT/VTT، روشنایی تصویر و رنگ لهجهٔ دلخواه.</p>
+    </div>
+    <div class="feature">
+      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v2"/></svg></span>
+      <h3 data-i18n="feat.local.t">حساب محلی و امن</h3><p data-i18n="feat.local.d">رمزها با PBKDF2 هش می‌شوند و روی همین دستگاه می‌مانند.</p>
+    </div>
+  </section>
+
+  <section class="pricing-section">
+    <div class="section-head">
+      <h2 data-i18n="pricing.title">پلن‌ها</h2>
+      <p data-i18n="pricing.sub">همهٔ قابلیت‌های امروز رایگان است؛ پریمیوم در راه است.</p>
+    </div>
+    <div class="pricing-grid">
+      <article class="price-card">
+        <span class="price-tag" data-i18n="pricing.free">پلن رایگان</span>
+        <div class="price-val"><strong>0</strong><span data-i18n="pricing.unit">تومان</span></div>
+        <p class="hint" data-i18n="pricing.freeNote">همین حالا، بدون کارت بانکی.</p>
+        <ul class="price-list">
+          <li data-i18n="pricing.f1">اتاق نامحدود</li>
+          <li data-i18n="pricing.f2">همگام‌سازی دقیق و چت زنده</li>
+          <li data-i18n="pricing.f3">صدای زنده و اشتراک زیرنویس</li>
+          <li data-i18n="pricing.f4">تبدیل MKV/AVI/MOV در مرورگر</li>
+        </ul>
+        <a class="btn btn-primary btn-block" href="#create" data-i18n="create.cta">ساخت اتاق</a>
+      </article>
+      <article class="price-card price-soon">
+        <span class="price-tag" data-i18n="pricing.premium">پریمیوم</span>
+        <div class="price-val"><strong data-i18n="pricing.soon">به‌زودی</strong></div>
+        <p class="hint" data-i18n="pricing.premiumNote">چند اتاق هم‌زمان، آپلود ابری و ظاهرهای بیشتر.</p>
+        <ul class="price-list muted-list">
+          <li data-i18n="pricing.p1">همهٔ امکانات پلن رایگان</li>
+          <li data-i18n="pricing.p2">چند اتاق هم‌زمان</li>
+          <li data-i18n="pricing.p3">آپلود ابری فیلم</li>
+        </ul>
+        <button class="btn btn-secondary btn-block" type="button" disabled data-i18n="pricing.soon">به‌زودی</button>
+      </article>
+    </div>
+  </section>
+
+  <section class="cta-band">
+    <h2 data-i18n="cta.title">شب فیلم بعدی‌ات را با هم ببین</h2>
+    <p data-i18n="cta.sub">یک لینک، چند دوست، یک تجربهٔ سینمایی.</p>
+    <a class="btn btn-primary" href="#create" data-i18n="cta.btn">ساخت اتاق</a>
+  </section>
+
 
   <footer class="site-footer">
     <span data-i18n="footer.note">اتاق روی مرورگر میزبان اجرا می‌شود؛ برای تماشا، میزبان باید صفحه را باز نگه دارد.</span>

@@ -72,7 +72,36 @@
 
       <button class="btn btn-primary btn-block" id="submitBtn" type="submit" data-i18n="auth.register">ساخت حساب</button>
       <p class="auth-error" id="authError" role="alert"></p>
+      <button class="link-btn hidden" id="forgotLink" type="button" data-i18n="auth.forgot">رمز را فراموش کردی؟</button>
       <p class="hint" data-i18n="auth.note">حسابت فقط روی همین مرورگر ذخیره می‌شود؛ این نسخه سرور ندارد.</p>
+    </form>
+
+    <form id="recoverForm" class="hidden" autocomplete="on">
+      <label class="field">
+        <span data-i18n="auth.username">نام کاربری</span>
+        <input id="recUsername" type="text" maxlength="20" dir="ltr" autocomplete="username" spellcheck="false" data-i18n-ph="auth.usernamePh" placeholder="ali_2026">
+      </label>
+      <label class="field">
+        <span data-i18n="auth.name">اسم واقعی</span>
+        <input id="recName" type="text" maxlength="24" autocomplete="name" data-i18n-ph="auth.namePh" placeholder="مثلاً علی رضایی">
+      </label>
+      <label class="field">
+        <span data-i18n="auth.newPassword">رمز جدید</span>
+        <input id="recPassword" type="password" maxlength="64" autocomplete="new-password">
+      </label>
+      <div class="field">
+        <span data-i18n="auth.captcha">کپچا — حاصل را بنویس</span>
+        <div class="captcha-row">
+          <span class="captcha-q" id="recCaptchaQ">?</span>
+          <button class="icon-btn" id="recCaptchaRefresh" type="button" title="New question">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+          </button>
+          <input id="recCaptchaA" type="text" inputmode="numeric" maxlength="4" dir="ltr" placeholder="13" autocomplete="off">
+        </div>
+      </div>
+      <button class="btn btn-primary btn-block" id="recSubmit" type="submit" data-i18n="auth.recoverCta">تعیین رمز جدید</button>
+      <p class="auth-error" id="recError" role="alert"></p>
+      <button class="link-btn" id="recoverBack" type="button" data-i18n="auth.back">بازگشت به ورود</button>
     </form>
   </section>
 </main>
