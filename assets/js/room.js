@@ -60,6 +60,11 @@ let subBg = Number(store.get(SUB_BG_KEY, 0.72));
 let subSize = Number(store.get(SUB_SIZE_KEY, 120)) || 120;
 let subOffset = Number(store.get(SUB_OFFSET_KEY, 0)) || 0;
 let selfVoice = false;
+let screenSharing = false;
+let screenStream = null;
+let screenSentTo = new Set();
+const screenViews = new Map();
+let activeScreen = "";
 let currentPlayback = null;
 let localMode = false;
 let currentLocalUrl = null;
@@ -142,6 +147,7 @@ async function boot() {
   wireReactions();
   wirePrefs();
   wireVoice();
+  wireScreen();
   wirePtt();
   wireMisc();
   wireViewport();
@@ -252,6 +258,7 @@ function wireNet() {
     refreshChatAvatars();
     const voices = list.filter((m) => m.voice && m.id !== me.id).map((m) => m.id);
     if (selfVoice) voices.forEach((id) => voice.peerVoice(id, true));
+    syncScreenSharePeers();
   });
 
   net.on("chat", (msg) => {
@@ -377,6 +384,24 @@ function wireNet() {
   });
 
   net.on("incomingCall", (call) => voice.handleCall(call));
+
+  net.on("incomingScreen", ({ from }) => { net.answerScreen(from).catch(() => {}); });
+  net.on("screenStream", ({ from, stream }) => {
+    screenViews.delete(from);
+    screenViews.set(from, stream);
+    if (!activeScreen) showScreenView(from, stream);
+  });
+  net.on("screenEnded", (from) => {
+    if (!screenViews.has(from)) return;
+    screenViews.delete(from);
+    const who = nickFor(from);
+    if (activeScreen === from) {
+      const next = [...screenViews.entries()].pop();
+      if (next) showScreenView(next[0], next[1]);
+      else hideScreenView();
+    }
+    toast(t("toast.screenEnded", { name: who }), "info");
+  });
 
   net.on("error", (kind) => {
     if (kind === "code-taken") toast(getLang() === "fa" ? "این کد در حال استفاده است" : "Code already in use", "error");
@@ -1727,6 +1752,116 @@ function syncMicUI() {
 
 function syncDeafenUI() {
   $("#deafenBtn").classList.toggle("active", voice.deafened);
+}
+
+/* ================= screen share ================= */
+function nickFor(id) {
+  return members.find((m) => m.id === id)?.nick || me.nick || "?";
+}
+
+function paintScreenState() {
+  const btn = $("#shareBtn");
+  if (!btn) return;
+  btn.classList.toggle("active", screenSharing);
+  btn.title = t(screenSharing ? "screen.stop" : "screen.start");
+  btn.setAttribute("aria-label", btn.title);
+}
+
+function sendScreenTo(peerId) {
+  if (!net || !screenStream || !peerId || peerId === me.id) return;
+  net.shareScreenTo(peerId, screenStream);
+  screenSentTo.add(peerId);
+}
+
+function syncScreenSharePeers() {
+  if (!screenSharing || !net) return;
+  const live = new Set(members.map((m) => m.id).filter((id) => id && id !== me.id));
+  for (const id of live) if (!screenSentTo.has(id)) sendScreenTo(id);
+  for (const id of [...screenSentTo]) {
+    if (live.has(id)) continue;
+    screenSentTo.delete(id);
+    net.closeScreen(id, false);
+  }
+}
+
+async function startScreenShare() {
+  if (screenSharing) return;
+  if (!navigator.mediaDevices?.getDisplayMedia) return toast(t("toast.screenUnsupported"), "error");
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 24 }, audio: false });
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+    return toast(t("toast.screenDenied"), "error");
+  }
+  screenStream = stream;
+  screenSharing = true;
+  screenSentTo = new Set();
+  stream.getVideoTracks().forEach((track) => track.addEventListener("ended", stopScreenShare));
+  for (const m of members) sendScreenTo(m.id);
+  showScreenView("self", stream);
+  paintScreenState();
+  toast(t("toast.screenStarted"), "success");
+}
+
+function stopScreenShare() {
+  if (!screenSharing) return;
+  screenSharing = false;
+  for (const id of screenSentTo) net?.closeScreen(id, true);
+  screenSentTo.clear();
+  screenStream?.getTracks().forEach((t) => t.stop());
+  screenStream = null;
+  if (activeScreen === "self") {
+    const next = [...screenViews.entries()].pop();
+    if (next) showScreenView(next[0], next[1]);
+    else hideScreenView();
+  }
+  paintScreenState();
+  toast(t("toast.screenStopped"));
+}
+
+function showScreenView(id, stream) {
+  activeScreen = id;
+  $("#screenWho").textContent = id === "self" ? t("screen.you") : nickFor(id);
+  const video = $("#screenVideo");
+  video.srcObject = stream;
+  video.play?.().catch(() => {});
+  $("#screenLayer").classList.remove("hidden");
+  $("#screenPeek").classList.add("hidden");
+}
+
+function hideScreenView() {
+  activeScreen = "";
+  const video = $("#screenVideo");
+  try { video.pause(); } catch {}
+  video.srcObject = null;
+  $("#screenLayer").classList.add("hidden");
+  $("#screenLayer").classList.remove("expanded");
+  $("#screenPeek").classList.toggle("hidden", screenViews.size === 0);
+}
+
+function wireScreen() {
+  if (!$("#shareBtn")) return;
+  $("#shareBtn").addEventListener("click", () => {
+    if (screenSharing) stopScreenShare();
+    else startScreenShare();
+  });
+  $("#screenHideBtn").addEventListener("click", () => {
+    if (activeScreen === "self") stopScreenShare();
+    else hideScreenView();
+  });
+  $("#screenFitBtn").addEventListener("click", () => $("#screenLayer").classList.toggle("expanded"));
+  $("#screenPeek").addEventListener("click", () => {
+    const next = [...screenViews.entries()].pop();
+    if (next) showScreenView(next[0], next[1]);
+    else hideScreenView();
+  });
+  document.addEventListener("langchange", () => {
+    paintScreenState();
+    if (!activeScreen) return;
+    $("#screenWho").textContent = activeScreen === "self" ? t("screen.you") : nickFor(activeScreen);
+  });
+  paintScreenState();
 }
 
 /* ---------- push-to-talk ---------- */

@@ -176,6 +176,8 @@ export class Net {
     this.joinTimer = null;
     this.joinTries = 0;
     this.presenceTimer = null;
+    this.screenCalls = new Map();   // peerId -> RTCPeerConnection
+    this.screenOffers = new Map();  // peerId -> remote offer sdp
 
     if (isHost) this.#initHostState();
   }
@@ -315,6 +317,12 @@ export class Net {
         return this.#applyAnswer(msg);
       case "vice":
         return this.#addIce(msg);
+      case "soff":
+        return this.#screenOffer(msg);
+      case "sans":
+        return this.#applyAnswer(msg);
+      case "sice":
+        return this.#addIce(msg);
       case "bye":
         return this.#peerBye(msg);
       default:
@@ -421,7 +429,8 @@ export class Net {
   }
 
   async #applyAnswer(msg) {
-    const key = (`${msg.k === "vans" ? "v" : "d"}:${msg.from}`);
+    const kind = msg.k === "vans" ? "v" : msg.k === "sans" ? "s" : "d";
+    const key = `${kind}:${msg.from}`;
     const rec = this.pcs.get(key);
     if (!rec) return;
     if (rec.pc.signalingState === "have-local-offer") {
@@ -432,6 +441,7 @@ export class Net {
         const mc = this.voiceCalls?.get(msg.from);
         if (mc) mc.emit("connected");
       }
+      if (msg.k === "sans") this.emit("screenConnected", msg.from);
     }
   }
   #createPc(key) {
@@ -447,7 +457,7 @@ export class Net {
   }
 
   #addIce(msg) {
-    const kind = msg.k === "vice" ? "v" : "d";
+    const kind = msg.k === "vice" ? "v" : msg.k === "sice" ? "s" : "d";
     const key = `${kind}:${msg.from}`;
     const rec = this.pcs.get(key);
     const cand = msg.cand;
@@ -466,9 +476,18 @@ export class Net {
   }
 
   #peerBye(msg) {
-    const key = `${msg.v ? "v" : "d"}:${msg.from}`;
+    const kind = msg.s ? "s" : msg.v ? "v" : "d";
+    const key = `${kind}:${msg.from}`;
     const rec = this.pcs.get(key);
     if (rec) { try { rec.pc.close(); } catch {} this.pcs.delete(key); }
+    if (kind === "s") {
+      this.screenCalls.delete(msg.from);
+      this.screenOffers.delete(msg.from);
+      this.emit("screenEnded", msg.from);
+    } else if (kind === "v") {
+      const mc = this.voiceCalls?.get(msg.from);
+      if (mc) { this.voiceCalls.delete(msg.from); mc.emit("close"); }
+    }
   }
 
   /* ================= host message handling ================= */
@@ -975,6 +994,75 @@ export class Net {
     this.voiceCalls.delete(peerId);
     const rec = this.pcs.get(`v:${peerId}`);
     if (rec) this.pcs.delete(`v:${peerId}`);
+  }
+
+  /* ================= screen share (mesh, video only) ================= */
+  shareScreenTo(peerId, stream) {
+    if (peerId === this.selfId || this.screenCalls.has(peerId)) return;
+    const key = `s:${peerId}`;
+    const { pc } = this.#createPc(key);
+    this.screenCalls.set(peerId, pc);
+    pc.onconnectionstatechange = () => {
+      if (this.screenCalls.get(peerId) !== pc) return;
+      if (["failed", "closed"].includes(pc.connectionState)) this.#endScreenPeer(peerId, false);
+    };
+    stream.getVideoTracks().forEach((t) => pc.addTrack(t, stream));
+    (async () => {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitIceGathering(pc);
+        await this.#sig({ k: "soff", to: peerId, from: this.selfId, sdp: pc.localDescription.sdp });
+      } catch {
+        this.#endScreenPeer(peerId, true);
+        this.emit("error", "net");
+      }
+    })();
+  }
+
+  async #screenOffer(msg) {
+    if (this.screenCalls.has(msg.from)) return;
+    const key = `s:${msg.from}`;
+    const { pc } = this.#createPc(key);
+    this.screenCalls.set(msg.from, pc);
+    this.screenOffers.set(msg.from, msg.sdp);
+    pc.ontrack = (e) => {
+      const stream = e.streams[0] || new MediaStream([e.track]);
+      this.emit("screenStream", { from: msg.from, stream });
+    };
+    pc.onconnectionstatechange = () => {
+      if (this.screenCalls.get(msg.from) !== pc) return;
+      if (pc.connectionState === "failed") this.#endScreenPeer(msg.from, false);
+    };
+    this.emit("incomingScreen", { from: msg.from, nick: msg.nick || "" });
+  }
+
+  async answerScreen(peerId) {
+    const pc = this.screenCalls.get(peerId);
+    const sdp = this.screenOffers.get(peerId);
+    if (!pc || !sdp) return;
+    this.screenOffers.delete(peerId);
+    await pc.setRemoteDescription({ type: "offer", sdp });
+    this.#flushIce(`s:${peerId}`);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await waitIceGathering(pc);
+    await this.#sig({ k: "sans", to: peerId, from: this.selfId, sdp: pc.localDescription.sdp });
+  }
+
+  closeScreen(peerId, notify = true) {
+    this.#endScreenPeer(peerId, notify);
+  }
+
+  #endScreenPeer(peerId, notify) {
+    const had = this.screenCalls.has(peerId);
+    const pc = this.screenCalls.get(peerId);
+    this.screenCalls.delete(peerId);
+    this.screenOffers.delete(peerId);
+    if (pc) { try { pc.close(); } catch {} }
+    this.pcs.delete(`s:${peerId}`);
+    if (notify) this.#sig({ k: "bye", to: peerId, from: this.selfId, s: true });
+    else if (had) this.emit("screenEnded", peerId);
   }
 
   destroy() {
