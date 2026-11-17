@@ -2,7 +2,7 @@ import { initI18n, t, applyI18n, getLang } from "./i18n.js";
 import {
   $, $$, el, escapeHtml, colorFor, initials, fmtTime, fmtClock, toast,
   confirmDialog, copyText, store, validateMediaUrl, createLimiter, debounce,
-  highlightMentions, registerServiceWorker, applyUIPrefs, getPrefs, savePrefs, resetPrefs, ACCENTS
+  registerServiceWorker, applyUIPrefs, getPrefs, savePrefs, resetPrefs, ACCENTS
 } from "./core.js";
 import { Net } from "./net.js";
 import { Player, parseSubtitles } from "./player.js";
@@ -901,6 +901,16 @@ function syncChatEmpty() {
   chatList.classList.toggle("hidden", !has);
 }
 
+function formatChatText(raw) {
+  const safe = escapeHtml(raw || "").replace(/https?:\/\/[^\s<]+/g, (full) => {
+    const trail = full.match(/[.,!?;:)\]]+$/)?.[0] || "";
+    const href = trail ? full.slice(0, -trail.length) : full;
+    return `<a class="chat-link" href="${href}" target="_blank" rel="noopener noreferrer">${href}</a>${trail}`;
+  });
+  const mention = escapeHtml("@" + me.nick);
+  return safe.split(mention).join(`<span class="mention">${mention}</span>`);
+}
+
 function buildMessage(msg) {
   const mine = msg.by === me.id;
   const isMod = msg.role === "owner" || msg.role === "mod";
@@ -933,7 +943,7 @@ function buildMessage(msg) {
     text.classList.add("deleted");
     text.textContent = t("chat.deleted");
   } else {
-    text.innerHTML = highlightMentions(msg.text || "", me.nick);
+    text.innerHTML = formatChatText(msg.text);
   }
 
   const reactions = el("div", { class: "reactions" });
@@ -981,7 +991,7 @@ function updateMessage(msg) {
     textEl.innerHTML = escapeHtml(t("chat.deleted"));
   } else {
     textEl.classList.remove("deleted");
-    textEl.innerHTML = highlightMentions(msg.text || "", me.nick);
+    textEl.innerHTML = formatChatText(msg.text);
   }
   renderReactions(node, msg);
   refreshPinned();
