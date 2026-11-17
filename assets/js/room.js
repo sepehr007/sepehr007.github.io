@@ -61,6 +61,7 @@ const canSend = createLimiter(12, 8000);
 let replyTo = null;
 let editingId = null;
 let searchTerm = "";
+let chatJumpCount = 0;
 
 /* ================= boot ================= */
 if (code && authUser) boot();
@@ -215,9 +216,9 @@ function wireNet() {
     syncChatEmpty();
     scrollChat(true);
     if (data.playback?.url) {
-      currentPlayback = data.playback;
-      player.applyState(data.playback);
-      updatePlayUI(data.playback.playing);
+      currentPlayback = rebasePlayback(data.playback);
+      player.applyState(currentPlayback);
+      updatePlayUI(currentPlayback.playing);
     }
     syncStageEmpty();
     $("#netLabel").textContent = t("net.online");
@@ -233,7 +234,15 @@ function wireNet() {
     if (selfVoice) voices.forEach((id) => voice.peerVoice(id, true));
   });
 
-  net.on("chat", (msg) => { appendMessage(msg, true); noteIncomingChat(); scrollChat(); });
+  net.on("chat", (msg) => {
+    const near = isChatNearBottom();
+    appendMessage(msg, true);
+    noteIncomingChat();
+    scrollChat();
+    if (near) chatJumpCount = 0;
+    else if (msg.by !== me.id) chatJumpCount = Math.min(99, chatJumpCount + 1);
+    paintChatJump();
+  });
   net.on("reaction", (r) => floatReaction(r.emoji));
   net.on("chatUpdate", (msg) => updateMessage(msg));
   net.on("typing", ({ id, nick: n }) => {
@@ -258,9 +267,9 @@ function wireNet() {
     fileOfferId = "";
     $("#fileOfferBar").classList.add("hidden");
     $("#localBadge").classList.add("hidden");
-    currentPlayback = state;
-    player.applyState(state);
-    updatePlayUI(state.playing);
+    currentPlayback = rebasePlayback(state);
+    player.applyState(currentPlayback);
+    updatePlayUI(currentPlayback.playing);
     syncStageEmpty();
   });
 
@@ -502,6 +511,13 @@ function syncStageEmpty() {
   $("#videoFrame").classList.toggle("has-media", has);
 }
 
+/* Remote clocks can differ wildly between devices; anchor the shared
+   timeline to the moment this device received it instead. */
+function rebasePlayback(state) {
+  if (!state?.playing) return state;
+  return { ...state, at: Date.now() };
+}
+
 function loadVideoFromInput() {
   const url = $("#videoUrlInput").value.trim();
   const v = validateMediaUrl(url);
@@ -553,7 +569,7 @@ function applyLocalState(state) {
     url: player.url,
     playing: !!state.playing,
     time: Math.max(0, Number(state.time) || 0),
-    at: Number(state.at) || Date.now(),
+    at: Date.now(),
     rate: Number(state.rate) || 1
   };
   const target = player.expectedTime();
@@ -851,7 +867,29 @@ function wireChat() {
       const text = (node.dataset.text || "").toLowerCase();
       node.style.display = !searchTerm || text.includes(searchTerm) ? "" : "none";
     });
+    paintChatJump();
   });
+
+  /* ---- jump to latest message ---- */
+  const jumpBtn = $("#chatJump");
+  const chatFormEl = $("#chatForm");
+  const placeJump = () => {
+    if (!jumpBtn) return;
+    jumpBtn.style.bottom = `${(chatFormEl?.offsetHeight || 64) + 10}px`;
+    paintChatJump();
+  };
+  jumpBtn?.addEventListener("click", () => {
+    chatJumpCount = 0;
+    chatList.scrollTop = chatList.scrollHeight;
+    paintChatJump();
+  });
+  chatList.addEventListener("scroll", () => {
+    if (isChatNearBottom()) chatJumpCount = 0;
+    paintChatJump();
+  }, { passive: true });
+  if ("ResizeObserver" in window && chatFormEl) new ResizeObserver(placeJump).observe(chatFormEl);
+  else window.addEventListener("resize", placeJump);
+  placeJump();
 
   chatList.addEventListener("click", onChatAction);
 }
@@ -1024,9 +1062,28 @@ function scrollToMessage(id) {
   node.animate?.([{ background: "rgba(124,92,255,.35)" }, { background: "transparent" }], { duration: 1200 });
 }
 
+function isChatNearBottom() {
+  return chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 160;
+}
+
 function scrollChat(force = false) {
-  const nearBottom = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 160;
-  if (force || nearBottom) chatList.scrollTop = chatList.scrollHeight;
+  if (force || isChatNearBottom()) chatList.scrollTop = chatList.scrollHeight;
+  paintChatJump();
+}
+
+function paintChatJump() {
+  const btn = $("#chatJump");
+  if (!btn) return;
+  const gap = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight;
+  const show = !searchTerm && chatList.children.length > 0 && gap > 140;
+  btn.classList.toggle("hidden", !show);
+  const label = $("#chatJumpLabel");
+  if (!label) return;
+  if (chatJumpCount > 0) {
+    label.textContent = t(chatJumpCount > 1 ? "chat.jumpMany" : "chat.jumpOne", { n: String(chatJumpCount) });
+  } else {
+    label.textContent = t("chat.jumpLatest");
+  }
 }
 
 function renderTyping() {

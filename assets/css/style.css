@@ -244,7 +244,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .tab.active{color:var(--text);border-bottom-color:var(--accent)}
 .tab-badge{position:absolute;top:2px;inset-inline-start:calc(50% + 16px);min-width:17px;height:17px;padding:0 5px;border-radius:9px;background:var(--grad);color:#fff;font-size:10.5px;font-weight:700;line-height:17px;box-shadow:0 2px 8px rgba(0,0,0,.35);animation:badgePop .22s ease}
 @keyframes badgePop{from{transform:scale(.5);opacity:0}to{transform:scale(1);opacity:1}}
-.panel{display:none;flex:1;min-height:0;flex-direction:column;padding:12px}
+.panel{position:relative;display:none;flex:1;min-height:0;flex-direction:column;padding:12px}
 .panel.active{display:flex}
 .panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
 .panel-head h2{font-size:14px;font-weight:700}
@@ -286,6 +286,10 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .pinned-bar{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.22);font-size:11.8px;color:#f3d489;margin-bottom:8px;cursor:pointer}
 .pinned-bar b{font-weight:700}
 .typing-line{height:18px;font-size:11.5px;color:var(--text-faint);padding:0 6px;flex:none}
+.chat-jump{position:absolute;inset-inline:0;bottom:76px;margin-inline:auto;width:max-content;display:inline-flex;align-items:center;gap:7px;padding:6px 13px 6px 8px;border-radius:99px;background:#1b1830;border:1px solid rgba(124,92,255,.45);color:#d9d2ff;font-size:11.5px;font-weight:600;box-shadow:0 10px 24px rgba(0,0,0,.5),0 0 0 1px rgba(0,0,0,.3);z-index:4;animation:badgePop .18s ease;transition:background .15s,transform .15s}
+.chat-jump:hover{background:#251f45;transform:translateY(-1px)}
+.chat-jump:active{transform:scale(.96)}
+.chat-jump .cj-arrow{display:grid;place-items:center;width:17px;height:17px;border-radius:50%;background:var(--grad);color:#fff;font-size:11px;line-height:1;flex:none}
 .chat-form{border-top:1px solid var(--border);padding-top:10px;position:relative;flex:none}
 .reply-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;margin-bottom:8px;border-radius:10px;background:rgba(124,92,255,.1);border:1px solid rgba(124,92,255,.25);font-size:11.5px;color:#c0b4ff}
 .reply-bar button{width:22px;height:22px;border-radius:6px;color:inherit;display:grid;place-items:center}

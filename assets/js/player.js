@@ -193,19 +193,21 @@ export class Player {
   #syncNow(soft = false) {
     if (!this.state?.url || !this.video.duration) return;
     if (this.video.seeking || this.video.readyState < 2) return;
-    if (!this.canControl()) return;
+    const host = this.canControl();
+    if (!host && !this.state.playing) return;
     const target = this.expectedTime();
     const diff = target - this.video.currentTime;
-    if (Math.abs(diff) > 1.6) {
+    if (Math.abs(diff) > (host ? 1.6 : 2.5)) {
       this.applying = true;
       this.#setTime(target);
       setTimeout(() => { this.applying = false; }, 80);
+      if (!host) this.video.play().catch(() => {});
       return;
     }
     if (!soft || !this.state.playing) return;
     const desired = this.state.rate || 1;
     let rate = desired;
-    if (Math.abs(diff) > 0.4) rate = desired * (diff > 0 ? 1.06 : 0.94);
+    if (Math.abs(diff) > (host ? 0.4 : 0.3)) rate = desired * (diff > 0 ? (host ? 1.06 : 1.08) : (host ? 0.94 : 0.92));
     if (Math.abs(this.video.playbackRate - rate) > 0.005) {
       this.applying = true;
       this.video.playbackRate = rate;
