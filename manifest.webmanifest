@@ -1,0 +1,15 @@
+{
+  "name": "هم‌تماشا — Watch Together",
+  "short_name": "هم‌تماشا",
+  "description": "تماشای هم‌زمان فیلم با دوستان، با چت و صدای زنده در مرورگر.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#07080d",
+  "theme_color": "#07080d",
+  "dir": "auto",
+  "lang": "fa",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

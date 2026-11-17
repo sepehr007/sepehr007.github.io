@@ -2,46 +2,118 @@
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>سایت من</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-    font-family: Tahoma, "Segoe UI", sans-serif;
-    background: radial-gradient(circle at 30% 20%, #1e3a8a, #0b1020 60%);
-    color: #e8eefc;
-    text-align: center;
-    padding: 24px;
-  }
-  .card {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 20px;
-    padding: 48px 36px;
-    max-width: 520px;
-    backdrop-filter: blur(8px);
-  }
-  h1 { font-size: 28px; margin-bottom: 12px; }
-  p { color: #9fb3d9; line-height: 1.9; }
-  .badge {
-    display: inline-block;
-    margin-top: 22px;
-    padding: 8px 16px;
-    border-radius: 999px;
-    background: rgba(56,189,248,0.15);
-    color: #7dd3fc;
-    font-size: 14px;
-  }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07080d">
+<title>هم‌تماشا — Watch Together</title>
+<meta name="description" content="تماشای هم‌زمان فیلم با دوستان؛ چت، صدا و پخش همگام در مرورگر.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%237c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
 </head>
-<body>
-  <div class="card">
-    <h1>سایت در حال ساخت است</h1>
-    <p>اتصال گیت‌هاب و GitHub Pages با موفقیت انجام شد.<br>به‌زودی محتوای اصلی جایگزین می‌شود.</p>
-    <span class="badge">sepehr007.github.io</span>
+<body class="page-landing">
+
+<div class="bg-aurora" aria-hidden="true">
+  <span class="aurora a1"></span>
+  <span class="aurora a2"></span>
+  <span class="aurora a3"></span>
+  <div class="grid-overlay"></div>
+</div>
+
+<header class="site-header">
+  <a class="brand" href="./">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg>
+    </span>
+    <span class="brand-text">هم‌تماشا</span>
+  </a>
+  <div class="header-actions">
+    <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="Change language">EN</button>
   </div>
+</header>
+
+<main class="landing">
+  <section class="hero">
+    <span class="pill"><span class="dot"></span><span data-i18n="hero.badge">بدون ثبت‌نام · مستقیم در مرورگر</span></span>
+    <h1>
+      <span data-i18n="hero.title1">با دوستات هم‌زمان فیلم ببین</span>
+      <span class="grad-text" data-i18n="hero.title2">دقیق، ثانیه‌به‌ثانیه</span>
+    </h1>
+    <p class="hero-sub" data-i18n="hero.sub">یک لینک بساز، بفرست، و هم‌زمان با چت و صدای زنده تماشا کنید. هیچ نصب و حسابی لازم نیست.</p>
+  </section>
+
+  <section class="entry-grid">
+    <article class="card entry-card">
+      <h2 data-i18n="create.title">ساخت اتاق</h2>
+      <p class="muted" data-i18n="create.sub">اتاق بساز و لینکش رو برای دوستات بفرست.</p>
+      <label class="field">
+        <span data-i18n="create.name">اسم اتاق</span>
+        <input id="createName" type="text" maxlength="40" data-i18n-ph="create.namePh" placeholder="شب فیلم جمعه">
+      </label>
+      <label class="field">
+        <span data-i18n="create.nick">اسم نمایشی تو</span>
+        <input id="createNick" type="text" maxlength="20" data-i18n-ph="create.nickPh" placeholder="مثلاً سارا">
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span data-i18n="create.capacity">ظرفیت</span>
+          <select id="createCapacity">
+            <option value="4">4</option>
+            <option value="6" selected>6</option>
+            <option value="8">8</option>
+            <option value="12">12</option>
+          </select>
+        </label>
+        <label class="field">
+          <span data-i18n="create.privacy">دسترسی</span>
+          <select id="createPrivacy">
+            <option value="public" data-i18n="privacy.public">عمومی</option>
+            <option value="password" data-i18n="privacy.password">با رمز</option>
+          </select>
+        </label>
+      </div>
+      <label class="field hidden" id="passwordFieldWrap">
+        <span data-i18n="create.password">رمز اتاق</span>
+        <input id="createPassword" type="password" maxlength="32" autocomplete="new-password">
+      </label>
+      <button class="btn btn-primary btn-block" id="createBtn" type="button">
+        <span data-i18n="create.cta">ساخت اتاق</span>
+      </button>
+    </article>
+
+    <article class="card entry-card">
+      <h2 data-i18n="join.title">ورود به اتاق</h2>
+      <p class="muted" data-i18n="join.sub">کد اتاق یا لینک دعوت رو وارد کن.</p>
+      <label class="field">
+        <span data-i18n="join.code">کد اتاق یا لینک</span>
+        <input id="joinCode" type="text" maxlength="80" placeholder="ABC123" dir="ltr" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span data-i18n="create.nick">اسم نمایشی تو</span>
+        <input id="joinNick" type="text" maxlength="20" data-i18n-ph="create.nickPh" placeholder="مثلاً سارا">
+      </label>
+      <button class="btn btn-secondary btn-block" id="joinBtn" type="button">
+        <span data-i18n="join.cta">ورود</span>
+      </button>
+      <p class="hint" id="joinHint"></p>
+    </article>
+  </section>
+
+  <section class="features">
+    <div class="feature"><span class="ico">⏱</span><h3 data-i18n="feat.sync.t">همگام‌سازی دقیق</h3><p data-i18n="feat.sync.d">پخش، توقف و جابه‌جایی برای همه هم‌زمان.</p></div>
+    <div class="feature"><span class="ico">💬</span><h3 data-i18n="feat.chat.t">چت زنده</h3><p data-i18n="feat.chat.d">ری‌اکشن، پاسخ، سنجاق و تایپینگ.</p></div>
+    <div class="feature"><span class="ico">🎙</span><h3 data-i18n="feat.voice.t">صدای زنده</h3><p data-i18n="feat.voice.d">میکروفون و کنترل صدا، داخل مرورگر.</p></div>
+    <div class="feature"><span class="ico">🎬</span><h3 data-i18n="feat.player.t">پلیر سینمایی</h3><p data-i18n="feat.player.d">MP4 و HLS، زیرنویس، سرعت و PiP.</p></div>
+  </section>
+
+  <footer class="site-footer">
+    <span data-i18n="footer.note">اتاق روی مرورگر میزبان اجرا می‌شود؛ برای تماشا، میزبان باید صفحه را باز نگه دارد.</span>
+  </footer>
+</main>
+
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
+<script type="module" src="assets/js/landing.js"></script>
 </body>
 </html>

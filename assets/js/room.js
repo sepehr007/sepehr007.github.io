@@ -1,0 +1,854 @@
+import { initI18n, t, applyI18n, getLang } from "./i18n.js";
+import {
+  $, $$, el, escapeHtml, colorFor, initials, fmtTime, fmtClock, toast,
+  confirmDialog, copyText, store, validateMediaUrl, createLimiter, debounce,
+  highlightMentions, registerServiceWorker
+} from "./core.js";
+import { Net } from "./net.js";
+import { Player, parseSubtitles } from "./player.js";
+import { Voice } from "./voice.js";
+
+initI18n();
+registerServiceWorker();
+
+const params = new URLSearchParams(location.search);
+const code = (params.get("room") || "").toUpperCase();
+const isHost = params.get("host") === "1";
+if (!code) location.replace("./");
+
+const roomNameParam = params.get("name") || "";
+const capacityParam = Number(params.get("cap")) || 6;
+const privacyParam = params.get("privacy") === "password" ? "password" : "public";
+let roomPassword = sessionStorage.getItem(`pwd:${code}`) || "";
+
+let nick = (params.get("nick") || store.get("wt.nick") || "").trim();
+const me = { id: "", role: "member", nick: "" };
+let net = null;
+let player = null;
+let voice = null;
+let members = [];
+let queueItems = [];
+let roomInfo = null;
+let selfVoice = false;
+let currentPlayback = null;
+
+const chatList = $("#chatList");
+const peopleList = $("#peopleList");
+const queueList = $("#queueList");
+const typingUsers = new Map();
+const canSend = createLimiter(12, 8000);
+let replyTo = null;
+let editingId = null;
+let searchTerm = "";
+
+/* ================= boot ================= */
+boot();
+
+async function boot() {
+  if (!nick) nick = await askName();
+  if (!nick) { location.replace("./"); return; }
+  store.set("wt.nick", nick);
+  me.nick = nick;
+
+  $("#roomTitle").textContent = isHost ? (roomNameParam || `Room ${code}`) : `Room ${code}`;
+  $("#roomCodeLabel").textContent = code;
+
+  player = new Player({
+    video: $("#video"),
+    frame: $("#videoFrame"),
+    canControl: () => {
+      if (!me.id) return false;
+      if (me.role === "owner") return true;
+      const control = roomInfo?.control || (isHost ? "mods" : "mods");
+      if (control === "all") return true;
+      if (control === "mods" && me.role === "mod") return true;
+      return false;
+    },
+    onControl: ({ action, time, value, denied }) => {
+      if (denied) { toast(t("toast.cantControl"), "error"); return; }
+      if (action === "play") net.command("control", { action: "play" });
+      else if (action === "pause") net.command("control", { action: "pause", time });
+      else if (action === "seek") net.command("control", { action: "seek", time });
+      else if (action === "rate") net.command("control", { action: "rate", value, time });
+    },
+    onTime: ({ current, duration }) => {
+      $("#timeLabel").textContent = `${fmtTime(current)} / ${fmtTime(duration)}`;
+      if (duration) $("#seek").value = String(Math.round((current / duration) * 1000));
+    },
+    onLoaded: () => { $("#stageEmpty").classList.add("hidden"); },
+    onError: () => toast(t("toast.videoInvalid"), "error")
+  });
+
+  voice = new Voice({
+    net,
+    selfId: "",
+    onSpeaking: (id, active) => markSpeaking(id, active),
+    onPeers: () => renderVoiceTiles(),
+    onError: () => toast(t("toast.voiceDenied"), "error")
+  });
+
+  wirePlayer();
+  wireChat();
+  wireTabs();
+  wirePeople();
+  wireQueue();
+  wireSettings();
+  wireVoice();
+  wireMisc();
+
+  createNet();
+}
+
+function createNet() {
+  net = new Net({
+    code, nick, isHost,
+    password: roomPassword,
+    roomName: roomNameParam,
+    capacity: capacityParam,
+    privacy: privacyParam
+  });
+  voice.net = net;
+  wireNet();
+  net.start();
+}
+
+/* ================= name / password gates ================= */
+function overlayPrompt({ title, sub, type = "text", maxLength = 20, okLabel }) {
+  return new Promise((resolve) => {
+    const back = el("div", { class: "modal-backdrop" });
+    const box = el("div", { class: "modal card" });
+    const h = el("h2", { text: title });
+    const p = el("p", { class: "muted", text: sub || "" });
+    const input = el("input", { type, maxlength: maxLength, style: "margin-top:14px" });
+    const actions = el("div", { class: "modal-actions" });
+    const ok = el("button", { class: "btn btn-primary", text: okLabel || t("common.ok") });
+    actions.append(ok);
+    box.append(h, p, input, actions);
+    back.append(box);
+    document.body.append(back);
+    setTimeout(() => input.focus(), 60);
+    const done = (v) => { back.remove(); resolve(v); };
+    ok.onclick = () => {
+      const v = input.value.trim();
+      if (!v) return input.focus();
+      done(v);
+    };
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") ok.click();
+      if (e.key === "Escape") done(null);
+    };
+    back.onclick = (e) => { if (e.target === back) done(null); };
+  });
+}
+
+function askName() {
+  return overlayPrompt({
+    title: getLang() === "fa" ? "اسم نمایشی تو" : "Your display name",
+    sub: getLang() === "fa" ? "این اسم برای دوستات نمایش داده می‌شود." : "Friends will see this name."
+  }).then((v) => v ? v.slice(0, 20) : null);
+}
+
+function askPassword() {
+  return overlayPrompt({
+    title: getLang() === "fa" ? "رمز اتاق" : "Room password",
+    sub: getLang() === "fa" ? "این اتاق رمز دارد." : "This room is password protected.",
+    type: "password",
+    maxLength: 32,
+    okLabel: getLang() === "fa" ? "ورود" : "Join"
+  });
+}
+
+/* ================= net events ================= */
+function wireNet() {
+  net.on("status", (s) => {
+    const dot = $("#netStatus");
+    dot.dataset.state = s;
+    $("#netLabel").textContent = s === "online" ? t("net.online") : s === "connecting" ? t("net.connecting") : t("net.offline");
+  });
+
+  net.on("welcome", (data) => {
+    me.id = data.self.id;
+    me.role = data.self.role;
+    me.nick = data.self.nick;
+    voice.selfId = me.id;
+    roomInfo = data.room;
+    members = data.members || [];
+    $("#roomTitle").textContent = data.room?.name || $("#roomTitle").textContent;
+    renderMembers();
+    renderQueue(data.queue || []);
+    applyRoomSettings(data.room);
+    for (const msg of data.chat || []) appendMessage(msg, false);
+    scrollChat(true);
+    if (data.playback?.url) {
+      currentPlayback = data.playback;
+      $("#stageEmpty").classList.add("hidden");
+      player.applyState(data.playback);
+      updatePlayUI(data.playback.playing);
+    }
+    $("#netLabel").textContent = t("net.online");
+  });
+
+  net.on("members", (list) => {
+    members = list;
+    const mine = list.find((m) => m.id === me.id);
+    if (mine) { me.role = mine.role; me.nick = mine.nick; }
+    renderMembers();
+    const voices = list.filter((m) => m.voice && m.id !== me.id).map((m) => m.id);
+    if (selfVoice) voices.forEach((id) => voice.peerVoice(id, true));
+  });
+
+  net.on("chat", (msg) => { appendMessage(msg, true); scrollChat(); });
+  net.on("chatUpdate", (msg) => updateMessage(msg));
+  net.on("typing", ({ id, nick: n }) => {
+    if (id === me.id) return;
+    typingUsers.set(id, { nick: n, at: Date.now() });
+    renderTyping();
+  });
+  net.on("playback", (state) => {
+    currentPlayback = state;
+    $("#stageEmpty").classList.add("hidden");
+    player.applyState(state);
+    updatePlayUI(state.playing);
+  });
+  net.on("queue", (items) => renderQueue(items));
+  net.on("room", (room) => { roomInfo = room; applyRoomSettings(room); });
+
+  net.on("deny", async (reason) => {
+    if (reason === "password") {
+      const pwd = await askPassword();
+      if (!pwd) { location.replace("./"); return; }
+      roomPassword = pwd;
+      sessionStorage.setItem(`pwd:${code}`, pwd);
+      try { net.destroy(); } catch {}
+      createNet();
+      return;
+    }
+    const map = {
+      locked: t("toast.roomLocked"), full: t("toast.roomFull"),
+      not_found: t("toast.connLost"), unreachable: t("toast.connLost"), banned: t("toast.roomLocked"),
+      rejected: getLang() === "fa" ? "میزبان ورود را تأیید نکرد" : "Host declined the request"
+    };
+    toast(map[reason] || t("toast.connLost"), "error");
+    $("#netLabel").textContent = t("net.offline");
+    setTimeout(() => location.replace("./"), 2200);
+  });
+
+  net.on("kicked", () => {
+    toast(t("toast.youWereKicked"), "error");
+    setTimeout(() => location.replace("./"), 1500);
+  });
+
+  net.on("disconnected", () => {
+    toast(t("toast.connLost"), "error");
+  });
+
+  net.on("denied", (reason) => {
+    if (reason === "control") toast(t("toast.cantControl"), "error");
+    else if (reason === "blocked") toast(t("toast.blockedDomain"), "error");
+    else toast(t("toast.videoInvalid"), "error");
+  });
+
+  net.on("joinRequest", async ({ peerId, nick: n }) => {
+    const ok = await confirmDialog({
+      title: getLang() === "fa" ? "درخواست ورود" : "Join request",
+      text: `${n} ${getLang() === "fa" ? "می‌خواهد وارد شود" : "wants to join"}`,
+      okLabel: t("common.ok")
+    });
+    net.approve(peerId, ok);
+  });
+
+  net.on("forceMute", (muted) => {
+    voice.setMuted(muted);
+    syncMicUI();
+    toast(getLang() === "fa" ? "میکروفون تو توسط مدیر بسته شد" : "A moderator muted you", "error");
+  });
+
+  net.on("voice", ({ id, on }) => {
+    if (!selfVoice || id === me.id) return;
+    voice.peerVoice(id, on);
+    renderVoiceTiles();
+  });
+
+  net.on("incomingCall", (call) => voice.handleCall(call));
+
+  net.on("error", (kind) => {
+    if (kind === "code-taken") toast(getLang() === "fa" ? "این کد در حال استفاده است" : "Code already in use", "error");
+    else toast(t("toast.connLost"), "error");
+  });
+}
+
+/* ================= player ui ================= */
+function wirePlayer() {
+  const video = $("#video");
+  $("#playBtn").addEventListener("click", () => player.togglePlay());
+  $("#back5").addEventListener("click", () => player.seekBy(-5));
+  $("#back10").addEventListener("click", () => player.seekBy(-10));
+  $("#fwd5").addEventListener("click", () => player.seekBy(5));
+  $("#fwd10").addEventListener("click", () => player.seekBy(10));
+  $("#speedBtn").addEventListener("click", () => {
+    const r = player.cycleRate();
+    $("#speedBtn").textContent = `${r}×`;
+  });
+  $("#fullBtn").addEventListener("click", () => player.toggleFullscreen());
+  $("#pipBtn").addEventListener("click", () => player.togglePiP());
+  $("#theaterBtn").addEventListener("click", () => player.toggleTheater());
+  $("#subsBtn").addEventListener("click", () => activateTab("settings"));
+
+  $("#seek").addEventListener("input", (e) => {
+    const d = video.duration || 0;
+    $("#timeLabel").textContent = `${fmtTime((e.target.value / 1000) * d)} / ${fmtTime(d)}`;
+  });
+  $("#seek").addEventListener("change", (e) => {
+    const d = video.duration || 0;
+    if (d) player.seekTo((e.target.value / 1000) * d);
+  });
+
+  $("#loadVideoBtn").addEventListener("click", loadVideoFromInput);
+  $("#videoUrlInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadVideoFromInput(); });
+
+  video.addEventListener("click", () => player.togglePlay());
+  video.addEventListener("play", () => updatePlayUI(true));
+  video.addEventListener("pause", () => updatePlayUI(false));
+
+  document.addEventListener("keydown", (e) => {
+    if (/input|textarea|select/i.test(e.target.tagName)) return;
+    if (e.key === " " || e.key === "k") { e.preventDefault(); player.togglePlay(); }
+    else if (e.key === "ArrowRight") player.seekBy(getLang() === "fa" ? -5 : 5);
+    else if (e.key === "ArrowLeft") player.seekBy(getLang() === "fa" ? 5 : -5);
+    else if (e.key === "f") player.toggleFullscreen();
+    else if (e.key === "t") player.toggleTheater();
+    else if (e.key === "p") player.togglePiP();
+  });
+
+  let idleTimer = null;
+  const controls = $("#stageControls");
+  const frame = $("#videoFrame");
+  const wake = () => {
+    controls.classList.remove("idle");
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { if (!video.paused) controls.classList.add("idle"); }, 2600);
+  };
+  ["mousemove", "touchstart", "click"].forEach((ev) => frame.addEventListener(ev, wake));
+  wake();
+}
+
+function updatePlayUI(playing) {
+  $("#playBtn .i-play").classList.toggle("hidden", playing);
+  $("#playBtn .i-pause").classList.toggle("hidden", !playing);
+}
+
+function loadVideoFromInput() {
+  const url = $("#videoUrlInput").value.trim();
+  const v = validateMediaUrl(url);
+  if (!v.ok) return toast(v.reason === "blocked" ? t("toast.blockedDomain") : t("toast.videoInvalid"), "error");
+  net.command("loadVideo", { url: v.url });
+}
+
+/* ================= chat ================= */
+function wireChat() {
+  $("#chatForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = $("#chatInput");
+    const text = input.value.trim();
+    if (!text) return;
+    if (!canSend()) { toast(getLang() === "fa" ? "کمی صبر کن" : "Slow down", "error"); return; }
+    if (editingId) {
+      net.command("chatEdit", { id: editingId, text });
+      editingId = null;
+      $("#chatInput").placeholder = t("chat.placeholder");
+      $("#replyBar").classList.add("hidden");
+    } else {
+      net.command("chat", { text, replyTo });
+      replyTo = null;
+      $("#replyBar").classList.add("hidden");
+    }
+    input.value = "";
+  });
+
+  $("#replyCancel").addEventListener("click", () => {
+    replyTo = null;
+    $("#replyBar").classList.add("hidden");
+  });
+
+  const sendTyping = debounce(() => net.command("typing", {}), 1200);
+  $("#chatInput").addEventListener("input", () => {
+    if ($("#chatInput").value.trim()) sendTyping();
+  });
+
+  $("#emojiBtn").addEventListener("click", () => $("#emojiPop").classList.toggle("hidden"));
+  const EMOJI = ["😀","😂","🥹","😍","😎","🤔","😴","🤯","😭","😡","👍","👎","🔥","❤️","🎉","🍿","👏","🙏","💯","😅","🤝","🫡","👀","✨"];
+  const pop = $("#emojiPop");
+  for (const em of EMOJI) {
+    pop.append(el("button", { type: "button", text: em, onclick: () => {
+      const input = $("#chatInput");
+      input.value += em;
+      input.focus();
+      pop.classList.add("hidden");
+    } }));
+  }
+  document.addEventListener("click", (e) => {
+    if (!pop.contains(e.target) && e.target !== $("#emojiBtn")) pop.classList.add("hidden");
+  });
+
+  $("#chatSearch").addEventListener("input", (e) => {
+    searchTerm = e.target.value.trim().toLowerCase();
+    $$(".msg", chatList).forEach((node) => {
+      const text = (node.dataset.text || "").toLowerCase();
+      node.style.display = !searchTerm || text.includes(searchTerm) ? "" : "none";
+    });
+  });
+
+  chatList.addEventListener("click", onChatAction);
+}
+
+function onChatAction(e) {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) {
+    const reply = e.target.closest(".msg-reply");
+    if (reply) scrollToMessage(reply.dataset.ref);
+    return;
+  }
+  const msgNode = btn.closest(".msg");
+  const id = msgNode.dataset.id;
+  const act = btn.dataset.act;
+  const data = JSON.parse(msgNode.dataset.msg || "{}");
+
+  if (act === "react") net.command("react", { id, emoji: "👍" });
+  else if (act === "reply") startReply(data);
+  else if (act === "pin") net.command("pin", { id });
+  else if (act === "edit") startEdit(data);
+  else if (act === "delete") net.command("chatDelete", { id });
+  else if (act === "reaction") net.command("react", { id, emoji: btn.dataset.emoji });
+}
+
+function startReply(msg) {
+  replyTo = msg.id;
+  const nickName = msg.nick || members.find((m) => m.id === msg.by)?.nick || "?";
+  $("#replyBarText").textContent = `↩ ${nickName}: ${msg.text.slice(0, 60)}`;
+  $("#replyBar").classList.remove("hidden");
+  $("#chatInput").focus();
+}
+
+function startEdit(msg) {
+  editingId = msg.id;
+  $("#chatInput").value = msg.text;
+  $("#chatInput").focus();
+  $("#chatInput").placeholder = getLang() === "fa" ? "ویرایش پیام…" : "Editing…";
+}
+
+function appendMessage(msg, animate) {
+  if (!msg) return;
+  if (chatList.querySelector(`[data-id="${msg.id}"]`)) return;
+  const node = buildMessage(msg);
+  chatList.append(node);
+  if (animate) node.animate?.([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 180 });
+  refreshPinned();
+}
+
+function buildMessage(msg) {
+  const mine = msg.by === me.id;
+  const color = colorFor(msg.by || msg.nick || "x");
+  const isMod = msg.role === "owner" || msg.role === "mod";
+  const node = el("div", { class: `msg${mine ? " own" : ""}${msg.edited ? " edited" : ""}`, "data-id": msg.id });
+  node.dataset.text = msg.text || "";
+  node.dataset.msg = JSON.stringify({ id: msg.id, by: msg.by, nick: msg.nick, text: msg.text, role: msg.role });
+
+  const avatar = el("div", { class: "avatar", style: `background:${color}` });
+  avatar.textContent = initials(msg.nick || "?");
+
+  const body = el("div", { class: "msg-body" });
+
+  if (msg.replyTo) {
+    const ref = chatList.querySelector(`[data-id="${msg.replyTo}"]`);
+    const refData = ref ? JSON.parse(ref.dataset.msg || "{}") : null;
+    const quote = el("div", { class: "msg-reply", "data-ref": msg.replyTo });
+    quote.textContent = refData ? `${refData.nick}: ${String(refData.text).slice(0, 70)}` : "…";
+    body.append(quote);
+  }
+
+  const head = el("div", { class: "msg-head" });
+  head.append(el("span", { class: "nick", text: msg.nick || "?" }));
+  if (msg.role && msg.role !== "member") {
+    head.append(el("span", { class: `role-badge ${msg.role}`, text: t(`role.${msg.role}`) }));
+  }
+  head.append(el("span", { class: "msg-time", text: fmtClock(msg.at || Date.now()) }));
+
+  const text = el("div", { class: "msg-text" });
+  if (msg.deleted) {
+    text.classList.add("deleted");
+    text.textContent = t("chat.deleted");
+  } else {
+    text.innerHTML = highlightMentions(msg.text || "", me.nick);
+  }
+
+  const reactions = el("div", { class: "reactions" });
+  body.append(head, text, reactions);
+  if (msg.pinned) node.classList.add("pinned-msg");
+
+  const actions = el("div", { class: "msg-actions" });
+  actions.append(el("button", { type: "button", "data-act": "react", title: "👍", text: "👍" }));
+  actions.append(el("button", { type: "button", "data-act": "reply", title: t("common.reply"), text: "↩" }));
+  if (mine && !msg.deleted) actions.append(el("button", { type: "button", "data-act": "edit", title: t("common.edit"), text: "✎" }));
+  if ((mine || isModSelf()) && !msg.deleted) actions.append(el("button", { type: "button", "data-act": "delete", title: t("common.delete"), text: "🗑" }));
+  if (isModSelf()) actions.append(el("button", { type: "button", "data-act": "pin", title: msg.pinned ? t("common.unpin") : t("common.pin"), text: msg.pinned ? "📌" : "📍" }));
+
+  node.append(avatar, body, actions);
+  renderReactions(node, msg);
+  return node;
+}
+
+function isModSelf() { return me.role === "owner" || me.role === "mod"; }
+
+function renderReactions(node, msg) {
+  const wrap = node.querySelector(".reactions");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const reactions = msg.reactions || {};
+  for (const [emoji, users] of Object.entries(reactions)) {
+    if (!users?.length) continue;
+    const b = el("button", { type: "button", class: `reaction${users.includes(me.id) ? " mine" : ""}`, "data-act": "reaction", "data-emoji": emoji });
+    b.append(el("span", { text: emoji }), el("span", { text: String(users.length) }));
+    wrap.append(b);
+  }
+}
+
+function updateMessage(msg) {
+  const node = chatList.querySelector(`[data-id="${msg.id}"]`);
+  if (!node) { appendMessage(msg, false); return; }
+  node.dataset.msg = JSON.stringify({ id: msg.id, by: msg.by, nick: msg.nick, text: msg.text, role: msg.role });
+  node.dataset.text = msg.text || "";
+  node.classList.toggle("edited", !!msg.edited);
+  node.classList.toggle("pinned-msg", !!msg.pinned);
+  const textEl = node.querySelector(".msg-text");
+  if (msg.deleted) {
+    textEl.classList.add("deleted");
+    textEl.textContent = t("chat.deleted");
+    textEl.innerHTML = escapeHtml(t("chat.deleted"));
+  } else {
+    textEl.classList.remove("deleted");
+    textEl.innerHTML = highlightMentions(msg.text || "", me.nick);
+  }
+  renderReactions(node, msg);
+  refreshPinned();
+}
+
+function refreshPinned() {
+  const bar = $("#pinnedBar");
+  const pinned = [...chatList.children]
+    .filter((n) => n.classList.contains("pinned-msg"))
+    .map((n) => JSON.parse(n.dataset.msg || "{}"));
+  if (!pinned.length) { bar.classList.add("hidden"); bar.innerHTML = ""; return; }
+  const last = pinned[pinned.length - 1];
+  bar.classList.remove("hidden");
+  bar.innerHTML = `<b>${t("pinned.label")}:</b> <span>${escapeHtml(`${last.nick}: ${String(last.text).slice(0, 80)}`)}</span>`;
+  bar.onclick = () => scrollToMessage(last.id);
+}
+
+function scrollToMessage(id) {
+  const node = chatList.querySelector(`[data-id="${id}"]`);
+  if (!node) return;
+  node.scrollIntoView({ behavior: "smooth", block: "center" });
+  node.animate?.([{ background: "rgba(124,92,255,.35)" }, { background: "transparent" }], { duration: 1200 });
+}
+
+function scrollChat(force = false) {
+  const nearBottom = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 160;
+  if (force || nearBottom) chatList.scrollTop = chatList.scrollHeight;
+}
+
+function renderTyping() {
+  const now = Date.now();
+  for (const [id, val] of typingUsers) if (now - val.at > 3200) typingUsers.delete(id);
+  const count = typingUsers.size;
+  $("#typingLine").textContent = count
+    ? t(count > 1 ? "chat.typingMany" : "chat.typingOne", { n: count > 2 ? String(count) : [...typingUsers.values()].map((v) => v.nick).join(", ") })
+    : "";
+}
+setInterval(renderTyping, 1200);
+
+/* ================= people ================= */
+function wirePeople() {
+  peopleList.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-pmod]");
+    if (!btn) return;
+    const id = btn.closest(".person").dataset.id;
+    const action = btn.dataset.pmod;
+    if (action === "kick" || action === "ban") {
+      const ok = await confirmDialog({
+        title: t(action === "kick" ? "people.kick" : "people.ban"),
+        text: getLang() === "fa" ? "این کار قابل بازگشت نیست." : "This can't be undone.",
+        okLabel: t("common.ok")
+      });
+      if (!ok) return;
+    }
+    net.command("mod", { action, target: id });
+  });
+}
+
+function renderMembers() {
+  $("#peopleCount").textContent = String(members.length);
+  peopleList.innerHTML = "";
+  const order = { owner: 0, mod: 1, member: 2 };
+  const sorted = [...members].sort((a, b) => (order[a.role] - order[b.role]) || a.nick.localeCompare(b.nick));
+  for (const m of sorted) {
+    const node = el("div", { class: "person", "data-id": m.id });
+    node.dataset.nick = m.nick;
+    const avatar = el("div", { class: "avatar", style: `background:${colorFor(m.id)}` });
+    avatar.textContent = initials(m.nick);
+    const info = el("div", { class: "person-info" });
+    const nameRow = el("div", { class: "person-name" });
+    nameRow.append(el("span", { text: m.nick + (m.id === me.id ? (getLang() === "fa" ? " (تو)" : " (you)") : "") }));
+    if (m.role !== "member") nameRow.append(el("span", { class: `role-badge ${m.role}`, text: t(`role.${m.role}`) }));
+    const sub = el("div", { class: "person-sub", text: m.voice ? (getLang() === "fa" ? "در صدا" : "In voice") : "" });
+    info.append(nameRow, sub);
+
+    const actions = el("div", { class: "person-actions" });
+    if (isModSelf() && m.id !== me.id && m.role !== "owner") {
+      actions.append(el("button", { type: "button", "data-pmod": "mute", title: t("people.mute"), text: m.muted ? "🔈" : "🔇" }));
+      actions.append(el("button", { type: "button", "data-pmod": "kick", title: t("people.kick"), class: "danger", text: "⤫" }));
+      actions.append(el("button", { type: "button", "data-pmod": "ban", title: t("people.ban"), class: "danger", text: "🚫" }));
+      if (me.role === "owner") {
+        actions.append(el("button", { type: "button", "data-pmod": m.role === "mod" ? "demote" : "promote", title: m.role === "mod" ? t("people.demote") : t("people.promote"), text: m.role === "mod" ? "↓" : "↑" }));
+      }
+    }
+    node.append(avatar, info, actions);
+    if (m.voice && !m.muted) node.dataset.voice = "1";
+    peopleList.append(node);
+  }
+  renderVoiceTiles();
+}
+
+function markSpeaking(id, active) {
+  if (id === "self") {
+    const tile = document.querySelector(`.voice-tile[data-id="${me.id}"]`);
+    tile?.classList.toggle("speaking", active);
+    const person = peopleList.querySelector(`.person[data-id="${me.id}"]`);
+    person?.classList.toggle("speaking", active);
+    return;
+  }
+  const tile = document.querySelector(`.voice-tile[data-id="${id}"]`);
+  tile?.classList.toggle("speaking", active);
+  const person = peopleList.querySelector(`.person[data-id="${id}"]`);
+  person?.classList.toggle("speaking", active);
+}
+
+/* ================= queue ================= */
+function wireQueue() {
+  $("#queueForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = $("#queueInput");
+    const v = validateMediaUrl(input.value.trim());
+    if (!v.ok) return toast(v.reason === "blocked" ? t("toast.blockedDomain") : t("toast.videoInvalid"), "error");
+    net.command("queueAdd", { url: v.url });
+    input.value = "";
+  });
+
+  queueList.addEventListener("click", (e) => {
+    const vote = e.target.closest("[data-vote]");
+    if (vote) return net.command("queueVote", { id: vote.dataset.vote });
+    const play = e.target.closest("[data-qplay]");
+    if (play) return net.command("queuePlay", { id: play.dataset.qplay });
+  });
+}
+
+function renderQueue(items) {
+  queueItems = items || [];
+  $("#queueCount").textContent = String(queueItems.length);
+  queueList.innerHTML = "";
+  if (!queueItems.length) {
+    queueList.append(el("p", { class: "hint", text: t("queue.empty") }));
+    return;
+  }
+  const sorted = [...queueItems].sort((a, b) => b.votes.length - a.votes.length);
+  for (const item of sorted) {
+    const node = el("div", { class: "queue-item" });
+    const main = el("div", { class: "q-main" });
+    const title = item.url.split("/").pop()?.split("?")[0] || item.url;
+    main.append(
+      el("div", { class: "q-title", text: title || item.url }),
+      el("div", { class: "q-sub", text: `${item.by} · ${fmtTime(0)}` })
+    );
+    const voted = item.votes.includes(me.id);
+    const vote = el("button", { type: "button", class: `vote-btn${voted ? " voted" : ""}`, "data-vote": item.id });
+    vote.append(el("span", { text: "▲" }), el("span", { text: String(item.votes.length) }));
+    node.append(main, vote);
+    if (canControl()) {
+      node.append(el("button", { type: "button", class: "vote-btn", "data-qplay": item.id, title: t("queue.play"), text: "▶" }));
+    }
+    queueList.append(node);
+  }
+}
+
+function canControl() {
+  if (me.role === "owner") return true;
+  const control = roomInfo?.control || "mods";
+  if (control === "all") return true;
+  if (control === "mods" && me.role === "mod") return true;
+  return false;
+}
+
+/* ================= settings ================= */
+function applyRoomSettings(room) {
+  if (!room) return;
+  roomInfo = room;
+  const isOwner = me.role === "owner";
+  $("#optControl").value = room.control || "mods";
+  $("#optLock").checked = !!room.locked;
+  $("#optApproval").checked = !!room.approval;
+  [$("#optControl"), $("#optLock"), $("#optApproval")].forEach((n) => { n.disabled = !isOwner; });
+}
+
+function wireSettings() {
+  const push = (patch) => net.command("settings", { patch });
+  $("#optControl").addEventListener("change", (e) => push({ control: e.target.value }));
+  $("#optLock").addEventListener("change", (e) => push({ locked: e.target.checked }));
+  $("#optApproval").addEventListener("change", (e) => push({ approval: e.target.checked }));
+
+  $("#subsFile").addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const raw = await file.text();
+    const cues = parseSubtitles(raw);
+    if (!cues.length) return toast(getLang() === "fa" ? "زیرنویس معتبر نبود" : "Invalid subtitle file", "error");
+    player.setCues(cues);
+    toast(getLang() === "fa" ? `${cues.length} خط زیرنویس بارگذاری شد` : `${cues.length} cues loaded`, "success");
+  });
+  $("#subsSize").addEventListener("input", (e) => player.setSubsSize(e.target.value));
+  $("#subsOffset").addEventListener("input", (e) => player.setSubsOffset(e.target.value));
+}
+
+/* ================= tabs ================= */
+function wireTabs() {
+  $$(".tab").forEach((tab) => tab.addEventListener("click", () => activateTab(tab.dataset.tab)));
+}
+
+function activateTab(name) {
+  $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
+  $$(".panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
+  $("#sidebar").classList.add("open");
+  if (name === "chat") setTimeout(() => scrollChat(true), 50);
+}
+
+/* ================= voice ================= */
+function wireVoice() {
+  $("#voiceBtn").addEventListener("click", toggleVoice);
+  $("#voiceLeaveBtn").addEventListener("click", leaveVoice);
+  $("#micBtn").addEventListener("click", () => {
+    if (!selfVoice) return toast(t("toast.notInVoice"));
+    voice.setMuted(!voice.muted);
+    syncMicUI();
+  });
+  $("#deafenBtn").addEventListener("click", () => {
+    if (!selfVoice) return toast(t("toast.notInVoice"));
+    voice.setDeafened(!voice.deafened);
+    syncDeafenUI();
+    renderVoiceTiles();
+  });
+}
+
+async function toggleVoice() {
+  if (selfVoice) return leaveVoice();
+  const ok = await voice.join();
+  if (!ok) return;
+  selfVoice = true;
+  net.command("voice", { on: true });
+  $("#voiceBtn").classList.add("active");
+  $("#voiceDock").classList.remove("hidden");
+  syncMicUI();
+  renderVoiceTiles();
+  toast(t("toast.voiceJoined"), "success");
+}
+
+function leaveVoice() {
+  if (!selfVoice) return;
+  voice.leave();
+  selfVoice = false;
+  net.command("voice", { on: false });
+  $("#voiceBtn").classList.remove("active");
+  $("#voiceDock").classList.add("hidden");
+  renderVoiceTiles();
+  toast(t("toast.voiceLeft"));
+}
+
+function syncMicUI() {
+  const btn = $("#micBtn");
+  btn.classList.toggle("active", !voice.muted);
+  btn.innerHTML = voice.muted
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l16 16M9 4v3M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+  const tile = document.querySelector(`.voice-tile[data-id="${me.id}"]`);
+  tile?.classList.toggle("muted", voice.muted);
+}
+
+function syncDeafenUI() {
+  $("#deafenBtn").classList.toggle("active", voice.deafened);
+}
+
+function renderVoiceTiles() {
+  const strip = $("#voiceStrip");
+  strip.innerHTML = "";
+  if (!selfVoice) return;
+  const inVoice = members.filter((m) => m.voice);
+  if (!inVoice.some((m) => m.id === me.id)) inVoice.push({ id: me.id, nick: me.nick, muted: voice.muted });
+  for (const m of inVoice) {
+    const tile = el("div", { class: `voice-tile${m.muted ? " muted" : ""}`, "data-id": m.id });
+    const av = el("div", { class: "avatar-sm", style: `background:${colorFor(m.id)}` });
+    av.textContent = initials(m.nick);
+    const name = el("span", { text: m.id === me.id ? (getLang() === "fa" ? "تو" : "You") : m.nick });
+    tile.append(av, name);
+    if (m.id !== me.id) {
+      const vol = el("input", { type: "range", min: "0", max: "100", value: String(Math.round((voice.volumes.get(m.id) ?? 1) * 100)), style: "width:64px;padding:0;height:3px" });
+      vol.addEventListener("input", (e) => voice.setVolume(m.id, Number(e.target.value) / 100));
+      tile.append(vol);
+    }
+    strip.append(tile);
+  }
+}
+
+/* ================= misc ================= */
+function wireMisc() {
+  $("#copyLinkBtn").addEventListener("click", async () => {
+    const base = `${location.origin}${location.pathname.replace(/room\.html$/, "")}room.html`;
+    const q = new URLSearchParams({ room: code });
+    if (roomInfo?.privacy === "password") q.set("pwd", "1");
+    const ok = await copyText(`${base}?${q.toString()}`);
+    if (ok) toast(t("toast.copied"), "success");
+  });
+
+  $("#leaveBtn").addEventListener("click", async () => {
+    const ok = await confirmDialog({
+      title: getLang() === "fa" ? "خروج از اتاق" : "Leave room",
+      text: getLang() === "fa" ? "از اتاق خارج می‌شوی." : "You will leave this room.",
+      okLabel: getLang() === "fa" ? "خروج" : "Leave"
+    });
+    if (!ok) return;
+    cleanup();
+    location.replace("./");
+  });
+
+  $("#sideBtn")?.addEventListener("click", () => $("#sidebar").classList.toggle("open"));
+
+  document.addEventListener("langchange", () => {
+    renderMembers();
+    renderQueue(queueItems);
+    applyRoomSettings(roomInfo);
+  });
+
+  window.addEventListener("beforeunload", cleanup);
+}
+
+function cleanup() {
+  try { voice?.leave(); } catch {}
+  try { player?.destroy(); } catch {}
+  try { net?.destroy(); } catch {}
+}
+
+/* keep sidebar accessible on mobile */
+document.addEventListener("click", (e) => {
+  if (window.innerWidth > 1080) return;
+  if (e.target.closest("#sideBtn")) return;
+  const side = $("#sidebar");
+  if (!side.classList.contains("open")) return;
+  if (side.contains(e.target)) return;
+  side.classList.remove("open");
+});

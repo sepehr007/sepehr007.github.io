@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07080d">
+<title>اتاق — هم‌تماشا</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%237c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
+</head>
+<body class="page-room">
+
+<div class="room-shell">
+  <header class="topbar">
+    <div class="topbar-left">
+      <a class="brand brand-compact" href="./" aria-label="Home">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg></span>
+      </a>
+      <div class="room-meta">
+        <h1 id="roomTitle">اتاق</h1>
+        <div class="room-code-row">
+          <button class="chip" id="copyLinkBtn" type="button" title="Copy invite link">
+            <span id="roomCodeLabel">------</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+          <span class="status-dot" id="netStatus" data-state="connecting"></span>
+          <span class="status-label" id="netLabel">در حال اتصال…</span>
+        </div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="icon-btn side-toggle" id="sideBtn" type="button" title="Chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z"/></svg>
+      </button>
+      <button class="icon-btn" id="voiceBtn" type="button" title="Voice">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      </button>
+      <button class="icon-btn" id="langToggle" type="button" title="Language">EN</button>
+      <button class="icon-btn" id="leaveBtn" type="button" title="Leave">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 17l5-5-5-5M20 12H9M12 20H5V4h7"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="stage-wrap">
+    <section class="stage" id="stage">
+      <div class="video-frame" id="videoFrame">
+        <video id="video" playsinline crossorigin="anonymous"></video>
+        <div class="subtitle-layer" id="subtitleLayer"></div>
+
+        <div class="stage-empty" id="stageEmpty">
+          <div class="empty-inner">
+            <div class="empty-ico">🎬</div>
+            <h2 data-i18n="room.emptyTitle">هنوز فیلمی انتخاب نشده</h2>
+            <p class="muted" data-i18n="room.emptySub">یه لینک مستقیم MP4 یا HLS بذار تا همه تماشا کنن.</p>
+            <div class="url-row">
+              <input id="videoUrlInput" type="url" placeholder="https://example.com/movie.mp4" dir="ltr" spellcheck="false">
+              <button class="btn btn-primary" id="loadVideoBtn" type="button" data-i18n="room.load">پخش</button>
+            </div>
+            <p class="hint" data-i18n="room.urlHint">فقط لینک‌های مستقیم MP4 / M3U8 پشتیبانی می‌شوند.</p>
+          </div>
+        </div>
+
+        <div class="stage-controls" id="stageControls">
+          <button class="ctl" id="playBtn" type="button" data-i18n-title="player.play" title="Play">
+            <svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5L8 5.5z"/></svg>
+            <svg class="i-pause hidden" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+          </button>
+          <button class="ctl ctl-txt" id="back5" type="button" title="-5s">−5s</button>
+          <button class="ctl ctl-txt" id="back10" type="button" title="-10s">−10s</button>
+          <button class="ctl ctl-txt" id="fwd10" type="button" title="+10s">+10s</button>
+          <button class="ctl ctl-txt" id="fwd5" type="button" title="+5s">+5s</button>
+          <span class="time" id="timeLabel">0:00 / 0:00</span>
+          <input class="seek" id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
+          <button class="ctl ctl-txt" id="speedBtn" type="button" title="Speed">1×</button>
+          <button class="ctl" id="subsBtn" type="button" title="Subtitles">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 12h4M7 15h7M14 12h3"/></svg>
+          </button>
+          <button class="ctl" id="theaterBtn" type="button" title="Theater">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/></svg>
+          </button>
+          <button class="ctl" id="pipBtn" type="button" title="Picture in picture">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1"/></svg>
+          </button>
+          <button class="ctl" id="fullBtn" type="button" title="Fullscreen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="voice-strip" id="voiceStrip"></div>
+    </section>
+  </main>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="chat" type="button" data-i18n="tab.chat">چت</button>
+      <button class="tab" data-tab="people" type="button" data-i18n="tab.people">افراد</button>
+      <button class="tab" data-tab="queue" type="button" data-i18n="tab.queue">صف</button>
+      <button class="tab" data-tab="settings" type="button" data-i18n="tab.settings">تنظیمات</button>
+    </div>
+
+    <section class="panel active" data-panel="chat">
+      <div class="panel-head">
+        <input class="search" id="chatSearch" type="search" data-i18n-ph="chat.search" placeholder="جستجو در پیام‌ها…">
+      </div>
+      <div class="pinned hidden" id="pinnedBar"></div>
+      <div class="chat-list" id="chatList"></div>
+      <div class="typing-line" id="typingLine"></div>
+      <form class="chat-form" id="chatForm" autocomplete="off">
+        <div class="reply-bar hidden" id="replyBar">
+          <span id="replyBarText"></span>
+          <button type="button" id="replyCancel">×</button>
+        </div>
+        <div class="chat-input-row">
+          <button class="emoji-btn" type="button" id="emojiBtn" title="Emoji">😊</button>
+          <input id="chatInput" type="text" maxlength="500" data-i18n-ph="chat.placeholder" placeholder="پیام بنویس…">
+          <button class="send-btn" type="submit" aria-label="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12l16-8-6 16-3-6-7-2z"/></svg>
+          </button>
+        </div>
+        <div class="emoji-pop hidden" id="emojiPop"></div>
+      </form>
+    </section>
+
+    <section class="panel" data-panel="people">
+      <div class="panel-head">
+        <h2 data-i18n="people.title">افراد اتاق</h2>
+        <span class="count" id="peopleCount">0</span>
+      </div>
+      <div class="people-list" id="peopleList"></div>
+    </section>
+
+    <section class="panel" data-panel="queue">
+      <div class="panel-head">
+        <h2 data-i18n="queue.title">صف پخش</h2>
+        <span class="count" id="queueCount">0</span>
+      </div>
+      <div class="queue-list" id="queueList"></div>
+      <form class="queue-form" id="queueForm" autocomplete="off">
+        <input id="queueInput" type="url" placeholder="https://…/movie.mp4" dir="ltr" spellcheck="false">
+        <button class="btn btn-primary btn-sm" type="submit" data-i18n="queue.add">افزودن</button>
+      </form>
+    </section>
+
+    <section class="panel" data-panel="settings">
+      <div class="panel-head"><h2 data-i18n="settings.title">تنظیمات اتاق</h2></div>
+      <div class="settings-list" id="settingsList">
+        <div class="setting">
+          <label for="optControl" data-i18n="settings.whoControls">چه کسی کنترل پخش دارد؟</label>
+          <select id="optControl">
+            <option value="host" data-i18n="settings.hostOnly">فقط میزبان</option>
+            <option value="mods" data-i18n="settings.hostMods">میزبان و مدیران</option>
+            <option value="all" data-i18n="settings.everyone">همه</option>
+          </select>
+        </div>
+        <label class="switch-row">
+          <span data-i18n="settings.lock">قفل اتاق (ورود جدید ممنوع)</span>
+          <input type="checkbox" id="optLock">
+          <span class="switch"></span>
+        </label>
+        <label class="switch-row">
+          <span data-i18n="settings.approval">تأیید ورود توسط میزبان</span>
+          <input type="checkbox" id="optApproval">
+          <span class="switch"></span>
+        </label>
+        <div class="setting">
+          <label for="subsFile" data-i18n="settings.subs">زیرنویس (SRT / VTT)</label>
+          <input type="file" id="subsFile" accept=".srt,.vtt,text/vtt,text/plain">
+          <div class="subs-controls">
+            <label data-i18n="settings.subsSize">اندازه</label>
+            <input type="range" id="subsSize" min="80" max="200" value="120">
+            <label data-i18n="settings.subsOffset">تأخیر (ثانیه)</label>
+            <input type="number" id="subsOffset" step="0.1" value="0" style="width:80px">
+          </div>
+        </div>
+        <p class="hint" data-i18n="settings.note">تغییرات در همین مرورگر ذخیره می‌شوند.</p>
+      </div>
+    </section>
+  </aside>
+</div>
+
+<div class="voice-dock hidden" id="voiceDock">
+  <div class="voice-status" id="voiceStatus">Voice</div>
+  <button class="icon-btn" id="micBtn" type="button" title="Mute">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+  </button>
+  <button class="icon-btn" id="deafenBtn" type="button" title="Deafen">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/></svg>
+  </button>
+  <button class="icon-btn danger" id="voiceLeaveBtn" type="button" title="Leave voice">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l16 16M9 4v3M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+  </button>
+</div>
+
+<div class="modal-backdrop hidden" id="modalBackdrop">
+  <div class="modal card" id="modal">
+    <h2 id="modalTitle"></h2>
+    <p id="modalText"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="modalCancel" type="button" data-i18n="common.cancel">انصراف</button>
+      <button class="btn btn-primary" id="modalOk" type="button" data-i18n="common.ok">تأیید</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
+<div class="ctx-menu hidden" id="ctxMenu"></div>
+
+<script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<script type="module" src="assets/js/room.js"></script>
+</body>
+</html>

@@ -1,0 +1,274 @@
+import { fmtTime, store } from "./core.js";
+
+export function parseSubtitles(raw) {
+  const text = String(raw).replace(/\r/g, "").trim();
+  const cueBlocks = text.split(/\n{2,}/);
+  const toSec = (s) => {
+    const m = s.match(/(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})/);
+    if (!m) return null;
+    const [, h, mm, ss, ms] = m;
+    return (+h || 0) * 3600 + (+mm) * 60 + (+ss) + (+ms.padEnd(3, "0") / 1000);
+  };
+  const cues = [];
+  for (const block of cueBlocks) {
+    const lines = block.split("\n").filter(Boolean);
+    const idx = lines.findIndex((l) => l.includes("-->"));
+    if (idx === -1) continue;
+    const [startRaw, endRaw] = lines[idx].split("-->");
+    const start = toSec(startRaw);
+    const end = toSec(endRaw);
+    if (start == null || end == null) continue;
+    const content = lines.slice(idx + 1).join("\n").replace(/<[^>]+>/g, "").trim();
+    if (!content) continue;
+    cues.push({ start, end, text: content });
+  }
+  cues.sort((a, b) => a.start - b.start);
+  return cues;
+}
+
+export class Player {
+  constructor({ video, frame, onControl, onTime, onLoaded, onError, canControl }) {
+    this.video = video;
+    this.frame = frame;
+    this.onControl = onControl;
+    this.onTime = onTime;
+    this.onLoaded = onLoaded;
+    this.onError = onError;
+    this.canControl = canControl || (() => true);
+
+    this.url = "";
+    this.state = { url: "", playing: false, time: 0, at: Date.now(), rate: 1 };
+    this.applying = false;
+    this.hls = null;
+    this.cues = [];
+    this.subsOffset = 0;
+    this.subsSize = 120;
+    this.lastCue = "";
+
+    this.video.controls = false;
+    this.video.addEventListener("timeupdate", () => this.#onTimeupdate());
+    this.video.addEventListener("loadedmetadata", () => {
+      this.onLoaded?.({ duration: this.video.duration || 0 });
+      this.#restorePosition();
+      this.#syncNow();
+    });
+    this.video.addEventListener("error", () => this.onError?.("media"));
+    this.video.addEventListener("play", () => { if (!this.applying) this.#request("play"); });
+    this.video.addEventListener("pause", () => { if (!this.applying) this.#request("pause", { time: this.video.currentTime }); });
+    this.video.addEventListener("ratechange", () => { if (!this.applying) this.#request("rate", { value: this.video.playbackRate, time: this.video.currentTime }); });
+    this.video.addEventListener("seeking", () => {
+      if (this.applying) return;
+      if (performance.now() - (this.programmaticSeekAt || 0) < 500) return;
+      this.#request("seek", { time: this.video.currentTime });
+    });
+
+    this.timer = setInterval(() => this.#syncNow(true), 2500);
+  }
+
+  #request(action, payload = {}) {
+    if (!this.canControl()) {
+      this.onControl?.({ denied: true, action });
+      return false;
+    }
+    this.onControl?.({ action, ...payload });
+    return true;
+  }
+
+  clear() {
+    this.url = "";
+    this.state = { url: "", playing: false, time: 0, at: Date.now(), rate: 1 };
+    this.destroyHls();
+    this.video.removeAttribute("src");
+    this.video.load();
+    this.cues = [];
+    this.lastCue = "";
+    this.onTime?.({ current: 0, duration: 0 });
+  }
+
+  destroyHls() {
+    if (this.hls) { try { this.hls.destroy(); } catch {} this.hls = null; }
+  }
+
+  setUrl(url) {
+    if (!url || url === this.url) return;
+    this.url = url;
+    this.destroyHls();
+    this.cues = [];
+    this.subsOffset = 0;
+    this.lastCue = "";
+    const isHls = /\.m3u8($|\?)/i.test(url);
+    if (isHls && window.Hls?.isSupported()) {
+      this.hls = new window.Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 30 });
+      this.hls.loadSource(url);
+      this.hls.attachMedia(this.video);
+    } else {
+      this.video.src = url;
+    }
+  }
+
+  applyState(state) {
+    if (!state) return;
+    this.state = state;
+    if (state.url) this.setUrl(state.url);
+    else { this.clear(); return; }
+
+    this.applying = true;
+    const target = this.expectedTime(state);
+    const diff = Math.abs((this.video.currentTime || 0) - target);
+    if (diff > 1.1 || (!state.playing && diff > 0.35)) {
+      this.#setTime(target);
+    }
+    if (Math.abs(this.video.playbackRate - state.rate) > 0.001) {
+      this.video.playbackRate = state.rate;
+    }
+    if (state.playing) {
+      const p = this.video.play();
+      if (p?.catch) p.catch(() => {});
+    } else {
+      this.video.pause();
+    }
+    setTimeout(() => { this.applying = false; }, 60);
+    this.#emitTime();
+  }
+
+  expectedTime(state = this.state) {
+    if (!state?.playing) return state?.time || 0;
+    return (state.time || 0) + ((Date.now() - state.at) / 1000) * (state.rate || 1);
+  }
+
+  #setTime(t) {
+    this.programmaticSeekAt = performance.now();
+    if (this.video.readyState > 0) {
+      this.video.currentTime = t;
+    } else {
+      this.video.addEventListener("loadedmetadata", () => { this.video.currentTime = t; }, { once: true });
+    }
+  }
+
+  #syncNow(soft = false) {
+    if (!this.state?.url || !this.video.duration) return;
+    if (this.video.seeking || this.video.readyState < 2) return;
+    if (!this.canControl()) return;
+    const target = this.expectedTime();
+    const diff = target - this.video.currentTime;
+    if (Math.abs(diff) > 1.6) {
+      this.applying = true;
+      this.#setTime(target);
+      setTimeout(() => { this.applying = false; }, 80);
+      return;
+    }
+    if (!soft || !this.state.playing) return;
+    const desired = this.state.rate || 1;
+    let rate = desired;
+    if (Math.abs(diff) > 0.4) rate = desired * (diff > 0 ? 1.06 : 0.94);
+    if (Math.abs(this.video.playbackRate - rate) > 0.005) {
+      this.applying = true;
+      this.video.playbackRate = rate;
+      setTimeout(() => { this.applying = false; }, 40);
+    }
+  }
+
+  #onTimeupdate() {
+    this.#emitTime();
+    this.#renderSubtitle();
+    this.#savePosition();
+  }
+
+  #emitTime() {
+    this.onTime?.({
+      current: this.video.currentTime || 0,
+      duration: this.video.duration || 0
+    });
+  }
+
+  #savePosition() {
+    if (!this.url) return;
+    const d = this.video.duration;
+    const t = this.video.currentTime;
+    if (!d || !Number.isFinite(d) || t < 5 || d - t < 10) return;
+    store.set(`pos:${this.url}`, Math.floor(t));
+  }
+
+  #restorePosition() {
+    if (this.state?.time > 0) return;
+    const saved = store.get(`pos:${this.url}`, 0);
+    if (saved > 5 && Math.abs(saved - (this.video.currentTime || 0)) > 5) {
+      this.video.currentTime = saved;
+    }
+  }
+
+  /* ---------- subtitles ---------- */
+  setCues(cues) {
+    this.cues = Array.isArray(cues) ? cues : [];
+    this.lastCue = "";
+    this.#renderSubtitle();
+  }
+  setSubsOffset(sec) { this.subsOffset = Number(sec) || 0; this.lastCue = ""; this.#renderSubtitle(); }
+  setSubsSize(px) { this.subsSize = Number(px) || 120; this.#applySubsSize(); }
+  #applySubsSize() {
+    const layer = document.getElementById("subtitleLayer");
+    if (layer) layer.style.fontSize = `${this.subsSize / 10}px`;
+  }
+  #renderSubtitle() {
+    const layer = document.getElementById("subtitleLayer");
+    if (!layer) return;
+    if (!this.cues.length) {
+      if (this.lastCue) { layer.innerHTML = ""; this.lastCue = ""; }
+      return;
+    }
+    const t = (this.video.currentTime || 0) - this.subsOffset;
+    const cue = this.cues.find((c) => t >= c.start && t <= c.end);
+    const text = cue ? cue.text : "";
+    if (text === this.lastCue) return;
+    this.lastCue = text;
+    layer.innerHTML = "";
+    if (text) {
+      for (const line of text.split("\n")) {
+        const span = document.createElement("span");
+        span.textContent = line;
+        layer.append(span);
+      }
+    }
+    this.#applySubsSize();
+  }
+
+  /* ---------- ui actions ---------- */
+  togglePlay() {
+    if (this.video.paused) this.#request("play");
+    else this.#request("pause", { time: this.video.currentTime });
+  }
+  seekBy(delta) {
+    const t = Math.max(0, Math.min((this.video.duration || 0) - 0.2, (this.video.currentTime || 0) + delta));
+    this.#request("seek", { time: t });
+  }
+  seekTo(t) { this.#request("seek", { time: t }); }
+  cycleRate() {
+    const rates = [1, 1.25, 1.5, 2, 0.75];
+    const i = rates.indexOf(this.video.playbackRate);
+    const next = rates[(i + 1) % rates.length];
+    this.#request("rate", { value: next, time: this.video.currentTime });
+    return next;
+  }
+  async toggleFullscreen() {
+    const target = this.frame;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await target.requestFullscreen();
+    } catch {}
+  }
+  async togglePiP() {
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await this.video.requestPictureInPicture();
+    } catch {}
+  }
+  toggleTheater() {
+    this.frame.classList.toggle("theater");
+    return this.frame.classList.contains("theater");
+  }
+  fmt(sec) { return fmtTime(sec); }
+  destroy() {
+    clearInterval(this.timer);
+    this.destroyHls();
+  }
+}
