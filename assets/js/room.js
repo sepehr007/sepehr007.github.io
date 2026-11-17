@@ -30,7 +30,7 @@ const privacyParam = params.get("privacy") === "password" ? "password" : "public
 let roomPassword = sessionStorage.getItem(`pwd:${code}`) || "";
 
 let nick = (authUser?.nick || params.get("nick") || store.get("wt.nick") || "").trim();
-const me = { id: "", role: "member", nick: "" };
+const me = { id: "", role: "member", nick: "", avatar: authUser?.avatar || "" };
 let net = null;
 let player = null;
 let voice = null;
@@ -125,7 +125,8 @@ function createNet() {
     password: roomPassword,
     roomName: roomNameParam,
     capacity: capacityParam,
-    privacy: privacyParam
+    privacy: privacyParam,
+    avatar: me.avatar
   });
   voice.net = net;
   wireNet();
@@ -190,6 +191,7 @@ function wireNet() {
     me.id = data.self.id;
     me.role = data.self.role;
     me.nick = data.self.nick;
+    me.avatar = data.self.avatar || me.avatar;
     voice.selfId = me.id;
     roomInfo = data.room;
     members = data.members || [];
@@ -212,8 +214,9 @@ function wireNet() {
   net.on("members", (list) => {
     members = list;
     const mine = list.find((m) => m.id === me.id);
-    if (mine) { me.role = mine.role; me.nick = mine.nick; }
+    if (mine) { me.role = mine.role; me.nick = mine.nick; if (mine.avatar) me.avatar = mine.avatar; }
     renderMembers();
+    refreshChatAvatars();
     const voices = list.filter((m) => m.voice && m.id !== me.id).map((m) => m.id);
     if (selfVoice) voices.forEach((id) => voice.peerVoice(id, true));
   });
@@ -830,14 +833,13 @@ function syncChatEmpty() {
 
 function buildMessage(msg) {
   const mine = msg.by === me.id;
-  const color = colorFor(msg.by || msg.nick || "x");
   const isMod = msg.role === "owner" || msg.role === "mod";
   const node = el("div", { class: `msg${mine ? " own" : ""}${msg.edited ? " edited" : ""}`, "data-id": msg.id });
   node.dataset.text = msg.text || "";
   node.dataset.msg = JSON.stringify({ id: msg.id, by: msg.by, nick: msg.nick, text: msg.text, role: msg.role });
 
-  const avatar = el("div", { class: "avatar", style: `background:${color}` });
-  avatar.textContent = initials(msg.nick || "?");
+  const avatar = el("div", { class: "avatar", "data-by": msg.by || "", "data-nick": msg.nick || "" });
+  paintAvatar(avatar, avatarFor(msg.by), msg.nick, msg.by || msg.nick);
 
   const body = el("div", { class: "msg-body" });
 
@@ -968,6 +970,28 @@ function wirePeople() {
   });
 }
 
+function avatarFor(id) {
+  if (!id) return "";
+  if (id === me.id) return me.avatar || "";
+  return members.find((m) => m.id === id)?.avatar || "";
+}
+
+function paintAvatar(node, src, label, colorSeed) {
+  node.classList.toggle("has-img", !!src);
+  node.style.backgroundImage = src ? `url("${src}")` : "";
+  if (src) node.textContent = "";
+  else {
+    node.style.background = colorFor(colorSeed || label || "x");
+    node.textContent = initials(label || "?");
+  }
+}
+
+function refreshChatAvatars() {
+  chatList.querySelectorAll(".msg .avatar[data-by]").forEach((av) => {
+    paintAvatar(av, avatarFor(av.dataset.by), av.dataset.nick || "?", av.dataset.by);
+  });
+}
+
 function renderMembers() {
   $("#peopleCount").textContent = String(members.length);
   peopleList.innerHTML = "";
@@ -976,8 +1000,8 @@ function renderMembers() {
   for (const m of sorted) {
     const node = el("div", { class: "person", "data-id": m.id });
     node.dataset.nick = m.nick;
-    const avatar = el("div", { class: "avatar", style: `background:${colorFor(m.id)}` });
-    avatar.textContent = initials(m.nick);
+    const avatar = el("div", { class: "avatar" });
+    paintAvatar(avatar, m.avatar, m.nick, m.id);
     const info = el("div", { class: "person-info" });
     const nameRow = el("div", { class: "person-name" });
     nameRow.append(el("span", { text: m.nick + (m.id === me.id ? (getLang() === "fa" ? " (تو)" : " (you)") : "") }));
@@ -1309,8 +1333,8 @@ function renderVoiceTiles() {
   if (!inVoice.some((m) => m.id === me.id)) inVoice.push({ id: me.id, nick: me.nick, muted: voice.muted });
   for (const m of inVoice) {
     const tile = el("div", { class: `voice-tile${m.muted ? " muted" : ""}`, "data-id": m.id });
-    const av = el("div", { class: "avatar-sm", style: `background:${colorFor(m.id)}` });
-    av.textContent = initials(m.nick);
+    const av = el("div", { class: "avatar-sm" });
+    paintAvatar(av, m.avatar || avatarFor(m.id), m.nick, m.id);
     const name = el("span", { text: m.id === me.id ? (getLang() === "fa" ? "تو" : "You") : m.nick });
     tile.append(av, name);
     if (m.id !== me.id) {
@@ -1401,14 +1425,19 @@ function wireViewport() {
   const mq = window.matchMedia("(max-width: 640px)");
   const rootStyle = document.documentElement.style;
   const vv = window.visualViewport;
+  const TEXT_FIELDS = "textarea, input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color])";
 
+  const isSideInput = () => {
+    const a = document.activeElement;
+    return !!a && $("#sidebar").contains(a) && a.matches(TEXT_FIELDS);
+  };
   const sync = () => {
     if (!mq.matches || !vv) {
       rootStyle.removeProperty("--vvh");
       document.body.classList.remove("kb-open");
       return;
     }
-    const focused = document.activeElement === chatInput;
+    const focused = isSideInput();
     const kbOpen = vv.height < window.innerHeight - 90;
     document.body.classList.toggle("kb-open", kbOpen);
     if (focused || kbOpen) rootStyle.setProperty("--vvh", `${Math.round(vv.height)}px`);
@@ -1420,25 +1449,35 @@ function wireViewport() {
   window.addEventListener("resize", sync);
   (mq.addEventListener ? mq.addEventListener.bind(mq) : mq.addListener.bind(mq))("change", sync);
 
+  const sidebar = $("#sidebar");
+  sidebar.addEventListener("focusin", (e) => {
+    if (!mq.matches || !e.target.matches(TEXT_FIELDS)) return;
+    document.body.classList.add("chat-focus");
+    document.body.classList.toggle("head-focus", !!e.target.closest(".panel-head"));
+    sync();
+  });
+  sidebar.addEventListener("focusout", () => {
+    setTimeout(() => {
+      if (!mq.matches) return;
+      if (isSideInput()) {
+        document.body.classList.toggle("head-focus", !!document.activeElement?.closest?.(".panel-head"));
+        return;
+      }
+      document.body.classList.remove("chat-focus");
+      document.body.classList.remove("head-focus");
+      sync();
+    }, 160);
+  });
   chatInput.addEventListener("focus", () => {
     if (!mq.matches) return;
-    document.body.classList.add("chat-focus");
     sync();
     setTimeout(() => { scrollChat(true); sync(); }, 180);
     setTimeout(() => { scrollChat(true); sync(); }, 520);
   });
-  chatInput.addEventListener("blur", () => {
-    setTimeout(() => {
-      if (!mq.matches) return;
-      if (document.activeElement === chatInput) return;
-      document.body.classList.remove("chat-focus");
-      sync();
-    }, 160);
-  });
   vv?.addEventListener("resize", () => {
     if (mq.matches && document.body.classList.contains("chat-focus")) scrollChat(true);
   });
-  $("#sidebar").addEventListener("click", (e) => {
+  sidebar.addEventListener("click", (e) => {
     if (mq.matches && e.target.closest(".tab") && !e.target.closest('[data-tab="chat"]')) {
       chatInput.blur();
     }

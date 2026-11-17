@@ -14,6 +14,12 @@ const MAX_CHAT = 400;
 const JOIN_RETRY_MS = 2500;
 const JOIN_MAX_TRIES = 9;
 const PRESENCE_MS = 30000;
+const AVATAR_RE = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
+
+function cleanAvatar(value) {
+  const s = typeof value === "string" ? value : "";
+  return s.length <= 400000 && AVATAR_RE.test(s) ? s : "";
+}
 
 const ICE = {
   iceServers: [
@@ -141,9 +147,10 @@ class MediaConn {
  * Signaling goes through the public ntfy instance — no account, static-host friendly.
  */
 export class Net {
-  constructor({ code, nick, isHost, password = "", roomName = "", capacity = 6, privacy = "public" }) {
+  constructor({ code, nick, isHost, password = "", roomName = "", capacity = 6, privacy = "public", avatar = "" }) {
     this.code = code.toUpperCase();
     this.nick = nick;
+    this.avatar = cleanAvatar(avatar);
     this.isHost = isHost;
     this.password = password;
     this.roomName = roomName;
@@ -218,7 +225,7 @@ export class Net {
 
   /* ================= host ================= */
   #hostOnline() {
-    const owner = { id: this.selfId, nick: this.nick, role: "owner", muted: false, voice: false, joinedAt: Date.now() };
+    const owner = { id: this.selfId, nick: this.nick, avatar: this.avatar, role: "owner", muted: false, voice: false, joinedAt: Date.now() };
     this.members.set(this.selfId, owner);
     this.emit("status", "online");
     this.emit("welcome", this.#snapshot(owner));
@@ -341,7 +348,7 @@ export class Net {
 
     const { pc } = this.#createPc(`d:${msg.from}`);
     const dc = pc.createDataChannel("wt", { ordered: true });
-    this.#wireHostDc(msg.from, dc, pc, nick);
+    this.#wireHostDc(msg.from, dc, pc, nick, cleanAvatar(msg.avatar));
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -349,8 +356,8 @@ export class Net {
     await this.#sig({ k: "offer", to: msg.from, from: this.selfId, sdp: pc.localDescription.sdp });
   }
 
-  #wireHostDc(guestId, dc, pc, nick) {
-    const conn = { dc, pc, peer: guestId, nick, hello: false, createdAt: Date.now() };
+  #wireHostDc(guestId, dc, pc, nick, avatar = "") {
+    const conn = { dc, pc, peer: guestId, nick, avatar, hello: false, createdAt: Date.now() };
     dc.binaryType = "arraybuffer";
     this.conns.set(guestId, conn);
     dc.onopen = () => { conn.open = true; };
@@ -502,7 +509,7 @@ export class Net {
       while (existing.includes(`${finalNick} ${i}`.toLowerCase())) i++;
       finalNick = `${finalNick} ${i}`;
     }
-    const member = { id: conn.peer, nick: finalNick, role: "member", muted: false, voice: false, joinedAt: Date.now() };
+    const member = { id: conn.peer, nick: finalNick, avatar: cleanAvatar(msg.avatar || conn.avatar), role: "member", muted: false, voice: false, joinedAt: Date.now() };
     this.members.set(conn.peer, member);
     this.#sendTo(conn.peer, { t: "welcome", ...this.#snapshot(member) });
     if (this.localFile) {
@@ -516,7 +523,7 @@ export class Net {
 
   #snapshot(member) {
     return {
-      self: { id: member.id, nick: member.nick, role: member.role },
+      self: { id: member.id, nick: member.nick, avatar: member.avatar || "", role: member.role },
       room: { ...this.room },
       members: this.#membersPublic(),
       playback: this.playback,
@@ -526,7 +533,7 @@ export class Net {
   }
 
   #membersPublic() {
-    return [...this.members.values()].map((m) => ({ id: m.id, nick: m.nick, role: m.role, muted: m.muted, voice: m.voice }));
+    return [...this.members.values()].map((m) => ({ id: m.id, nick: m.nick, avatar: m.avatar || "", role: m.role, muted: m.muted, voice: m.voice }));
   }
 
   #broadcastMembers() {
@@ -789,7 +796,7 @@ export class Net {
   sendHello() {
     const send = () => {
       if (this.dc?.readyState !== "open") return;
-      this.dc.send(JSON.stringify({ t: "hello", nick: this.nick }));
+      this.dc.send(JSON.stringify({ t: "hello", nick: this.nick, avatar: this.avatar }));
     };
     send();
     setTimeout(send, 400);
