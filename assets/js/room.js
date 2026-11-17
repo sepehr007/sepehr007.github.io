@@ -1087,7 +1087,7 @@ function renderVoiceTiles() {
     const name = el("span", { text: m.id === me.id ? (getLang() === "fa" ? "تو" : "You") : m.nick });
     tile.append(av, name);
     if (m.id !== me.id) {
-      const vol = el("input", { type: "range", min: "0", max: "100", value: String(Math.round((voice.volumes.get(m.id) ?? 1) * 100)), style: "width:64px;padding:0;height:3px" });
+      const vol = el("input", { type: "range", min: "0", max: "100", class: "tile-vol", value: String(Math.round((voice.volumes.get(m.id) ?? 1) * 100)) });
       vol.addEventListener("input", (e) => voice.setVolume(m.id, Number(e.target.value) / 100));
       tile.append(vol);
     }
