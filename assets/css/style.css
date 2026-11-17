@@ -416,6 +416,14 @@ input[type=file]::file-selector-button{background:var(--panel-strong);border:1px
 .pref-row input[type=range]{width:100%;padding:0;height:4px;border:none;border-radius:99px;background:rgba(255,255,255,.18);appearance:none;accent-color:var(--accent);cursor:pointer}
 .pref-val{font-size:11px;color:var(--text-faint);text-align:end;font-variant-numeric:tabular-nums}
 .pref-note{margin-top:12px}
+.subs-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.subs-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;border:1px solid var(--border);background:rgba(255,255,255,.03)}
+.subs-item.active{border-color:var(--accent);background:rgba(124,92,255,.1)}
+.subs-name{flex:1;min-width:0;text-align:start;font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.subs-item.active .subs-name{color:var(--text);font-weight:600}
+.subs-count{font-size:10.5px;color:var(--text-faint);font-variant-numeric:tabular-nums}
+.subs-x{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;color:var(--text-faint);font-size:15px;line-height:1}
+.subs-x:hover{background:rgba(255,255,255,.08);color:var(--text)}
 @media (max-width:400px){
   .pref-row{grid-template-columns:1fr 36px}
   .pref-row label{grid-column:1/-1}

@@ -264,7 +264,8 @@ function wireNet() {
   net.on("localFile", (file) => receiveLocalFile(file));
   net.on("subs", (cues) => {
     if (isHost || !Array.isArray(cues) || !cues.length) return;
-    player.setCues(cues);
+    player.setCues(cues, t("subs.host"));
+    renderSubsSets();
     toast(t("toast.subsShared"), "success");
   });
   net.on("queue", (items) => renderQueue(items));
@@ -1020,12 +1021,39 @@ function wireSettings() {
     const raw = await file.text();
     const cues = parseSubtitles(raw);
     if (!cues.length) return toast(getLang() === "fa" ? "زیرنویس معتبر نبود" : "Invalid subtitle file", "error");
-    player.setCues(cues);
+    const name = (file.name || "").replace(/\.[^.]+$/, "").slice(0, 40) || t("settings.subs");
+    player.setCues(cues, name);
+    renderSubsSets();
     if (isHost) net.shareSubtitles(cues);
     toast(getLang() === "fa" ? `${cues.length} خط زیرنویس بارگذاری شد` : `${cues.length} cues loaded`, "success");
+    e.target.value = "";
   });
   $("#subsSize").addEventListener("input", (e) => player.setSubsSize(e.target.value));
   $("#subsOffset").addEventListener("input", (e) => player.setSubsOffset(e.target.value));
+}
+
+function renderSubsSets() {
+  const wrap = $("#subsList");
+  if (!wrap) return;
+  const sets = player?.getSubtitleSets() || [];
+  wrap.innerHTML = "";
+  wrap.classList.toggle("hidden", !sets.length);
+  for (const s of sets) {
+    const item = el("div", { class: `subs-item${s.active ? " active" : ""}` });
+    const name = el("button", { class: "subs-name", type: "button", text: s.name });
+    name.addEventListener("click", () => {
+      player.activateSubtitleSet(s.name);
+      renderSubsSets();
+    });
+    const count = el("span", { class: "subs-count", text: String(s.count) });
+    const rm = el("button", { class: "subs-x", type: "button", text: "×", "aria-label": "Remove" });
+    rm.addEventListener("click", () => {
+      player.removeSubtitleSet(s.name);
+      renderSubsSets();
+    });
+    item.append(name, count, rm);
+    wrap.append(item);
+  }
 }
 
 /* ================= personal appearance ================= */
@@ -1183,7 +1211,20 @@ function wireMisc() {
     const base = `${location.origin}${location.pathname.replace(/room\.html$/, "")}room.html`;
     const q = new URLSearchParams({ room: code });
     if (roomInfo?.privacy === "password") q.set("pwd", "1");
-    const ok = await copyText(`${base}?${q.toString()}`);
+    const url = `${base}?${q.toString()}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "هم‌تماشا",
+          text: getLang() === "fa" ? `بیا با هم فیلم ببینیم — اتاق ${code}` : `Let's watch together — room ${code}`,
+          url
+        });
+        return;
+      } catch (err) {
+        if (err?.name === "AbortError") return;
+      }
+    }
+    const ok = await copyText(url);
     if (ok) toast(t("toast.copied"), "success");
   };
   $("#copyLinkBtn").addEventListener("click", invite);

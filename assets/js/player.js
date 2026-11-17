@@ -41,6 +41,8 @@ export class Player {
     this.applying = false;
     this.hls = null;
     this.cues = [];
+    this.sets = [];
+    this.activeSet = "";
     this.subsOffset = 0;
     this.subsSize = 120;
     this.lastCue = "";
@@ -82,6 +84,8 @@ export class Player {
     this.video.removeAttribute("src");
     this.video.load();
     this.cues = [];
+    this.sets = [];
+    this.activeSet = "";
     this.lastCue = "";
     this.onTime?.({ current: 0, duration: 0 });
   }
@@ -95,6 +99,8 @@ export class Player {
     this.url = url;
     this.destroyHls();
     this.cues = [];
+    this.sets = [];
+    this.activeSet = "";
     this.subsOffset = 0;
     this.lastCue = "";
     const isHls = /\.m3u8($|\?)/i.test(url);
@@ -199,10 +205,38 @@ export class Player {
   }
 
   /* ---------- subtitles ---------- */
-  setCues(cues) {
-    this.cues = Array.isArray(cues) ? cues : [];
+  setCues(cues, name = "Subtitles") {
+    const arr = Array.isArray(cues) ? cues : [];
+    const i = this.sets.findIndex((s) => s.name === name);
+    if (i >= 0) this.sets[i] = { name, cues: arr };
+    else this.sets.push({ name, cues: arr });
+    this.activeSet = name;
+    this.cues = arr;
     this.lastCue = "";
     this.#renderSubtitle();
+  }
+  getSubtitleSets() {
+    return this.sets.map((s) => ({ name: s.name, count: s.cues.length, active: s.name === this.activeSet }));
+  }
+  activateSubtitleSet(name) {
+    const found = this.sets.find((s) => s.name === name);
+    if (!found) return;
+    this.activeSet = name;
+    this.cues = found.cues;
+    this.lastCue = "";
+    this.#renderSubtitle();
+  }
+  removeSubtitleSet(name) {
+    const i = this.sets.findIndex((s) => s.name === name);
+    if (i === -1) return;
+    this.sets.splice(i, 1);
+    if (this.activeSet === name) {
+      const next = this.sets[this.sets.length - 1];
+      this.cues = next ? next.cues : [];
+      this.activeSet = next ? next.name : "";
+      this.lastCue = "";
+      this.#renderSubtitle();
+    }
   }
   setSubsOffset(sec) { this.subsOffset = Number(sec) || 0; this.lastCue = ""; this.#renderSubtitle(); }
   setSubsSize(px) { this.subsSize = Number(px) || 120; this.#applySubsSize(); }
