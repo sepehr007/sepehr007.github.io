@@ -320,6 +320,45 @@ if (typeof document !== "undefined") {
   else wirePullToRefresh();
 }
 
+let installWired = false;
+export function wireInstallPrompt() {
+  if (installWired || typeof window === "undefined") return;
+  installWired = true;
+  let deferred = null;
+  let chip = null;
+
+  const ensureChip = () => {
+    if (chip) return chip;
+    chip = el("button", { class: "install-chip", id: "installApp", type: "button" });
+    chip.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
+    const label = el("span", { "data-i18n": "pwa.install", text: t("pwa.install") });
+    chip.append(label);
+    chip.addEventListener("click", async () => {
+      if (!deferred) return;
+      const evt = deferred;
+      deferred = null;
+      try { evt.prompt(); } catch {}
+      const choice = await evt.userChoice?.catch?.(() => null);
+      if (choice?.outcome === "accepted") {
+        chip.classList.add("hidden");
+        toast(t("pwa.installed"), "success");
+      }
+    });
+    document.body.append(chip);
+    return chip;
+  };
+
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferred = e;
+    ensureChip().classList.remove("hidden");
+  });
+  window.addEventListener("appinstalled", () => {
+    deferred = null;
+    chip?.classList.add("hidden");
+  });
+}
+
 export function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   if (["localhost", "127.0.0.1"].includes(location.hostname)) return;

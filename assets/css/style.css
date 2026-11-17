@@ -350,6 +350,10 @@ input[type=file]::file-selector-button{background:var(--panel-strong);border:1px
 
 /* toast */
 .toast-wrap{position:fixed;top:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:100;pointer-events:none}
+.install-chip{position:fixed;bottom:18px;inset-inline-start:18px;z-index:95;display:inline-flex;align-items:center;gap:8px;padding:11px 16px;border-radius:999px;background:var(--grad);color:#fff;font-size:13px;font-weight:700;box-shadow:0 12px 32px rgba(0,0,0,.4);animation:chipIn .3s ease;transition:transform .18s ease}
+.install-chip:hover{transform:translateY(-2px)}
+.install-chip svg{width:18px;height:18px}
+@keyframes chipIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .toast{padding:11px 18px;border-radius:12px;background:rgba(18,20,31,.96);border:1px solid var(--border-strong);font-size:13px;box-shadow:0 16px 40px rgba(0,0,0,.6);animation:toastIn .25s ease;max-width:88vw}
 .toast.error{border-color:rgba(248,113,113,.5);color:#fca5a5}
 .toast.success{border-color:rgba(52,211,153,.45);color:#86efac}

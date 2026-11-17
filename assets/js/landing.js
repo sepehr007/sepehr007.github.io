@@ -1,10 +1,11 @@
 import { initI18n, t } from "./i18n.js";
-import { $, toast, makeCode, store, registerServiceWorker, applyUIPrefs } from "./core.js";
+import { $, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt } from "./core.js";
 import { currentUser, mountUserChip, isRealName } from "./auth.js";
 
 applyUIPrefs();
 initI18n();
 registerServiceWorker();
+wireInstallPrompt();
 
 mountUserChip();
 
