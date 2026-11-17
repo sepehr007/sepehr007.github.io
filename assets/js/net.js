@@ -222,25 +222,44 @@ export class Net {
     this.members.set(this.selfId, owner);
     this.emit("status", "online");
     this.emit("welcome", this.#snapshot(owner));
-    const beat = () => this.#sig({ k: "presence", from: this.selfId, nick: this.nick, host: true });
+    let fails = 0;
+    let warned = false;
+    const beat = async () => {
+      const ok = await this.#sig({ k: "presence", from: this.selfId, nick: this.nick, host: true });
+      if (this.destroyed) return;
+      fails = ok ? 0 : fails + 1;
+      if (fails >= 3) {
+        this.emit("status", "offline");
+        if (!warned) { warned = true; this.emit("error", "unreachable"); }
+      } else if (ok && warned) {
+        warned = false;
+        this.emit("status", "online");
+      }
+    };
     beat();
     this.presenceTimer = setInterval(beat, PRESENCE_MS);
   }
 
   async #guestJoin() {
+    let sendFails = 0;
+    const giveUp = () => {
+      if (this.joined || this.destroyed) return;
+      this.emit("status", "offline");
+      this.emit("deny", "unreachable");
+    };
+    clearTimeout(this.joinDeadline);
+    this.joinDeadline = setTimeout(giveUp, 60000);
     const beat = async () => {
       if (this.joined || this.destroyed) return;
-      if (this.joinTries++ > JOIN_MAX_TRIES) {
-        this.emit("status", "offline");
-        this.emit("deny", "unreachable");
-        return;
-      }
+      if (this.joinTries++ > JOIN_MAX_TRIES) return giveUp();
       const ok = await this.#sig({
         k: "join", from: this.selfId, nick: this.nick,
         pwdHash: this.password ? await sha256hex(this.password) : null
       });
       if (this.joined || this.destroyed) return;
-      this.joinTimer = setTimeout(beat, ok ? JOIN_RETRY_MS : Math.min(15000, 1500 * this.joinTries));
+      sendFails = ok ? 0 : sendFails + 1;
+      if (sendFails >= 4) return giveUp();
+      this.joinTimer = setTimeout(beat, ok ? JOIN_RETRY_MS : Math.min(6000, 1500 * sendFails));
     };
     beat();
   }
@@ -266,6 +285,7 @@ export class Net {
       case "deny":
         if (!this.isHost) {
           clearInterval(this.joinTimer);
+          clearTimeout(this.joinDeadline);
           this.emit("status", "offline");
           this.emit("deny", msg.reason);
         }
@@ -719,6 +739,7 @@ export class Net {
       case "welcome":
         this.joined = true;
         clearInterval(this.joinTimer);
+        clearTimeout(this.joinDeadline);
         this.self = msg.self;
         this.role = msg.self?.role || "member";
         this.roomState = msg.room;
@@ -728,6 +749,7 @@ export class Net {
         break;
       case "deny":
         clearInterval(this.joinTimer);
+        clearTimeout(this.joinDeadline);
         this.emit("status", "offline");
         this.emit("deny", msg.reason);
         break;
@@ -929,6 +951,7 @@ export class Net {
     this.destroyed = true;
     clearInterval(this.presenceTimer);
     clearInterval(this.joinTimer);
+    clearTimeout(this.joinDeadline);
     if (!this.isHost) this.signal?.send({ k: "bye", from: this.selfId });
     this.signal?.close();
     for (const [, rec] of this.pcs) { try { rec.pc.close(); } catch {} }

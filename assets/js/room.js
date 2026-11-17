@@ -285,7 +285,7 @@ function wireNet() {
     }
     const map = {
       locked: t("toast.roomLocked"), full: t("toast.roomFull"),
-      not_found: t("toast.connLost"), unreachable: t("toast.connLost"), banned: t("toast.roomLocked"),
+      not_found: t("toast.connLost"), unreachable: t("toast.signalUnreachable"), banned: t("toast.roomLocked"),
       rejected: getLang() === "fa" ? "میزبان ورود را تأیید نکرد" : "Host declined the request"
     };
     toast(map[reason] || t("toast.connLost"), "error");
@@ -334,6 +334,7 @@ function wireNet() {
 
   net.on("error", (kind) => {
     if (kind === "code-taken") toast(getLang() === "fa" ? "این کد در حال استفاده است" : "Code already in use", "error");
+    else if (kind === "unreachable") toast(t("toast.signalUnreachable"), "error");
     else toast(t("toast.connLost"), "error");
   });
 }
