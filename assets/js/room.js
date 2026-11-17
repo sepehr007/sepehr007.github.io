@@ -131,7 +131,13 @@ async function boot() {
     selfId: "",
     onSpeaking: (id, active) => markSpeaking(id, active),
     onPeers: () => renderVoiceTiles(),
-    onError: () => toast(t("toast.voiceDenied"), "error")
+    onError: (reason) => {
+      const key = reason === "mic-denied" ? "toast.micDenied"
+        : reason === "mic-missing" ? "toast.micMissing"
+          : reason === "mic-insecure" ? "toast.micInsecure"
+            : "toast.voiceDenied";
+      toast(t(key), "error", 6000);
+    }
   });
 
   wirePlayer();
@@ -1792,7 +1798,10 @@ async function startScreenShare() {
     stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 24 }, audio: false });
   } catch (err) {
     if (err?.name === "AbortError") return;
-    return toast(t("toast.screenDenied"), "error");
+    const key = err?.name === "NotFoundError" ? "toast.screenMissing"
+      : err?.name === "NotSupportedError" ? "toast.screenUnsupported"
+        : "toast.screenDenied";
+    return toast(t(key), "error");
   }
   screenStream = stream;
   screenSharing = true;

@@ -21,14 +21,23 @@ export class Voice {
 
   async join() {
     if (this.joined) return true;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.onError("mic-insecure");
+      return false;
+    }
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: false
       });
-    } catch {
-      this.onError("mic");
+    } catch (err) {
+      const name = err?.name || "";
+      this.onError(
+        name === "NotAllowedError" || name === "SecurityError" ? "mic-denied"
+          : name === "NotFoundError" || name === "OverconstrainedError" ? "mic-missing"
+            : "mic"
+      );
       return false;
     }
     this.stream = stream;
