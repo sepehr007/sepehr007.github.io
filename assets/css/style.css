@@ -189,6 +189,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .file-offer .btn{flex-shrink:0}
 .stage.dragging::after{content:"";position:absolute;inset:8px;border:2px dashed rgba(124,92,255,.8);border-radius:14px;background:rgba(124,92,255,.08);z-index:5;pointer-events:none}
 .stage-controls{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:6px;padding:10px 12px;background:linear-gradient(transparent,rgba(0,0,0,.82));z-index:4;transition:opacity .25s}
+.video-frame:not(.has-media) .stage-controls{display:none}
 .stage-controls.idle{opacity:0;pointer-events:none}
 .ctl{height:34px;min-width:34px;padding:0 8px;border-radius:10px;display:grid;place-items:center;color:#dfe5f3;transition:.18s}
 .ctl:hover{background:rgba(255,255,255,.12)}
@@ -351,7 +352,13 @@ input[type=file]::file-selector-button{background:var(--panel-strong);border:1px
   .entry-card{padding:20px}
   .features{grid-template-columns:1fr;margin-top:36px}
   .field-row{flex-direction:column}
+  .room-shell{grid-template-rows:var(--topbar-h) auto minmax(0,1fr)}
   .stage{padding:8px;gap:8px}
+  .stage-wrap{grid-row:2;padding:0}
+  .stage-wrap:not(:has(.video-frame.has-media)){min-height:54vh}
+  .sidebar{position:static;left:auto;right:auto;top:auto;bottom:auto;width:auto;transform:none;box-shadow:none;border-inline-start:0;border-top:1px solid var(--border);padding-top:0;grid-row:3;grid-column:1/-1}
+  html[dir="ltr"] .sidebar{transform:none}
+  .side-toggle{display:none}
   .video-frame.has-media{flex:0 0 auto;width:100%;aspect-ratio:16/9;max-height:52vh;align-self:center}
   .time{display:none}
   .ctl-txt{display:none}
