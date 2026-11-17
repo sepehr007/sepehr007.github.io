@@ -120,6 +120,7 @@ async function boot() {
     onTime: ({ current, duration }) => {
       $("#timeLabel").textContent = `${fmtTime(current)} / ${fmtTime(duration)}`;
       if (duration) $("#seek").value = String(Math.round((current / duration) * 1000));
+      paintSeekFill(current, duration);
     },
     onLoaded: () => syncStageEmpty(),
     onError: () => toast(t("toast.videoInvalid"), "error"),
@@ -431,6 +432,7 @@ function wireNet() {
 function wirePlayer() {
   const video = $("#video");
   $("#playBtn").addEventListener("click", () => player.togglePlay());
+  $("#bigPlayBtn")?.addEventListener("click", () => player.togglePlay());
   $("#back5").addEventListener("click", () => player.seekBy(-5));
   $("#back10").addEventListener("click", () => player.seekBy(-10));
   $("#fwd5").addEventListener("click", () => player.seekBy(5));
@@ -449,14 +451,52 @@ function wirePlayer() {
   $("#theaterBtn").addEventListener("click", () => player.toggleTheater());
   $("#subsBtn").addEventListener("click", () => activateTab("settings"));
 
-  $("#seek").addEventListener("input", (e) => {
+  const seek = $("#seek");
+  const tip = $("#seekTip");
+  const seekTimeAt = (clientX) => {
+    const rect = seek.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)));
+    return { time: ratio * (video.duration || 0), ratio };
+  };
+  const showSeekTip = (e) => {
+    if (!tip || !video.duration) return;
+    const { time } = seekTimeAt(e.clientX);
+    const rect = seek.getBoundingClientRect();
+    const frame = $("#videoFrame").getBoundingClientRect();
+    tip.textContent = fmtTime(time);
+    tip.style.left = `${Math.max(24, Math.min(frame.width - 24, e.clientX - frame.left))}px`;
+    tip.style.bottom = `${Math.max(10, frame.bottom - rect.top + 12)}px`;
+    tip.classList.remove("hidden");
+  };
+  const hideSeekTip = () => { if (!seek.classList.contains("dragging")) tip?.classList.add("hidden"); };
+
+  seek.addEventListener("input", (e) => {
     const d = video.duration || 0;
+    const pct = Number(e.target.value) / 10;
+    seek.style.setProperty("--seek-progress", `${pct}%`);
     $("#timeLabel").textContent = `${fmtTime((e.target.value / 1000) * d)} / ${fmtTime(d)}`;
   });
-  $("#seek").addEventListener("change", (e) => {
+  seek.addEventListener("change", (e) => {
     const d = video.duration || 0;
     if (d) player.seekTo((e.target.value / 1000) * d);
   });
+  seek.addEventListener("pointermove", showSeekTip);
+  seek.addEventListener("pointerdown", (e) => {
+    seek.classList.add("dragging");
+    showSeekTip(e);
+  });
+  const stopSeekDrag = () => {
+    seek.classList.remove("dragging");
+    tip?.classList.add("hidden");
+  };
+  seek.addEventListener("pointerup", stopSeekDrag);
+  seek.addEventListener("pointercancel", stopSeekDrag);
+  window.addEventListener("pointerup", stopSeekDrag, { passive: true });
+  seek.addEventListener("pointerleave", hideSeekTip);
+  const paintFromVideo = () => paintSeekFill(video.currentTime || 0, video.duration || 0);
+  video.addEventListener("progress", paintFromVideo);
+  video.addEventListener("durationchange", paintFromVideo);
+  video.addEventListener("loadedmetadata", paintFromVideo);
 
   $("#loadVideoBtn").addEventListener("click", loadVideoFromInput);
   $("#sampleBtn").addEventListener("click", () => {
@@ -560,9 +600,38 @@ function wirePlayer() {
   wake();
 }
 
+function paintSeekFill(current, duration) {
+  const seek = $("#seek");
+  if (!seek) return;
+  const total = Number(duration) || 0;
+  const time = Math.max(0, Number(current) || 0);
+  const watched = total ? Math.min(100, Math.max(0, (time / total) * 100)) : 0;
+  let buffered = 0;
+  const video = $("#video");
+  try {
+    const ranges = video?.buffered;
+    for (let i = 0; ranges && i < ranges.length; i++) {
+      if (ranges.start(i) <= time + 0.3 && ranges.end(i) >= time) buffered = ranges.end(i);
+    }
+  } catch {}
+  const bufferedPct = total ? Math.min(100, Math.max(watched, (buffered / total) * 100)) : 0;
+  seek.style.setProperty("--seek-progress", `${watched}%`);
+  seek.style.setProperty("--seek-buffer", `${bufferedPct}%`);
+}
+
 function updatePlayUI(playing) {
   $("#playBtn .i-play").classList.toggle("hidden", playing);
   $("#playBtn .i-pause").classList.toggle("hidden", !playing);
+  const big = $("#bigPlayBtn");
+  if (big) {
+    big.classList.toggle("hidden", !!playing);
+    $(".i-play", big).classList.toggle("hidden", !!playing);
+    $(".i-pause", big).classList.toggle("hidden", !playing);
+    const label = t(playing ? "player.pause" : "player.play");
+    big.title = label;
+    big.setAttribute("aria-label", label);
+    big.setAttribute("aria-pressed", String(!!playing));
+  }
 }
 
 function syncStageEmpty() {
@@ -2170,6 +2239,8 @@ function wireMisc() {
     renderMembers();
     renderQueue(queueItems);
     applyRoomSettings(roomInfo);
+    updatePlayUI(!$("#video").paused);
+    paintScreenState();
   });
 
   window.addEventListener("beforeunload", cleanup);
