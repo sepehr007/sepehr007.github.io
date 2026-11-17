@@ -78,6 +78,23 @@ export function toast(message, type = "info", ms = 3200) {
   while (wrap.children.length > 4) wrap.firstElementChild.remove();
 }
 
+const RELOAD_KEY = "wt.reloadGuard";
+const RELOAD_WINDOW = 30000;
+const RELOAD_MAX = 3;
+export function safeReload({ force = false } = {}) {
+  if (force) { location.reload(); return true; }
+  const now = Date.now();
+  const hits = (store.get(RELOAD_KEY, []) || []).filter((t) => Number.isFinite(t) && now - t < RELOAD_WINDOW);
+  if (hits.length >= RELOAD_MAX) {
+    toast(t("toast.reloadBlocked"), "error");
+    return false;
+  }
+  hits.push(now);
+  store.set(RELOAD_KEY, hits);
+  location.reload();
+  return true;
+}
+
 export function confirmDialog({ title, text, okLabel } = {}) {
   return new Promise((resolve) => {
     const back = document.getElementById("modalBackdrop");
@@ -171,8 +188,10 @@ export function applyUIPrefs(prefs = getPrefs()) {
   root.setProperty("--accent-2", prefs.accent2);
   root.setProperty("--grad", `linear-gradient(135deg,${prefs.accent} 0%,${prefs.accent2} 100%)`);
   root.setProperty("--chat-size", `${prefs.chatSize}px`);
+  root.setProperty("--chat-font-size", `${prefs.chatSize}px`);
   root.setProperty("--side-alpha", String(prefs.chatAlpha / 100));
   root.setProperty("--chat-bright", String(prefs.chatBright / 100));
+  root.setProperty("--chat-text-brightness", String(prefs.chatBright / 100));
   const video = document.getElementById("video");
   if (video) video.style.filter = prefs.brightness === 100 ? "" : `brightness(${prefs.brightness / 100})`;
 }
@@ -218,6 +237,39 @@ export function createLimiter(max, windowMs) {
     if (hits.length >= max) return false;
     hits.push(now);
     return true;
+  };
+}
+
+/* rate guard with retry information for locking pickers and repeat actions */
+export class RateGuard {
+  constructor(max = 3, windowMs = 5000) {
+    this.max = Math.max(1, Number(max) || 1);
+    this.windowMs = Math.max(1, Number(windowMs) || 1);
+    this.hits = [];
+  }
+  #prune(now) {
+    while (this.hits.length && now - this.hits[0] >= this.windowMs) this.hits.shift();
+  }
+  remaining(now = Date.now()) {
+    this.#prune(now);
+    if (this.hits.length < this.max) return 0;
+    return Math.max(0, this.windowMs - (now - this.hits[0]));
+  }
+  take(now = Date.now()) {
+    const retryIn = this.remaining(now);
+    if (retryIn > 0) return { ok: false, retryIn };
+    this.hits.push(now);
+    return { ok: true, retryIn: 0 };
+  }
+  reset() { this.hits = []; }
+}
+
+export function onceAsync(fn) {
+  let running = false;
+  return async (...args) => {
+    if (running) return;
+    running = true;
+    try { return await fn(...args); } finally { running = false; }
   };
 }
 
@@ -277,7 +329,7 @@ function wirePullToRefresh() {
       const reg = await navigator.serviceWorker?.getRegistration?.();
       if (reg) await Promise.race([reg.update(), new Promise((r) => setTimeout(r, 700))]);
     } catch {}
-    setTimeout(() => location.reload(), 240);
+    setTimeout(() => safeReload(), 240);
   };
 
   document.addEventListener("touchstart", (e) => {
@@ -390,7 +442,7 @@ export function registerServiceWorker() {
         if (seen) return;
         reloaded = true;
         try { sessionStorage.setItem("wt.swReload", "1"); } catch {}
-        location.reload();
+        safeReload({ force: true });
       });
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") reg.update().catch(() => {});

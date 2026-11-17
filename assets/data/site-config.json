@@ -48,7 +48,7 @@
     "chatPerWindow": 6,
     "chatWindowMs": 3000,
     "avatarChanges": 3,
-    "avatarWindowMs": 1200,
+    "avatarWindowMs": 5000,
     "roomActions": 2,
     "roomWindowMs": 1800
   },

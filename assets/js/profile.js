@@ -1,7 +1,7 @@
 import { initI18n, t } from "./i18n.js";
 import {
   $, $$, el, toast, initials, applyUIPrefs, getPrefs, savePrefs, resetPrefs,
-  ACCENTS, lightenHex, registerServiceWorker, createLimiter
+  ACCENTS, lightenHex, registerServiceWorker, RateGuard
 } from "./core.js";
 import {
   currentUser, getProfile, saveProfile, changeUsername, changePassword,
@@ -213,51 +213,71 @@ function wireDetails() {
   $("#detailsForm").addEventListener("submit", (e) => {
     e.preventDefault();
     if (saving) return;
+    saving = true;
+    const submit = e.currentTarget.querySelector('button[type="submit"]');
+    if (submit) submit.disabled = true;
     const out = $("#detailsMsg");
     clearMsg(out);
-    let res;
     try {
-      res = saveProfile({
-        nick: $("#pNick").value,
-        birthdate: $("#pBirth").value,
-        city: $("#pCity").value,
-        bio: $("#pBio").value
-      });
-    } catch {
-      return msg(out, t("profile.session"));
+      let res;
+      try {
+        res = saveProfile({
+          nick: $("#pNick").value,
+          birthdate: $("#pBirth").value,
+          city: $("#pCity").value,
+          bio: $("#pBio").value
+        });
+      } catch {
+        return msg(out, t("profile.session"));
+      }
+      if (!res.ok) {
+        const key = res.error === "name" ? "profile.invalidNick" : res.error === "birthdate" ? "profile.invalidBirth" : "profile.saveFailed";
+        return msg(out, t(key));
+      }
+      profile.nick = res.nick;
+      profile.birthdate = $("#pBirth").value;
+      profile.city = $("#pCity").value.trim();
+      profile.bio = $("#pBio").value.trim();
+      paintAvatar();
+      paintMemberSince();
+      msg(out, t("profile.saved"), true);
+      toast(t("profile.saved"), "success");
+    } finally {
+      saving = false;
+      if (submit) submit.disabled = false;
     }
-    if (!res.ok) {
-      const key = res.error === "name" ? "profile.invalidNick" : res.error === "birthdate" ? "profile.invalidBirth" : "profile.saveFailed";
-      return msg(out, t(key));
-    }
-    profile.nick = res.nick;
-    profile.birthdate = $("#pBirth").value;
-    profile.city = $("#pCity").value.trim();
-    profile.bio = $("#pBio").value.trim();
-    paintAvatar();
-    paintMemberSince();
-    msg(out, t("profile.saved"), true);
-    toast(t("profile.saved"), "success");
   });
 }
 
 /* ---------- avatar ---------- */
 function wireAvatar() {
-  const maxChanges = Math.max(1, Number(siteCfg?.limits?.avatarChanges) || 3);
-  const windowMs = Math.max(300, Number(siteCfg?.limits?.avatarWindowMs) || 1200);
-  const avatarGuard = createLimiter(maxChanges, windowMs);
+  const windowMs = Math.max(5000, Number(siteCfg?.limits?.avatarWindowMs) || 5000);
+  const avatarGuard = new RateGuard(3, windowMs);
+  const gallery = $("#avatarGallery");
+  let lockTimer = 0;
   let warnAt = 0;
+  const lockPicker = (ms) => {
+    gallery.classList.add("locked");
+    gallery.setAttribute("aria-disabled", "true");
+    clearTimeout(lockTimer);
+    lockTimer = setTimeout(() => {
+      gallery.classList.remove("locked");
+      gallery.removeAttribute("aria-disabled");
+    }, Math.max(250, ms));
+  };
   const allowAvatar = () => {
-    if (avatarGuard()) return true;
+    const res = avatarGuard.take();
+    if (res.ok) return true;
     const now = Date.now();
-    if (now - warnAt > 1500) {
+    if (now - warnAt > 900) {
       warnAt = now;
       toast(t("toast.avatarSpam"), "error");
     }
+    lockPicker(res.retryIn);
     return false;
   };
 
-  $("#avatarGallery").addEventListener("click", (e) => {
+  gallery.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-avatar]");
     if (!btn || !allowAvatar()) return;
     try {

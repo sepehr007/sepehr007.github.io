@@ -54,7 +54,7 @@ export const SITE_CONFIG_DEFAULTS = {
     chatPerWindow: 6,
     chatWindowMs: 3000,
     avatarChanges: 3,
-    avatarWindowMs: 1200,
+    avatarWindowMs: 5000,
     roomActions: 2,
     roomWindowMs: 1800
   },
@@ -104,7 +104,7 @@ export function normalizeSiteConfig(raw) {
   merged.limits.chatPerWindow = num(merged.limits.chatPerWindow, 6, 2, 30);
   merged.limits.chatWindowMs = num(merged.limits.chatWindowMs, 3000, 1000, 30000);
   merged.limits.avatarChanges = num(merged.limits.avatarChanges, 3, 1, 20);
-  merged.limits.avatarWindowMs = num(merged.limits.avatarWindowMs, 1200, 500, 30000);
+  merged.limits.avatarWindowMs = num(merged.limits.avatarWindowMs, 5000, 1000, 30000);
   merged.limits.roomActions = num(merged.limits.roomActions, 2, 1, 20);
   merged.limits.roomWindowMs = num(merged.limits.roomWindowMs, 1800, 500, 30000);
   if (!["info", "warn", "critical"].includes(merged.announcement.type)) merged.announcement.type = "info";

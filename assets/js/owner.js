@@ -1,4 +1,4 @@
-import { $, $$, toast, store, applyUIPrefs } from "./core.js";
+import { $, $$, toast, store, applyUIPrefs, safeReload, onceAsync } from "./core.js";
 import {
   SITE_CONFIG_DEFAULTS, normalizeSiteConfig, loadSiteConfig, getSiteConfig,
   ownerSessionValid, setOwnerSession, savePreviewDraft
@@ -13,6 +13,8 @@ const BANS_KEY = "wt.localBans";
 const USERS_KEY = "wt.users";
 const CONFIG_PATH = "assets/data/site-config.json";
 const PBKDF2_ITER = 210000;
+const OWNER_SALT = "5e7a19c3b2d84f6011a9c7e3d5b8f204";
+const OWNER_PASS_HASH = "12a4e7961abe05cf869f7a433b92a96aa1d087e3eee8d2ff9a7b7510b6f1906f";
 
 applyUIPrefs();
 document.documentElement.dataset.theme = "dark";
@@ -72,6 +74,16 @@ async function pbkdf2(pass, saltHex) {
     256
   );
   return hex(bits);
+}
+function sameHex(a = "", b = "") {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+async function checkOwnerPass(pass) {
+  const hash = await pbkdf2(String(pass || ""), OWNER_SALT);
+  return sameHex(hash, OWNER_PASS_HASH);
 }
 function readCred() {
   const c = store.get(CRED_KEY, null);
@@ -434,16 +446,13 @@ function configureGate() {
   $("#ghRepo").textContent = repo;
   $("#repoLink").href = `https://github.com/${repo}`;
   $("#actionsLink").href = `https://github.com/${repo}/actions`;
-  $("#pubBranch").textContent = branchName();
-  const cred = readCred();
-  const hint = $("#loginHint");
-  if (cred) {
-    hint.textContent = "رمز مالک روی این مرورگر تنظیم شده است. اگر فراموش کردی، از تب «اتصال به گیت‌هاب» رمز تازه بگذار.";
-    $("#ownerPass").disabled = false;
-  } else {
-    hint.textContent = "اولین بار باید از تب «اتصال به گیت‌هاب» فعال‌سازی کنی. بدون توکن معتبر مخزن، کنسول باز نمی‌شود.";
-    $("#ownerPass").disabled = true;
-  }
+  const pubBranch = $("#pubBranch");
+  if (pubBranch) pubBranch.textContent = branchName();
+  const gateGithub = $("#gateTabGithub");
+  if (gateGithub) { gateGithub.hidden = true; gateGithub.disabled = true; }
+  $("#githubForm")?.classList.add("hidden");
+  $("#loginHint").textContent = "رمز مالک را وارد کن؛ اتصال گیت‌هاب لازم نیست.";
+  $("#ownerPass").disabled = false;
 }
 function setGateTab(which) {
   const login = which !== "github";
@@ -469,16 +478,14 @@ async function doPasswordLogin(e) {
     err.textContent = `تلاش‌های زیاد. ${Math.ceil((lock.until - Date.now()) / 1000)} ثانیه صبر کن.`;
     return;
   }
-  const cred = readCred();
-  if (!cred) { err.textContent = "رمز محلی تنظیم نشده؛ از تب گیت‌هاب فعال‌سازی کن."; return; }
   const pass = $("#ownerPass").value;
   if (!pass) { err.textContent = "رمز را وارد کن."; return; }
   const btn = $("#loginBtn");
   btn.disabled = true;
   btn.textContent = "در حال بررسی…";
   try {
-    const hash = await pbkdf2(pass, cred.salt);
-    if (hash !== cred.hash) {
+    const ok = await checkOwnerPass(pass);
+    if (!ok) {
       noteOwnerFailure();
       const l = readLock();
       err.textContent = l ? "پنج تلاش ناموفق؛ دو دقیقه قفل شد." : "رمز اشتباه است.";
@@ -499,7 +506,8 @@ async function doPasswordLogin(e) {
 async function doGithubActivate(e) {
   e.preventDefault();
   const err = $("#githubErr");
-  err.textContent = "";
+  err.textContent = "اتصال گیت‌هاب غیرفعال شده است؛ فقط از رمز مالک استفاده کن.";
+  return;
   const token = $("#ghToken").value.trim();
   const pass = $("#newOwnerPass").value;
   const pass2 = $("#newOwnerPass2").value;
@@ -533,22 +541,15 @@ async function doGithubActivate(e) {
 /* ---------- security ---------- */
 function refreshTokenState() {
   const node = $("#tokenState");
-  const token = verifiedToken || sessionStorage.getItem(TOKEN_KEY) || "";
   if (!node) return;
-  if (token) {
-    node.textContent = `توکن معتبر در همین تب نگه داشته شده است (پایان با بستن تب).`;
-    node.className = "token-state ok";
-    const input = $("#sessionToken");
-    if (input) input.value = token;
-  } else {
-    node.textContent = "توکنی در این تب نیست. برای انتشار، توکن را در بخش انتشار وارد کن.";
-    node.className = "token-state";
-  }
+  node.textContent = "اتصال توکن گیت‌هاب غیرفعال شده است.";
+  node.className = "token-state";
 }
 async function changePass(e) {
   e.preventDefault();
   const err = $("#passErr");
-  err.textContent = "";
+  if (err) err.textContent = "رمز مالک در این نسخه ثابت است و تغییر نمی‌کند.";
+  return;
   const cred = readCred();
   if (!cred) { err.textContent = "رمز محلی وجود ندارد."; return; }
   const cur = $("#curPass").value;
@@ -569,6 +570,9 @@ async function changePass(e) {
 }
 async function verifySessionToken(e) {
   e.preventDefault();
+  const stateNode = $("#tokenState");
+  if (stateNode) { stateNode.textContent = "اتصال توکن گیت‌هاب غیرفعال شده است."; stateNode.className = "token-state"; }
+  return;
   const input = $("#sessionToken");
   const token = input.value.trim();
   const node = $("#tokenState");
@@ -636,6 +640,8 @@ function setPubState(text, cls = "") {
 }
 async function publishConfig(e) {
   e?.preventDefault();
+  setPubState("انتشار خودکار با توکن گیت‌هاب غیرفعال است. تنظیمات را با دانلود JSON ذخیره کن.", "bad");
+  return;
   const input = $("#publishToken");
   const token = (verifiedToken || input.value || "").trim();
   if (!token) {
@@ -737,18 +743,18 @@ function bindInputs() {
 function bindChrome() {
   $("#gateTabLogin").addEventListener("click", () => setGateTab("login"));
   $("#gateTabGithub").addEventListener("click", () => setGateTab("github"));
-  $("#loginForm").addEventListener("submit", doPasswordLogin);
+  $("#loginForm").addEventListener("submit", onceAsync(doPasswordLogin));
   $("#githubForm").addEventListener("submit", doGithubActivate);
 
   $$("[data-nav]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.nav)));
   $$("[data-goto]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.goto)));
   $("#menuBtn").addEventListener("click", () => $("#ownerSide").classList.toggle("open"));
   $("#lockBtn").addEventListener("click", () => {
-    if (!confirm("کنسول قفل شود؟ برای ورود دوباره رمز یا توکن لازم است.")) return;
+    if (!confirm("کنسول قفل شود؟ برای ورود دوباره رمز مالک لازم است.")) return;
     setOwnerSession(false);
     try { sessionStorage.removeItem(TOKEN_KEY); } catch {}
     verifiedToken = "";
-    location.reload();
+    safeReload();
   });
 
   $("#passForm").addEventListener("submit", changePass);
@@ -791,12 +797,8 @@ function renderAll() {
   bindInputs();
   configureGate();
 
-  const savedToken = sessionStorage.getItem(TOKEN_KEY) || "";
-  if (savedToken) {
-    verifiedToken = savedToken;
-    const pubInput = $("#publishToken");
-    if (pubInput) pubInput.value = savedToken;
-  }
+  try { sessionStorage.removeItem(TOKEN_KEY); } catch {}
+  verifiedToken = "";
 
   if (ownerSessionValid()) {
     $("#ownerGate").classList.add("hidden");

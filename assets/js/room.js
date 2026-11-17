@@ -2,7 +2,7 @@ import { initI18n, t, applyI18n, getLang } from "./i18n.js";
 import {
   $, $$, el, escapeHtml, colorFor, initials, fmtTime, fmtClock, toast,
   confirmDialog, copyText, store, validateMediaUrl, createLimiter, debounce,
-  registerServiceWorker, applyUIPrefs, getPrefs, savePrefs, resetPrefs, ACCENTS, lightenHex
+  registerServiceWorker, applyUIPrefs, getPrefs, savePrefs, resetPrefs, ACCENTS, lightenHex, safeReload
 } from "./core.js";
 import { Net } from "./net.js";
 import { Player, parseSubtitles } from "./player.js";
@@ -91,6 +91,12 @@ let chatTimerSince = null;
 const ALWAYS_SCROLL_KEY = "wt.alwaysScroll";
 let alwaysScroll = store.get(ALWAYS_SCROLL_KEY, false) === true;
 let chatHidden = store.get("wt.chatHidden", false) === true;
+let chatFollow = true;
+let chatUserPaused = false;
+let chatScrollLock = false;
+let chatLockTimer = 0;
+let chatBottomFrame = 0;
+let chatBottomTimer = 0;
 
 /* ================= boot ================= */
 if (code && authUser) boot();
@@ -335,10 +341,17 @@ function wireNet() {
   net.on("chat", (msg) => {
     const near = isChatNearBottom();
     const mine = msg.by === me.id;
+    const follow = mine || near || (alwaysScroll && !chatUserPaused);
     appendMessage(msg, true);
     noteIncomingChat();
-    if (alwaysScroll || mine || near) scrollChatSoon(true);
-    else paintChatJump();
+    if (follow) {
+      chatFollow = true;
+      chatUserPaused = false;
+      scrollChatSoon(true);
+    } else {
+      chatFollow = false;
+      paintChatJump();
+    }
     if (near || mine) chatJumpCount = 0;
     else if (msg.by !== me.id) chatJumpCount = Math.min(99, chatJumpCount + 1);
     paintChatJump();
@@ -537,6 +550,8 @@ function wirePlayer() {
   seek.addEventListener("input", (e) => {
     const d = video.duration || 0;
     const pct = Number(e.target.value) / 10;
+    const track = seek.closest(".seek-wrap") || seek;
+    track.style.setProperty("--seek-progress", `${pct}%`);
     seek.style.setProperty("--seek-progress", `${pct}%`);
     $("#timeLabel").textContent = `${fmtTime((e.target.value / 1000) * d)} / ${fmtTime(d)}`;
   });
@@ -679,6 +694,9 @@ function paintSeekFill(current, duration) {
     }
   } catch {}
   const bufferedPct = total ? Math.min(100, Math.max(watched, (buffered / total) * 100)) : 0;
+  const track = seek.closest(".seek-wrap") || seek;
+  track.style.setProperty("--seek-progress", `${watched}%`);
+  track.style.setProperty("--seek-buffer", `${bufferedPct}%`);
   seek.style.setProperty("--seek-progress", `${watched}%`);
   seek.style.setProperty("--seek-buffer", `${bufferedPct}%`);
 }
@@ -695,6 +713,8 @@ function updatePlayUI(playing) {
     big.title = label;
     big.setAttribute("aria-label", label);
     big.setAttribute("aria-pressed", String(!!playing));
+    const text = $("#bigPlayLabel");
+    if (text) text.textContent = label;
   }
 }
 
@@ -1160,15 +1180,24 @@ function wireChat() {
   };
   jumpBtn?.addEventListener("click", () => {
     chatJumpCount = 0;
-    chatList.scrollTop = chatList.scrollHeight;
-    paintChatJump();
+    chatFollow = true;
+    chatUserPaused = false;
+    scrollChat(true);
   });
   chatList.addEventListener("scroll", () => {
-    if (isChatNearBottom()) chatJumpCount = 0;
+    if (!chatScrollLock) {
+      const near = isChatNearBottom();
+      chatFollow = near;
+      chatUserPaused = !near;
+      if (near) chatJumpCount = 0;
+    }
     paintChatJump();
   }, { passive: true });
   if ("ResizeObserver" in window && chatFormEl) new ResizeObserver(placeJump).observe(chatFormEl);
   else window.addEventListener("resize", placeJump);
+  window.addEventListener("resize", placeJump);
+  window.visualViewport?.addEventListener("resize", placeJump);
+  window.visualViewport?.addEventListener("scroll", placeJump);
   placeJump();
 
   chatList.addEventListener("click", onChatAction);
@@ -1293,7 +1322,7 @@ function buildMessage(msg) {
   const isMod = msg.role === "owner" || msg.role === "mod";
   const node = el("div", { class: `msg${mine ? " own" : ""}${msg.edited ? " edited" : ""}`, "data-id": msg.id });
   node.dataset.text = msg.text || "";
-  node.dataset.msg = JSON.stringify({ id: msg.id, by: msg.by, nick: msg.nick, text: msg.text, role: msg.role });
+  node.dataset.msg = JSON.stringify({ id: msg.id, by: msg.by, nick: msg.nick, text: msg.text, role: msg.role, pinned: !!msg.pinned, deleted: !!msg.deleted });
 
   const avatar = el("div", { class: "avatar", "data-by": msg.by || "", "data-nick": msg.nick || "" });
   paintAvatar(avatar, avatarFor(msg.by), msg.nick, msg.by || msg.nick);
@@ -1357,7 +1386,7 @@ function renderReactions(node, msg) {
 function updateMessage(msg) {
   const node = chatList.querySelector(`[data-id="${msg.id}"]`);
   if (!node) { appendMessage(msg, false); return; }
-  node.dataset.msg = JSON.stringify({ id: msg.id, by: msg.by, nick: msg.nick, text: msg.text, role: msg.role });
+  node.dataset.msg = JSON.stringify({ id: msg.id, by: msg.by, nick: msg.nick, text: msg.text, role: msg.role, pinned: !!msg.pinned, deleted: !!msg.deleted });
   node.dataset.text = msg.text || "";
   node.classList.toggle("edited", !!msg.edited);
   node.classList.toggle("pinned-msg", !!msg.pinned);
@@ -1376,10 +1405,14 @@ function updateMessage(msg) {
 
 function refreshPinned() {
   const bar = $("#pinnedBar");
+  if (!bar) return;
   const pinned = [...chatList.children]
     .filter((n) => n.classList.contains("pinned-msg"))
-    .map((n) => JSON.parse(n.dataset.msg || "{}"));
-  if (!pinned.length) { bar.classList.add("hidden"); bar.innerHTML = ""; return; }
+    .map((n) => {
+      try { return JSON.parse(n.dataset.msg || "{}"); } catch { return {}; }
+    })
+    .filter((m) => m.id && !m.deleted && m.pinned !== false);
+  if (!pinned.length) { bar.classList.add("hidden"); bar.innerHTML = ""; bar.onclick = null; return; }
   const last = pinned[pinned.length - 1];
   bar.classList.remove("hidden");
   bar.innerHTML = `<b>${t("pinned.label")}:</b> <span>${escapeHtml(`${last.nick}: ${String(last.text).slice(0, 80)}`)}</span>`;
@@ -1393,19 +1426,46 @@ function scrollToMessage(id) {
   node.animate?.([{ background: "rgba(124,92,255,.35)" }, { background: "transparent" }], { duration: 1200 });
 }
 
+function chatBottomGap() {
+  return chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight;
+}
+
 function isChatNearBottom() {
-  return chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 160;
+  return chatBottomGap() < 56;
+}
+
+function pinChatBottom() {
+  chatScrollLock = true;
+  chatFollow = true;
+  chatUserPaused = false;
+  clearTimeout(chatLockTimer);
+  const apply = () => { chatList.scrollTop = chatList.scrollHeight; };
+  apply();
+  cancelAnimationFrame(chatBottomFrame);
+  chatBottomFrame = requestAnimationFrame(() => {
+    apply();
+    chatBottomFrame = requestAnimationFrame(apply);
+  });
+  clearTimeout(chatBottomTimer);
+  chatBottomTimer = setTimeout(apply, 70);
+  chatLockTimer = setTimeout(() => {
+    chatScrollLock = false;
+    paintChatJump();
+  }, 200);
 }
 
 function scrollChat(force = false) {
-  if (force || isChatNearBottom()) chatList.scrollTop = chatList.scrollHeight;
+  if (force || chatFollow) pinChatBottom();
   paintChatJump();
 }
 
 function scrollChatSoon(force = false) {
   requestAnimationFrame(() => {
-    scrollChat(force);
-    requestAnimationFrame(() => { if (force) scrollChat(true); });
+    if (force || chatFollow) pinChatBottom();
+    paintChatJump();
+    requestAnimationFrame(() => {
+      if (force || chatFollow) pinChatBottom();
+    });
   });
 }
 
@@ -1423,8 +1483,8 @@ function setChatHidden(hidden, persist = true) {
 function paintChatJump() {
   const btn = $("#chatJump");
   if (!btn) return;
-  const gap = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight;
-  const show = !searchTerm && chatList.children.length > 0 && gap > 140;
+  const gap = chatBottomGap();
+  const show = !searchTerm && chatList.children.length > 0 && gap > 100;
   btn.classList.toggle("hidden", !show);
   const label = $("#chatJumpLabel");
   if (!label) return;
@@ -1991,7 +2051,11 @@ function wireVoice() {
     renderVoiceTiles();
     toast(t(voice.deafened ? "toast.deafened" : "toast.undeafened"), "info");
   });
-  if (voice) { syncMicUI(); syncDeafenUI(); }
+  $("#cameraBtn")?.addEventListener("click", () => {
+    syncCameraUI();
+    toast(t("toast.cameraSoon"), "info");
+  });
+  if (voice) { syncMicUI(); syncDeafenUI(); syncCameraUI(); }
 }
 
 async function toggleVoice() {
@@ -2046,6 +2110,16 @@ function syncDeafenUI() {
   btn.innerHTML = voice.deafened
     ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l16 16M4 14v-2a8 8 0 0 1 3.1-6.3"/><path d="M14.5 4.4A8 8 0 0 1 20 12v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/></svg>'
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/></svg>';
+}
+
+function syncCameraUI() {
+  const btn = $("#cameraBtn");
+  if (!btn) return;
+  btn.classList.remove("active", "state-on");
+  btn.classList.add("state-off");
+  btn.title = t("voice.cameraSoon");
+  btn.setAttribute("aria-label", btn.title);
+  btn.setAttribute("aria-pressed", "false");
 }
 
 /* ================= screen share ================= */
@@ -2324,7 +2398,7 @@ function wireMisc() {
     location.replace("./");
   });
 
-  $("#reconnectBtn")?.addEventListener("click", () => location.reload());
+  $("#reconnectBtn")?.addEventListener("click", () => safeReload());
 
   $("#sideBtn")?.addEventListener("click", () => {
     if (chatHidden) return setChatHidden(false);
