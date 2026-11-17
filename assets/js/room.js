@@ -1015,6 +1015,7 @@ function wireSettings() {
   $("#optLock").addEventListener("change", (e) => push({ locked: e.target.checked }));
   $("#optApproval").addEventListener("change", (e) => push({ approval: e.target.checked }));
 
+  $("#subsPickBtn")?.addEventListener("click", () => $("#subsFile").click());
   $("#subsFile").addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1022,6 +1023,8 @@ function wireSettings() {
     const cues = parseSubtitles(raw);
     if (!cues.length) return toast(getLang() === "fa" ? "زیرنویس معتبر نبود" : "Invalid subtitle file", "error");
     const name = (file.name || "").replace(/\.[^.]+$/, "").slice(0, 40) || t("settings.subs");
+    const label = $("#subsFileName");
+    if (label) label.textContent = file.name;
     player.setCues(cues, name);
     renderSubsSets();
     if (isHost) net.shareSubtitles(cues);

@@ -235,7 +235,11 @@
         </label>
         <div class="setting">
           <label for="subsFile" data-i18n="settings.subs">زیرنویس (SRT / VTT)</label>
-          <input type="file" id="subsFile" accept=".srt,.vtt,text/vtt,text/plain">
+          <input type="file" id="subsFile" class="hidden" accept=".srt,.vtt,text/vtt,text/plain">
+          <div class="file-pick">
+            <button class="btn btn-secondary btn-sm" id="subsPickBtn" type="button" data-i18n="settings.subsPick">انتخاب فایل زیرنویس</button>
+            <span class="file-name" id="subsFileName" data-i18n="settings.subsNone">فایلی انتخاب نشده</span>
+          </div>
           <div class="subs-controls">
             <label data-i18n="settings.subsSize">اندازه</label>
             <input type="range" id="subsSize" min="80" max="200" value="120">

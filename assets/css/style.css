@@ -309,10 +309,10 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .settings-list{overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding-bottom:20px}
 .setting{display:flex;flex-direction:column;gap:7px}
 .setting>label{font-size:12.5px;color:var(--text-dim)}
-.switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;padding:10px 12px;border-radius:12px;background:var(--panel);border:1px solid var(--border);cursor:pointer}
+.switch-row{position:relative;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;padding:10px 12px;border-radius:12px;background:var(--panel);border:1px solid var(--border);cursor:pointer}
 .switch{position:relative;width:42px;height:24px;border-radius:99px;background:rgba(255,255,255,.14);transition:.2s;flex:none}
 .switch::after{content:"";position:absolute;top:3px;inset-inline-start:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s}
-.switch-row input{position:absolute;opacity:0;pointer-events:none}
+.switch-row input{position:absolute;inset-inline-start:0;top:50%;width:1px;height:1px;padding:0;border:0;opacity:0;pointer-events:none}
 .switch-row input:checked+.switch{background:var(--accent)}
 .switch-row input:checked+.switch::after{transform:translateX(18px)}
 [dir="rtl"] .switch-row input:checked+.switch::after{transform:translateX(-18px)}
@@ -424,6 +424,8 @@ input[type=file]::file-selector-button{background:var(--panel-strong);border:1px
 .subs-count{font-size:10.5px;color:var(--text-faint);font-variant-numeric:tabular-nums}
 .subs-x{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;color:var(--text-faint);font-size:15px;line-height:1}
 .subs-x:hover{background:rgba(255,255,255,.08);color:var(--text)}
+.file-pick{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.file-pick .file-name{font-size:11.5px;color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 @media (max-width:400px){
   .pref-row{grid-template-columns:1fr 36px}
   .pref-row label{grid-column:1/-1}
