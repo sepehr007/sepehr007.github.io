@@ -115,6 +115,7 @@ async function boot() {
   wireQueue();
   wireSettings();
   wireWakeLock();
+  wireSleepTimer();
   wirePrefs();
   wireVoice();
   wireMisc();
@@ -1156,6 +1157,29 @@ function wireWakeLock() {
   video.addEventListener("pause", applyWakeLock);
   document.addEventListener("visibilitychange", applyWakeLock);
   applyWakeLock();
+}
+
+/* ================= sleep timer ================= */
+let sleepTimeout = null;
+
+function wireSleepTimer() {
+  const select = $("#optSleep");
+  if (!select) return;
+  const stop = () => {
+    if (sleepTimeout) { clearTimeout(sleepTimeout); sleepTimeout = null; }
+  };
+  select.addEventListener("change", () => {
+    stop();
+    const minutes = Number(select.value) || 0;
+    if (!minutes) return;
+    toast(t("toast.sleepSet").replace("{m}", String(minutes)));
+    sleepTimeout = setTimeout(() => {
+      sleepTimeout = null;
+      select.value = "0";
+      if (!$("#video")?.paused) player.togglePlay();
+      toast(t("toast.sleepDone"), "info", 5000);
+    }, minutes * 60000);
+  });
 }
 
 function wireSettings() {

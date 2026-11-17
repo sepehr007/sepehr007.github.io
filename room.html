@@ -244,6 +244,17 @@
           <input type="checkbox" id="optWake" checked>
           <span class="switch"></span>
         </label>
+        <div class="setting" id="sleepRow">
+          <label for="optSleep" data-i18n="settings.sleep">توقف خودکار پخش (خواب)</label>
+          <select id="optSleep">
+            <option value="0" data-i18n="settings.sleepOff">غیرفعال</option>
+            <option value="15" data-i18n="settings.sleep15">۱۵ دقیقه</option>
+            <option value="30" data-i18n="settings.sleep30">۳۰ دقیقه</option>
+            <option value="45" data-i18n="settings.sleep45">۴۵ دقیقه</option>
+            <option value="60" data-i18n="settings.sleep60">۶۰ دقیقه</option>
+            <option value="90" data-i18n="settings.sleep90">۹۰ دقیقه</option>
+          </select>
+        </div>
         <div class="setting hidden" id="qualityRow">
           <label for="optQuality" data-i18n="settings.quality">کیفیت پخش</label>
           <select id="optQuality">
