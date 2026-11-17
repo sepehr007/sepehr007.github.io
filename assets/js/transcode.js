@@ -1,32 +1,51 @@
-const PKG = "https://cdn.jsdelivr.net/npm";
+const CDNS = [
+  "https://cdn.jsdelivr.net/npm",
+  "https://unpkg.com"
+];
 const FFMPEG_VER = "0.12.10";
 const CORE_VER = "0.12.6";
 const UTIL_VER = "0.12.1";
 
 let ffmpegPromise = null;
+let activeBase = "";
 
-async function workerBlobUrl() {
-  const base = `${PKG}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/esm/`;
-  const src = await (await fetch(`${base}worker.js`)).text();
-  const patched = src.replace(/(["'])\.\/([^"']+)\1/g, (_m, q, rel) => `${q}${base}${rel}${q}`);
+async function resolveBase() {
+  if (activeBase) return activeBase;
+  for (const base of CDNS) {
+    try {
+      const res = await fetch(`${base}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/esm/index.js`, { cache: "force-cache" });
+      if (res.ok) {
+        activeBase = base;
+        return base;
+      }
+    } catch {}
+  }
+  throw new Error("cdn-unavailable");
+}
+
+async function workerBlobUrl(base) {
+  const baseUrl = `${base}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/esm/`;
+  const src = await (await fetch(`${baseUrl}worker.js`)).text();
+  const patched = src.replace(/(["'])\.\/([^"']+)\1/g, (_m, q, rel) => `${q}${baseUrl}${rel}${q}`);
   return URL.createObjectURL(new Blob([patched], { type: "text/javascript" }));
 }
 
 async function getFFmpeg(onProgress) {
   if (ffmpegPromise) return ffmpegPromise;
   ffmpegPromise = (async () => {
-    const { FFmpeg } = await import(`${PKG}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/esm/index.js`);
-    const { toBlobURL } = await import(`${PKG}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`);
+    const base = await resolveBase();
+    const { FFmpeg } = await import(`${base}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/esm/index.js`);
+    const { toBlobURL } = await import(`${base}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`);
     const ff = new FFmpeg();
     ff.on("progress", ({ progress }) => {
       if (Number.isFinite(progress)) onProgress?.(Math.max(0, Math.min(1, progress)));
     });
-    const coreBase = `${PKG}/@ffmpeg/core@${CORE_VER}/dist/esm`;
+    const coreBase = `${base}/@ffmpeg/core@${CORE_VER}/dist/esm`;
     const loadTask = (async () => {
       await ff.load({
         coreURL: await toBlobURL(`${coreBase}/ffmpeg-core.js`, "text/javascript"),
         wasmURL: await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, "application/wasm"),
-        classWorkerURL: await workerBlobUrl()
+        classWorkerURL: await workerBlobUrl(base)
       });
     })();
     const timeout = new Promise((_, reject) => {
@@ -71,7 +90,7 @@ export async function prepareLocalVideo(file, { onStatus, onProgress } = {}) {
 
   onStatus?.("loading");
   const ff = await getFFmpeg(onProgress);
-  const { fetchFile } = await import(`${PKG}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`);
+  const { fetchFile } = await import(`${activeBase}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`);
   const inName = `in.${(file.name.split(".").pop() || "bin").toLowerCase()}`;
 
   await ff.writeFile(inName, await fetchFile(file));
