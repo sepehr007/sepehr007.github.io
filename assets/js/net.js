@@ -501,6 +501,7 @@ export class Net {
       case "chat": return this.#hostChat(member, msg);
       case "chatEdit": return this.#hostChatEdit(member, msg);
       case "chatDelete": return this.#hostChatDelete(member, msg);
+      case "chatClear": return this.#hostChatClear(member);
       case "react": return this.#hostReact(member, msg);
       case "reaction": return this.#hostReaction(member, msg);
       case "pin": return this.#hostPin(member, msg);
@@ -649,6 +650,13 @@ export class Net {
     entry.deleted = true; entry.text = "";
     this.#broadcast({ t: "chatUpdate", msg: entry });
     this.emit("chatUpdate", entry);
+  }
+
+  #hostChatClear(member) {
+    if (!this.isMod(member) || !this.chat.length) return;
+    this.chat = [];
+    this.#broadcast({ t: "chatClear", by: member.nick });
+    this.emit("chatClear", { by: member.nick });
   }
 
   #hostReact(member, msg) {
@@ -807,6 +815,7 @@ export class Net {
       case "chat": this.emit("chat", msg.msg); break;
       case "reaction": this.emit("reaction", msg); break;
       case "chatUpdate": this.emit("chatUpdate", msg.msg); break;
+      case "chatClear": this.emit("chatClear", { by: msg.by }); break;
       case "typing": this.emit("typing", { id: msg.id, nick: msg.nick }); break;
       case "playback": this.emit("playback", msg.state); break;
       case "room": this.roomState = msg.room; this.emit("room", msg.room); break;
@@ -921,6 +930,7 @@ export class Net {
       chat: () => this.#hostChat(me, payload),
       chatEdit: () => this.#hostChatEdit(me, payload),
       chatDelete: () => this.#hostChatDelete(me, payload),
+      chatClear: () => this.#hostChatClear(me),
       react: () => this.#hostReact(me, payload),
       reaction: () => this.#hostReaction(me, payload),
       pin: () => this.#hostPin(me, payload),

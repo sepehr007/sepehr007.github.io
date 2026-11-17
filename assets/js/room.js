@@ -260,6 +260,7 @@ function wireNet() {
     members = list;
     const mine = list.find((m) => m.id === me.id);
     if (mine) { me.role = mine.role; me.nick = mine.nick; if (mine.avatar) me.avatar = mine.avatar; }
+    syncAdminTools();
     renderMembers();
     refreshChatAvatars();
     const voices = list.filter((m) => m.voice && m.id !== me.id).map((m) => m.id);
@@ -278,6 +279,10 @@ function wireNet() {
   });
   net.on("reaction", (r) => floatReaction(r.emoji));
   net.on("chatUpdate", (msg) => updateMessage(msg));
+  net.on("chatClear", ({ by } = {}) => {
+    clearChatHistory();
+    toast(t("toast.chatClearedBy", { name: by || "?" }), "info");
+  });
   net.on("typing", ({ id, nick: n }) => {
     if (id === me.id) return;
     typingUsers.set(id, { nick: n, at: Date.now() });
@@ -1056,6 +1061,22 @@ function syncChatEmpty() {
   chatList.classList.toggle("hidden", !has);
 }
 
+function clearChatHistory() {
+  const wasEditing = !!editingId;
+  chatList.innerHTML = "";
+  replyTo = null;
+  editingId = null;
+  $("#replyBar")?.classList.add("hidden");
+  if (wasEditing) {
+    const input = $("#chatInput");
+    if (input) { input.value = ""; input.placeholder = t("chat.placeholder"); }
+  }
+  chatJumpCount = 0;
+  refreshPinned();
+  syncChatEmpty();
+  paintChatJump();
+}
+
 function formatChatText(raw) {
   const safe = escapeHtml(raw || "").replace(/https?:\/\/[^\s<]+/g, (full) => {
     const trail = full.match(/[.,!?;:)\]]+$/)?.[0] || "";
@@ -1358,6 +1379,11 @@ function applyRoomSettings(room) {
   $("#optLock").checked = !!room.locked;
   $("#optApproval").checked = !!room.approval;
   [$("#optControl"), $("#optLock"), $("#optApproval")].forEach((n) => { n.disabled = !isOwner; });
+  syncAdminTools();
+}
+
+function syncAdminTools() {
+  $("#adminRow")?.classList.toggle("hidden", !isModSelf());
 }
 
 /* ================= screen wake lock ================= */
@@ -1524,6 +1550,16 @@ function wireSettings() {
     });
   }
   applySubStyle();
+
+  $("#clearChatBtn")?.addEventListener("click", async () => {
+    if (!isModSelf() || !chatList.children.length) return;
+    const ok = await confirmDialog({
+      title: t("settings.clearChat"),
+      text: t("settings.clearChatHint"),
+      okLabel: t("settings.clearChat")
+    });
+    if (ok) net.command("chatClear");
+  });
 }
 
 function renderQuality(info) {
