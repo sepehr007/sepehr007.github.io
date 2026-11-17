@@ -6,6 +6,21 @@ import {
 import { readAudit, logAudit, auditCountSince, clearAudit } from "./owner-audit.js";
 import { SITE_CONFIG_DEFAULTS } from "./site-config.js";
 import { ACCENTS } from "./core.js";
+import {
+  readBilling, writeBilling, logBillingEvent, uid, slugify,
+  normalizePlan, emptyPlan, migrateLegacyPlan, sortPlans, validatePlan,
+  effectivePrice, BILLING_CYCLES, CURRENCIES, PLAN_STATUSES,
+  PAYMENT_STATUSES, SUB_STATUSES, SUB_ACTIONS, normalizeCoupon, validateCoupon,
+  createSubscription, applySubscriptionAction, subscriptionAlerts,
+  recordPayment, updatePaymentStatus, computeMetrics, formatMoney, daysLeft
+} from "./billing-model.js";
+import {
+  ENTITLEMENTS, ENTITLEMENT_GROUPS, FREE_ENTITLEMENTS, UNLIMITED,
+  normalizeEntitlements, resolveEntitlements, summarizeEntitlements, formatLimit, subscriptionActive
+} from "./entitlements.js";
+import { PROVIDERS, PROVIDER_MODES, sanitizeProviderConfig, providerHealth, createCheckout } from "./payment-providers.js";
+import { lineChart, barChart, donut } from "./charts.js";
+import { planCard } from "./pricing.js";
 
 const DATA_KEY = "wt.ownerData";
 const UI_KEY = "wt.ownerUi";
@@ -141,6 +156,81 @@ function foundationList(items) {
   return list;
 }
 
+/* ---------------- billing form helpers ---------------- */
+
+function fieldRow(label, control, cls = "") {
+  const wrap = el("label", { class: `ofield ${cls}`.trim() });
+  wrap.append(el("span", { text: label }), control);
+  return wrap;
+}
+function selectInput(options, value) {
+  const sel = el("select");
+  for (const opt of options) sel.append(el("option", { value: opt.value, text: opt.label }));
+  sel.value = value;
+  return sel;
+}
+function numberInput(value, attrs = {}) {
+  const input = el("input", { type: "number", min: "0" });
+  Object.assign(input, attrs);
+  input.value = value == null ? "" : String(value);
+  return input;
+}
+function dateInput(value) {
+  const input = el("input", { type: "date" });
+  if (value) {
+    const ts = Date.parse(value);
+    if (Number.isFinite(ts)) input.value = new Date(ts).toISOString().slice(0, 10);
+  }
+  return input;
+}
+function dateFa(ts) {
+  return ts ? new Date(ts).toLocaleDateString("fa-IR") : "—";
+}
+function cycleLabel(cycle) {
+  return BILLING_CYCLES.find((c) => c.id === cycle)?.label || cycle;
+}
+function statusTag(status) {
+  const kind = status === "published" || status === "active" ? "ok" : status === "draft" || status === "trialing" ? "" : "bad";
+  return tag(PLAN_STATUSES[status] || SUB_STATUSES[status] || status, kind);
+}
+
+function entitlementEditor(initial = {}) {
+  const state = { ...FREE_ENTITLEMENTS, ...(initial || {}) };
+  const root = el("div", { class: "ent-grid" });
+  for (const group of ENTITLEMENT_GROUPS) {
+    const box = el("div", { class: "ent-group" });
+    box.append(el("h4", { class: "ent-group-lbl", text: group.label }));
+    for (const meta of ENTITLEMENTS.filter((e) => e.group === group.id)) {
+      const row = el("div", { class: "ent-row" });
+      row.append(el("span", { class: "ent-lbl", text: meta.label }));
+      if (meta.type === "boolean") {
+        const cb = el("input", { type: "checkbox" });
+        cb.checked = !!state[meta.id];
+        cb.addEventListener("change", () => { state[meta.id] = cb.checked; });
+        row.append(cb);
+      } else {
+        const num = numberInput(state[meta.id] === UNLIMITED ? "" : state[meta.id]);
+        num.classList.add("ent-num");
+        const unl = el("label", { class: "ent-unl" });
+        const cb = el("input", { type: "checkbox" });
+        cb.checked = state[meta.id] === UNLIMITED;
+        num.disabled = cb.checked;
+        cb.addEventListener("change", () => {
+          num.disabled = cb.checked;
+          state[meta.id] = cb.checked ? UNLIMITED : Math.max(0, Number(num.value) || 0);
+        });
+        num.addEventListener("input", () => { if (!cb.checked) state[meta.id] = Math.max(0, Number(num.value) || 0); });
+        unl.append(cb, el("span", { text: "نامحدود" }));
+        row.append(num, unl);
+      }
+      if (meta.unit) row.append(el("span", { class: "ent-unit", text: meta.unit }));
+      box.append(row);
+    }
+    root.append(box);
+  }
+  return { node: root, read: () => normalizeEntitlements(state) };
+}
+
 /* ---------------- modal ---------------- */
 
 let modalEl = null;
@@ -173,6 +263,23 @@ export function createCenter(ctx) {
   const renderers = {};
   const freshExt = new Set();
   const repaintExtras = () => freshExt.forEach((fn) => fn());
+
+  /* ----- billing helpers ----- */
+  const currencyNow = () => (ctx.getDraft()?.billing?.currency === "USD" ? "USD" : "IRT");
+  const draftPlans = () => {
+    const raw = ctx.getDraft()?.billing?.plans;
+    return sortPlans((Array.isArray(raw) ? raw : []).map((p, i) => normalizePlan(p, i)));
+  };
+  const persistPlans = (list, action, target = "") => {
+    const clean = list.map((p, i) => ({ ...normalizePlan(p, i), order: i }));
+    ctx.setCfg("billing.plans", clean);
+    logAudit({ kind: "plan", action, target });
+  };
+  const livePlan = (id) => draftPlans().find((p) => p.id === id) || null;
+  const legacyPlans = () => {
+    const raw = readData().plans;
+    return Array.isArray(raw) ? raw : [];
+  };
 
   /* ----- navigation ----- */
   function buildNav() {
@@ -548,160 +655,805 @@ export function createCenter(ctx) {
     ctx.renderInputs();
   };
 
-  /* ----- plans ----- */
-  const planState = { editing: null };
+  /* ----- plan builder ----- */
+  const planFilter = { status: "all" };
   renderers.plans = (section) => {
     section.replaceChildren();
-    const top = card("پلن‌های اشتراک", "پلن‌ها به‌صورت داده‌ای ذخیره می‌شوند (بدون کد سخت‌شده). اتصال به پرداخت و اعمال خودکار محدودیت‌ها در فاز بعد فعال می‌شود.");
-    const addBtn = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "پلن جدید" });
-    addBtn.addEventListener("click", () => openPlanEditor(null, section));
-    top.append(el("div", { class: "ov-actions" }, [addBtn]));
-    section.append(top);
-
-    const plans = readPlans();
-    if (!plans.length) section.append(card("پلن‌ای وجود ندارد", "اولین پلن را بساز."));
-    plans.forEach((plan, index) => {
-      const c = el("article", { class: `ocard plan-card${plan.archived ? " archived" : ""}` });
-      const head = el("div", { class: "plan-head" });
-      head.append(el("h2", { text: plan.name }));
-      head.append(tag(plan.archived ? "بایگانی" : plan.visibility === "public" ? "عمومی" : "پنهان", plan.archived ? "bad" : "ok"));
-      c.append(head);
-      const kv = el("ul", { class: "okv" });
-      const rows = [
-        ["قیمت", `${plan.priceFa || "—"}${plan.priceEn ? ` / ${plan.priceEn}` : ""}`],
-        ["دوره", plan.interval || "—"],
-        ["اتاق", String(plan.rooms ?? "—")],
-        ["اعضا", String(plan.members ?? "—")],
-        ["فضای ذخیره", plan.storageMb ? `${plan.storageMb} MB` : "نامحدود"],
-        ["مزایا", (plan.benefits || []).join("، ") || "—"]
-      ];
-      for (const [k, v] of rows) {
-        const li = el("li");
-        li.append(el("span", { text: k }), el("b", { text: v }));
-        kv.append(li);
-      }
-      c.append(kv);
-      const actions = el("div", { class: "ov-actions" });
-      actions.append(
-        miniBtn("ویرایش", () => openPlanEditor(plan, section)),
-        miniBtn("تکثیر", () => duplicatePlan(plan, section)),
-        miniBtn(plan.archived ? "خروج از بایگانی" : "بایگانی", () => toggleArchive(plan, section)),
-        miniBtn("بالا", () => movePlan(index, -1, section)),
-        miniBtn("پایین", () => movePlan(index, 1, section)),
-        miniBtn("حذف", () => deletePlan(plan, section), true)
-      );
-      c.append(actions);
-      section.append(c);
+    const plans = draftPlans();
+    const cur = currencyNow();
+    const head = card("سازندهٔ پلن", "همهٔ پلن‌ها داده‌ای‌اند: ساخت، ویرایش، کپی، آرشیو، ترتیب و قیمت‌گذاری کامل بدون تغییر کد. تغییرات در پیش‌نویس ذخیره و با انتشار روی سایت اعمال می‌شوند.");
+    const bar = el("div", { class: "ow-toolbar pb-toolbar" });
+    const add = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "پلن جدید" });
+    add.addEventListener("click", () => openPlanEditor(null, section));
+    const chips = el("div", { class: "ow-chips" });
+    for (const [id, label] of [["all", "همه"], ["published", "منتشرشده"], ["draft", "پیش‌نویس"], ["disabled", "غیرفعال"], ["archived", "بایگانی"], ["deleted", "حذف‌شده"]]) {
+      const chip = el("button", { class: `ow-chip${planFilter.status === id ? " active" : ""}`, type: "button", text: label });
+      chip.addEventListener("click", () => { planFilter.status = id; renderers.plans(section); });
+      chips.append(chip);
+    }
+    const legacy = legacyPlans();
+    const importBtn = el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "واردکردن پلن‌های قدیمی" });
+    importBtn.classList.toggle("hidden", !legacy.length || plans.length > 0);
+    importBtn.addEventListener("click", () => {
+      if (!legacy.length) return;
+      const merged = [...plans];
+      legacy.forEach((raw, i) => {
+        const migrated = migrateLegacyPlan(raw, merged.length + i);
+        if (!merged.some((p) => p.id === migrated.id || p.slug === migrated.slug)) merged.push(migrated);
+      });
+      persistPlans(merged, "واردکردن پلن‌های قدیمی", `${legacy.length} پلن`);
+      toast("پلن‌های قدیمی منتقل شدند؛ دادهٔ قبلی هم دست‌نخورده ماند.", "success");
+      renderers.plans(section);
     });
-    section.append(honesty("پلن‌ها در دادهٔ محلی کنسول ذخیره می‌شوند و هنوز روی سایت اعمال نمی‌شوند. پلن پریمیومِ واقعیِ سایت در صفحهٔ قیمت‌گذاری از تنظیمات منتشرشده می‌آید."));
+    bar.append(add, chips, importBtn);
+    head.append(bar);
+
+    const stats = el("div", { class: "stat-grid ow-mt" });
+    const publishedCount = plans.filter((p) => p.status === "published" && p.visibility === "public").length;
+    const promoCount = plans.filter((p) => {
+      const cycle = ["monthly", "yearly", "lifetime"].find((c) => Number(p.prices[c]) > 0) || "custom";
+      return p.status !== "deleted" && effectivePrice(p, cycle).discountPercent > 0;
+    }).length;
+    for (const [label, value] of [["کل پلن‌ها", plans.filter((p) => p.status !== "deleted").length], ["منتشرشده در سایت", publishedCount], ["تخفیف فعال", promoCount]]) {
+      const stat = el("article", { class: "ostat" });
+      stat.append(el("span", { class: "ostat-lbl", text: label }), el("strong", { text: String(value) }));
+      stats.append(stat);
+    }
+    head.append(stats);
+    section.append(head);
+
+    const visible = plans.filter((p) => (planFilter.status === "all" ? p.status !== "deleted" : p.status === planFilter.status));
+    const listCard = el("article", { class: "ocard" });
+    listCard.append(el("h2", { text: "فهرست پلن‌ها" }));
+    const { wrap: tbl, tbody } = table(["ترتیب", "پلن", "وضعیت", "قیمت", "دسترسی", "نمایش", "اقدام"], []);
+    if (!visible.length) emptyRow(tbody, 7, plans.length ? "پلنی با این فیلتر نیست." : "هنوز پلنی ساخته نشده؛ با «پلن جدید» شروع کن.");
+
+    const priceSummary = (plan) => {
+      const bits = [];
+      if (Number(plan.prices.monthly) > 0) bits.push(`${formatMoney(plan.prices.monthly, cur)} / ماه`);
+      if (Number(plan.prices.yearly) > 0) bits.push(`${formatMoney(plan.prices.yearly, cur)} / سال`);
+      if (Number(plan.prices.lifetime) > 0) bits.push(`${formatMoney(plan.prices.lifetime, cur)} مادام‌العمر`);
+      if (Number(plan.prices.custom?.amount) > 0) bits.push(`${formatMoney(plan.prices.custom.amount, cur)} / ${plan.prices.custom.days || 30} روز`);
+      if (!bits.length) return "رایگان";
+      const cycle = Number(plan.prices.monthly) > 0 ? "monthly" : Number(plan.prices.yearly) > 0 ? "yearly" : Number(plan.prices.lifetime) > 0 ? "lifetime" : "custom";
+      const eff = effectivePrice(plan, cycle);
+      return eff.discountPercent ? `${bits[0]} · ٪${eff.discountPercent.toLocaleString("fa-IR")} تخفیف` : bits[0];
+    };
+
+    for (const plan of visible) {
+      const tr = el("tr");
+      tr.append(el("td", { text: String(plan.order + 1) }));
+      const nameTd = el("td");
+      nameTd.append(el("span", { class: "pb-name", text: `${plan.icon ? `${plan.icon} ` : ""}${plan.name}` }), el("small", { text: `/${plan.slug}` }));
+      const flags = [plan.popular ? "پرفروش" : "", plan.recommended ? "پیشنهادی" : "", plan.badge].filter(Boolean);
+      if (flags.length) nameTd.append(el("small", { class: "pb-flags", text: flags.join(" · ") }));
+      tr.append(nameTd);
+      const stTd = el("td");
+      stTd.append(statusTag(plan.status));
+      tr.append(stTd);
+      tr.append(el("td", { text: priceSummary(plan) }));
+      tr.append(el("td", { text: `${summarizeEntitlements({ ...FREE_ENTITLEMENTS, ...plan.entitlements }).length} مورد` }));
+      tr.append(el("td", { text: plan.status === "published" && plan.visibility === "public" ? "عمومی" : "پنهان" }));
+      const act = el("td");
+      if (plan.status === "deleted") {
+        act.append(miniBtn("بازگردانی", () => {
+          persistPlans(draftPlans().map((p) => (p.id === plan.id ? { ...p, status: "draft" } : p)), "بازگردانی پلن حذف‌شده", plan.name);
+          renderers.plans(section);
+          toast("پلن به پیش‌نویس بازگشت.");
+        }));
+      } else {
+        act.append(miniBtn("ویرایش", () => openPlanEditor(plan, section)));
+        act.append(miniBtn("کپی", () => clonePlan(plan, section)));
+        act.append(miniBtn(plan.status === "published" && plan.visibility === "public" ? "پنهان" : "انتشار", () => togglePublishPlan(plan, section)));
+        act.append(miniBtn("↑", () => movePlan(plan, -1, section)));
+        act.append(miniBtn("↓", () => movePlan(plan, 1, section)));
+        act.append(miniBtn(plan.status === "archived" ? "بازگردانی" : "آرشیو", () => {
+          persistPlans(draftPlans().map((p) => (p.id === plan.id ? { ...p, status: plan.status === "archived" ? "draft" : "archived" } : p)), plan.status === "archived" ? "خروج از بایگانی" : "بایگانی پلن", plan.name);
+          renderers.plans(section);
+        }));
+        act.append(miniBtn("حذف ایمن", () => {
+          const subsCount = readBilling().subscriptions.filter((s) => s.planId === plan.id && ["active", "trialing", "past_due", "grace"].includes(s.status)).length;
+          const msg = subsCount
+            ? `پلن «${plan.name}» حذف ایمن شود؟ ${subsCount} اشتراک فعال به آن ارجاع می‌دهد؛ اشتراک‌ها، پرداخت‌ها و فاکتورها دست‌نخورده می‌مانند.`
+            : `پلن «${plan.name}» به وضعیت «حذف‌شده» منتقل شود؟ سابقه حفظ می‌شود و با بازگردانی قابل بازیابی است.`;
+          if (!confirm(msg)) return;
+          persistPlans(draftPlans().map((p) => (p.id === plan.id ? { ...p, status: "deleted" } : p)), "حذف ایمن پلن", plan.name);
+          renderers.plans(section);
+          toast("پلن حذف ایمن شد؛ سابقه و مالی حفظ شدند.");
+        }, true));
+      }
+      tr.append(act);
+      tbody.append(tr);
+    }
+    listCard.append(tbl);
+    section.append(listCard);
+    section.append(honesty("حذف پلن هیچ رکورد مالی را پاک نمی‌کند و اشتراک‌های موجود معتبر می‌مانند. پلن‌های منتشرشده و عمومی، صفحهٔ قیمت سایت را به‌صورت زنده می‌سازند."));
   };
 
   function openPlanEditor(plan, section) {
     const isNew = !plan;
-    const base = plan || { id: `plan_${Date.now().toString(36)}`, name: "", priceFa: "", priceEn: "", interval: "ماهانه", visibility: "hidden", rooms: 2, members: 10, storageMb: 1024, benefits: [], archived: false, createdAt: Date.now() };
-    const form = el("div", { class: "form-grid" });
-    const fields = [
-      ["نام پلن", "name", "text"],
-      ["قیمت (فارسی)", "priceFa", "text"],
-      ["Price (English)", "priceEn", "text"],
-      ["دوره", "interval", "text"],
-      ["سقف اتاق", "rooms", "number"],
-      ["سقف اعضا", "members", "number"],
-      ["فضای ذخیره (MB)", "storageMb", "number"]
-    ];
-    const inputs = {};
-    for (const [label, key, type] of fields) {
-      const f = el("label", { class: "ofield" });
-      f.append(el("span", { text: label }));
-      const inp = el("input", { type });
-      inp.value = base[key] ?? "";
-      inputs[key] = inp;
-      f.append(inp);
-      form.append(f);
-    }
-    const visField = el("label", { class: "ofield" });
-    visField.append(el("span", { text: "نمایش" }));
-    const vis = el("select");
-    vis.append(el("option", { value: "public", text: "عمومی" }), el("option", { value: "hidden", text: "پنهان" }));
-    vis.value = base.visibility;
-    visField.append(vis);
-    form.append(visField);
-    const benefitsField = el("label", { class: "ofield span2" });
-    benefitsField.append(el("span", { text: "مزایا (هر خط یک مزیت)" }));
-    const benefits = el("textarea", { rows: "4" });
-    benefits.value = (base.benefits || []).join("\n");
-    benefitsField.append(benefits);
-    form.append(benefitsField);
-    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیره" });
+    const base = plan ? normalizePlan(plan) : emptyPlan();
+    const cur = currencyNow();
+    const body = el("div", { class: "pb-form" });
+    const block = (title, node) => {
+      const box = el("div", { class: "pb-sec" });
+      box.append(el("h4", { class: "pb-sec-lbl", text: title }), node);
+      return box;
+    };
+    const grid = (children) => {
+      const g = el("div", { class: "form-grid" });
+      for (const child of children) if (child) g.append(child);
+      return g;
+    };
+
+    const nameIn = el("input", { type: "text" });
+    nameIn.value = base.name;
+    const slugIn = el("input", { type: "text", dir: "ltr" });
+    slugIn.value = base.slug;
+    let slugTouched = !isNew;
+    nameIn.addEventListener("input", () => { if (!slugTouched) slugIn.value = slugify(nameIn.value); });
+    slugIn.addEventListener("input", () => { slugTouched = true; });
+    const descIn = el("textarea", { rows: "2" });
+    descIn.value = base.description;
+    const iconIn = el("input", { type: "text" });
+    iconIn.value = base.icon;
+    const colorIn = el("input", { type: "color" });
+    colorIn.value = /^#[0-9a-f]{6}$/i.test(base.color) ? base.color : "#7c5cff";
+    const badgeIn = el("input", { type: "text" });
+    badgeIn.value = base.badge;
+    body.append(block("هویت پلن", grid([
+      fieldRow("نام پلن", nameIn),
+      fieldRow("شناسهٔ یکتا (slug)", slugIn),
+      fieldRow("شناسه در آدرس‌ها؛ فقط انگلیسی، عدد و خط تیره.", descIn, "span2"),
+      fieldRow("آیکون", iconIn),
+      fieldRow("رنگ", colorIn),
+      fieldRow("برچسب ویژه", badgeIn)
+    ])));
+
+    const monthly = numberInput(base.prices.monthly);
+    const yearly = numberInput(base.prices.yearly);
+    const lifetime = numberInput(base.prices.lifetime);
+    const customLabel = el("input", { type: "text" });
+    customLabel.value = base.prices.custom?.label || "";
+    const customDays = numberInput(base.prices.custom?.days || 30, { min: "1" });
+    const customAmount = numberInput(base.prices.custom?.amount);
+    const setupFee = numberInput(base.setupFee);
+    const trialDays = numberInput(base.trialDays);
+    const graceDays = numberInput(base.graceDays);
+    const originalPrice = numberInput(base.originalPrice);
+    const discountPercent = numberInput(base.discountPercent, { max: "100" });
+    const promoPrice = numberInput(base.promoPrice);
+    const promoStart = dateInput(base.promoStart);
+    const promoEnd = dateInput(base.promoEnd);
+    body.append(block(`قیمت‌گذاری (${CURRENCIES[cur].fa})`, grid([
+      fieldRow("ماهانه", monthly),
+      fieldRow("سالانه", yearly),
+      fieldRow("مادام‌العمر", lifetime),
+      fieldRow("قیمت دورهٔ سفارشی", customAmount),
+      fieldRow("برچسب دورهٔ سفارشی", customLabel),
+      fieldRow("طول دورهٔ سفارشی (روز)", customDays, "span2"),
+      fieldRow("هزینهٔ راه‌اندازی", setupFee),
+      fieldRow("روزهای آزمایشی", trialDays),
+      fieldRow("روزهای مهلت پرداخت", graceDays),
+      fieldRow("قیمت پیش از تخفیف", originalPrice),
+      fieldRow("درصد تخفیف", discountPercent),
+      fieldRow("قیمت تخفیفی", promoPrice),
+      fieldRow("شروع تخفیف", promoStart),
+      fieldRow("پایان تخفیف", promoEnd)
+    ])));
+
+    const statusSel = selectInput(Object.entries(PLAN_STATUSES).filter(([id]) => id !== "deleted").map(([value, label]) => ({ value, label })), base.status === "deleted" ? "draft" : base.status);
+    const visSel = selectInput([{ value: "public", label: "عمومی (نمایش در صفحهٔ قیمت)" }, { value: "hidden", label: "پنهان" }], base.visibility);
+    const ctaIn = el("input", { type: "url", dir: "ltr" });
+    ctaIn.value = base.ctaUrl;
+    const popularCb = el("input", { type: "checkbox" });
+    popularCb.checked = base.popular;
+    const recCb = el("input", { type: "checkbox" });
+    recCb.checked = base.recommended;
+    const popWrap = el("label", { class: "switch-line" });
+    popWrap.append(popularCb, el("span", { text: "پرفروش" }));
+    const recWrap = el("label", { class: "switch-line" });
+    recWrap.append(recCb, el("span", { text: "پیشنهادی" }));
+    const toggles = el("div", { class: "toggle-grid" });
+    toggles.append(popWrap, recWrap);
+    body.append(block("نمایش و انتشار", grid([
+      fieldRow("وضعیت", statusSel),
+      fieldRow("نمایش عمومی", visSel),
+      fieldRow("لینک خرید اختصاصی", ctaIn, "span2")
+    ])));
+    body.append(toggles);
+
+    const editor = entitlementEditor({ ...FREE_ENTITLEMENTS, ...base.entitlements });
+    body.append(block("دسترسی‌ها و سهمیه‌ها", editor.node));
+
+    const errNode = el("p", { class: "pb-err" });
+    body.append(errNode);
+
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیرهٔ پلن" });
     save.addEventListener("click", () => {
-      const name = inputs.name.value.trim();
-      if (!name) return toast("نام پلن لازم است.", "error");
-      const next = {
+      const n = (input, max = 1e12) => Math.min(max, Math.max(0, Number(input.value) || 0));
+      const next = normalizePlan({
         ...base,
-        name,
-        priceFa: inputs.priceFa.value.trim(),
-        priceEn: inputs.priceEn.value.trim(),
-        interval: inputs.interval.value.trim(),
-        rooms: Math.max(0, Number(inputs.rooms.value) || 0),
-        members: Math.max(0, Number(inputs.members.value) || 0),
-        storageMb: Math.max(0, Number(inputs.storageMb.value) || 0),
-        visibility: vis.value,
-        benefits: benefits.value.split("\n").map((x) => x.trim()).filter(Boolean)
-      };
-      const list = readPlans().slice();
-      const idx = list.findIndex((p) => p.id === next.id);
-      if (idx >= 0) list[idx] = next; else list.push(next);
-      writeData({ plans: list });
-      logAudit({ kind: "plan", action: isNew ? "ساخت پلن" : "ویرایش پلن", target: name });
+        name: nameIn.value.trim(),
+        slug: slugIn.value.trim() || slugify(nameIn.value),
+        description: descIn.value.trim(),
+        icon: iconIn.value.trim() || "✦",
+        color: colorIn.value,
+        badge: badgeIn.value.trim(),
+        status: statusSel.value,
+        visibility: visSel.value,
+        ctaUrl: ctaIn.value.trim(),
+        popular: popularCb.checked,
+        recommended: recCb.checked,
+        prices: {
+          monthly: n(monthly),
+          yearly: n(yearly),
+          lifetime: n(lifetime),
+          custom: { label: customLabel.value.trim(), days: Math.max(1, n(customDays)), amount: n(customAmount) }
+        },
+        trialDays: n(trialDays),
+        graceDays: n(graceDays),
+        setupFee: n(setupFee),
+        originalPrice: n(originalPrice),
+        discountPercent: n(discountPercent, 100),
+        promoPrice: n(promoPrice),
+        promoStart: promoStart.value,
+        promoEnd: promoEnd.value,
+        entitlements: editor.read(),
+        updatedAt: Date.now()
+      });
+      const errors = [];
+      if (next.promoStart && next.promoEnd && Date.parse(next.promoStart) > Date.parse(next.promoEnd)) errors.push("پایان تخفیف باید بعد از شروع آن باشد.");
+      if (next.ctaUrl) {
+        try { const u = new URL(next.ctaUrl); if (!/^https?:$/.test(u.protocol)) throw 0; } catch { errors.push("لینک خرید باید با http یا https شروع شود."); }
+      }
+      const existing = draftPlans();
+      const idx = existing.findIndex((p) => p.id === base.id);
+      const list = idx >= 0 ? existing.map((p) => (p.id === base.id ? next : p)) : [...existing, next];
+      const check = validatePlan(next, list.map((p, i) => normalizePlan(p, i)));
+      errors.push(...check.errors);
+      if (errors.length) {
+        errNode.textContent = errors.join(" ");
+        toast(errors[0], "error");
+        return;
+      }
+      persistPlans(list, isNew ? "ساخت پلن" : "ویرایش پلن", next.name);
       closeModal();
       renderers.plans(section);
-      toast("پلن ذخیره شد.", "success");
+      toast(isNew ? "پلن ساخته شد." : "پلن ذخیره شد.", "success");
     });
-    showModal(isNew ? "پلن جدید" : `ویرایش ${base.name}`, form, [save]);
+    showModal(isNew ? "پلن جدید" : `ویرایش ${base.name}`, body, [save]);
   }
-  function duplicatePlan(plan, section) {
-    const copy = { ...plan, id: `plan_${Date.now().toString(36)}`, name: `${plan.name} (کپی)`, createdAt: Date.now() };
-    writeData({ plans: [...readPlans(), copy] });
-    logAudit({ kind: "plan", action: "تکثیر پلن", target: plan.name });
+  function clonePlan(plan, section) {
+    const copy = normalizePlan({
+      ...plan,
+      id: uid("plan"),
+      name: `${plan.name} (کپی)`,
+      slug: `${plan.slug}-copy-${Date.now().toString(36).slice(-4)}`,
+      status: "draft",
+      visibility: "hidden",
+      popular: false,
+      recommended: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }, draftPlans().length);
+    persistPlans([...draftPlans(), copy], "کپی پلن", plan.name);
     renderers.plans(section);
+    toast("پلن کپی شد؛ نسخهٔ جدید پیش‌نویس و پنهان است.", "success");
   }
-  function toggleArchive(plan, section) {
-    writeData({ plans: readPlans().map((p) => (p.id === plan.id ? { ...p, archived: !p.archived } : p)) });
-    logAudit({ kind: "plan", action: plan.archived ? "خروج از بایگانی" : "بایگانی پلن", target: plan.name });
+  function togglePublishPlan(plan, section) {
+    const publish = !(plan.status === "published" && plan.visibility === "public");
+    persistPlans(draftPlans().map((p) => (p.id === plan.id ? { ...p, status: publish ? "published" : p.status, visibility: publish ? "public" : "hidden" } : p)), publish ? "انتشار پلن" : "پنهان‌سازی پلن", plan.name);
     renderers.plans(section);
+    toast(publish ? "پلن منتشر شد؛ در صفحهٔ قیمت نمایش داده می‌شود." : "پلن از صفحهٔ قیمت پنهان شد.");
   }
-  function movePlan(index, dir, section) {
-    const list = readPlans().slice();
+  function movePlan(plan, dir, section) {
+    const list = draftPlans();
+    const index = list.findIndex((p) => p.id === plan.id);
     const target = index + dir;
-    if (target < 0 || target >= list.length) return;
+    if (index < 0 || target < 0 || target >= list.length) return;
     [list[index], list[target]] = [list[target], list[index]];
-    writeData({ plans: list });
+    persistPlans(list, "جابه‌جایی پلن", plan.name);
     renderers.plans(section);
   }
-  function deletePlan(plan, section) {
-    if (!confirm(`پلن «${plan.name}» برای همیشه حذف شود؟`)) return;
-    writeData({ plans: readPlans().filter((p) => p.id !== plan.id) });
-    logAudit({ kind: "plan", action: "حذف پلن", target: plan.name });
-    renderers.plans(section);
-    toast("پلن حذف شد.");
+
+  /* ----- entitlement engine ----- */
+  let entPlanId = "";
+  renderers.entitlements = (section) => {
+    section.replaceChildren();
+    const plans = draftPlans().filter((p) => p.status !== "deleted");
+    const wrap = card("دسترسی‌های پلن", "برای هر پلن قابلیت‌ها، سهمیه‌ها، نرخ‌ها و هم‌زمانی را تعریف کن. قابلیت خاموش‌شدهٔ سراسری همیشه بر پلن اولویت دارد.");
+    if (!plans.length) {
+      wrap.append(el("p", { class: "ohint", text: "اول یک پلن بساز تا دسترسی‌هایش را تعریف کنی." }));
+      const go = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "سازندهٔ پلن" });
+      go.addEventListener("click", () => ctx.showView("plans"));
+      wrap.append(el("div", { class: "ov-actions ow-mt" }, [go]));
+      section.append(wrap);
+      return;
+    }
+    const plan = livePlan(entPlanId) || plans[0];
+    entPlanId = plan.id;
+    const bar = el("div", { class: "ow-toolbar" });
+    bar.append(el("span", { class: "hint-s", text: "پلن:" }));
+    const sel = selectInput(plans.map((p) => ({ value: p.id, label: `${p.name} — ${PLAN_STATUSES[p.status]}${p.visibility === "public" ? "" : " (پنهان)"}` })), plan.id);
+    sel.addEventListener("change", () => { entPlanId = sel.value; renderers.entitlements(section); });
+    bar.append(sel);
+    wrap.append(bar);
+
+    const editor = entitlementEditor({ ...FREE_ENTITLEMENTS, ...plan.entitlements });
+    wrap.append(editor.node);
+    const actions = el("div", { class: "ov-actions ow-mt" });
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیرهٔ دسترسی‌ها" });
+    save.addEventListener("click", () => {
+      const values = editor.read();
+      persistPlans(draftPlans().map((p) => (p.id === plan.id ? { ...p, entitlements: values } : p)), "ویرایش دسترسی‌های پلن", plan.name);
+      renderers.entitlements(section);
+      toast("دسترسی‌های پلن ذخیره شد.", "success");
+    });
+    const reset = el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "بازگشت به پیش‌فرض پایه" });
+    reset.addEventListener("click", () => {
+      if (!confirm(`دسترسی‌های پلن «${plan.name}» به مقادیر پایه برگردد؟`)) return;
+      persistPlans(draftPlans().map((p) => (p.id === plan.id ? { ...p, entitlements: { ...FREE_ENTITLEMENTS } } : p)), "بازنشانی دسترسی‌های پلن", plan.name);
+      renderers.entitlements(section);
+    });
+    actions.append(save, reset);
+    wrap.append(actions);
+    section.append(wrap);
+
+    const resolved = resolveEntitlements({ plan, featureFlags: ctx.getDraft()?.features || {} });
+    const resCard = card("نتیجهٔ اعمال مرکزی", "ترکیب پلن، پرچم‌های سراسری و بازنویسی‌ها. تصمیم نهایی یک‌جا گرفته می‌شود، نه در رابط کاربری.");
+    const { wrap: tbl, tbody } = table(["دسترسی", "مقدار مؤثر", "وضعیت"], []);
+    for (const meta of ENTITLEMENTS) {
+      const value = resolved[meta.id];
+      const active = meta.type === "boolean" ? Boolean(value) : value === UNLIMITED || Number(value) > 0;
+      const blocked = meta.flag && ctx.getDraft()?.features?.[meta.flag] === false;
+      const tr = el("tr");
+      tr.append(el("td", { text: meta.label }));
+      tr.append(el("td", { text: meta.type === "boolean" ? (active ? "فعال" : "غیرفعال") : formatLimit(value, meta.unit) }));
+      const st = el("td");
+      st.append(tag(blocked ? "قفل سراسری" : active ? "مجاز" : "بسته", blocked ? "bad" : active ? "ok" : ""));
+      tr.append(st);
+      tbody.append(tr);
+    }
+    resCard.append(tbl);
+    section.append(resCard);
+    section.append(honesty("این موتور تصمیم مستقل از DOM نوشته شده و همان تابع پس از اتصال بک‌اند برای هر حساب اجرا می‌شود؛ محدودیت فقط در رابط کاربری اعمال نمی‌شود."));
+  };
+
+  /* ----- subscriptions ----- */
+  const readSubs = () => readBilling().subscriptions.slice();
+  renderers.subscriptions = (section) => {
+    section.replaceChildren();
+    const subs = readSubs();
+    const plans = draftPlans().filter((p) => p.status !== "deleted");
+    const wrap = card("اشتراک‌ها", "چرخهٔ کامل عمر اشتراک با تاریخچهٔ تغییرناپذیر. هیچ رکورد مالی حذف نمی‌شود.");
+    const bar = el("div", { class: "ow-toolbar" });
+    const add = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "اشتراک جدید" });
+    add.disabled = !plans.length;
+    add.addEventListener("click", () => openSubCreate(section));
+    const sweep = el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "بررسی انقضا" });
+    sweep.addEventListener("click", () => sweepExpired(section));
+    bar.append(add, sweep);
+    if (!plans.length) bar.append(el("span", { class: "hint-s", text: "برای ساخت اشتراک، اول یک پلن بساز." }));
+    wrap.append(bar);
+    const { wrap: tbl, tbody } = table(["کاربر", "پلن", "دوره", "وضعیت", "مبلغ", "پایان دوره", "اقدام"], []);
+    if (!subs.length) emptyRow(tbody, 7, "هنوز اشتراکی ثبت نشده است.");
+    for (const sub of subs) {
+      const tr = el("tr");
+      const userTd = el("td");
+      userTd.append(el("span", { text: sub.userKey || "—" }), el("small", { text: sub.id }));
+      tr.append(userTd);
+      tr.append(el("td", { text: sub.planName || livePlan(sub.planId)?.name || "—" }));
+      tr.append(el("td", { text: cycleLabel(sub.cycle) }));
+      const stTd = el("td");
+      stTd.append(tag(SUB_STATUSES[sub.status] || sub.status, ["active", "trialing"].includes(sub.status) ? "ok" : ["canceled", "expired"].includes(sub.status) ? "bad" : ""));
+      const alerts = subscriptionAlerts(sub);
+      if (alerts.length) stTd.append(el("small", { class: "pb-flags", text: alerts.join(" ") }));
+      tr.append(stTd);
+      tr.append(el("td", { text: formatMoney(sub.amount, currencyNow()) }));
+      tr.append(el("td", { text: sub.cycle === "lifetime" ? "مادام‌العمر" : dateFa(sub.currentPeriodEnd) }));
+      const act = el("td");
+      act.append(miniBtn("اقدام‌ها", () => openSubActions(sub, section)));
+      act.append(miniBtn("تاریخچه", () => showSubHistory(sub)));
+      act.append(miniBtn("پرداخت", () => openSubPayment(sub, section)));
+      tr.append(act);
+      tbody.append(tr);
+    }
+    wrap.append(tbl);
+    section.append(wrap);
+    section.append(honesty("وضعیت‌ها فقط با اقدام صریح یا «بررسی انقضا» تغییر می‌کنند. فعال‌سازی خودکار پس از پرداخت به وب‌هوک سرور نیاز دارد."));
+  };
+
+  function openSubCreate(section) {
+    const plans = draftPlans().filter((p) => p.status !== "deleted");
+    if (!plans.length) return;
+    const body = el("div", { class: "form-grid" });
+    const userIn = el("input", { type: "text" });
+    userIn.placeholder = "نام کاربری یا شناسهٔ حساب";
+    const planSel = selectInput(plans.map((p) => ({ value: p.id, label: `${p.name} — ${PLAN_STATUSES[p.status]}` })), plans[0].id);
+    const cycleSel = selectInput(BILLING_CYCLES.map((c) => ({ value: c.id, label: c.label })), "monthly");
+    const noteIn = el("input", { type: "text" });
+    body.append(fieldRow("کاربر", userIn), fieldRow("پلن", planSel), fieldRow("دوره", cycleSel), fieldRow("یادداشت", noteIn, "span2"));
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ساخت اشتراک" });
+    save.addEventListener("click", () => {
+      const userKey = userIn.value.trim();
+      if (!userKey) return toast("نام کاربر لازم است.", "error");
+      const plan = plans.find((p) => p.id === planSel.value);
+      const sub = createSubscription({ userKey, plan, cycle: cycleSel.value });
+      if (noteIn.value.trim()) sub.history[0].note = noteIn.value.trim().slice(0, 120);
+      writeBilling({ subscriptions: [sub, ...readSubs()] });
+      logBillingEvent({ kind: "subscription", action: `ایجاد اشتراک ${plan.name}`, subId: sub.id, userKey });
+      logAudit({ kind: "plan", action: "ایجاد اشتراک", target: userKey });
+      closeModal();
+      renderers.subscriptions(section);
+      toast("اشتراک ساخته شد.", "success");
+    });
+    showModal("اشتراک جدید", body, [save]);
   }
+
+  function openSubActions(sub, section) {
+    const plans = draftPlans().filter((p) => p.status !== "deleted" && p.id !== sub.planId);
+    const body = el("div");
+    const info = el("p", { class: "ohint" });
+    info.textContent = `${sub.userKey} · ${sub.planName} · ${SUB_STATUSES[sub.status] || sub.status} · پایان: ${sub.cycle === "lifetime" ? "مادام‌العمر" : dateFa(sub.currentPeriodEnd)}`;
+    body.append(info);
+    const form = el("div", { class: "form-grid ow-mt" });
+    const noteIn = el("input", { type: "text" });
+    const planSel = plans.length ? selectInput(plans.map((p) => ({ value: p.id, label: p.name })), plans[0].id) : null;
+    const graceIn = numberInput(3, { min: "0" });
+    form.append(fieldRow("یادداشت اقدام", noteIn, "span2"));
+    if (planSel) form.append(fieldRow("پلن مقصد (ارتقا/تنزل)", planSel));
+    form.append(fieldRow("روزهای مهلت", graceIn));
+    body.append(form);
+    const details = el("details", { class: "pb-details ow-mt" });
+    details.append(el("summary", { text: "بازنویسی دسترسی‌ها (برای اقدام override)" }));
+    const overrideEditor = entitlementEditor({ ...FREE_ENTITLEMENTS, ...(sub.overrides || {}) });
+    details.append(overrideEditor.node);
+    body.append(details);
+
+    const grid = el("div", { class: "ov-actions ow-mt" });
+    for (const [action, meta] of Object.entries(SUB_ACTIONS)) {
+      if (!meta.from.includes(sub.status)) continue;
+      const danger = action === "cancel" || action === "expire";
+      const btn = el("button", { class: `btn ${danger ? "btn-ghost ow-danger" : "btn-secondary"} btn-sm`, type: "button", text: meta.label });
+      btn.addEventListener("click", () => {
+        if (danger && !confirm(`«${meta.label}» برای اشتراک ${sub.userKey} انجام شود؟ تاریخچه حفظ می‌شود.`)) return;
+        const opts = { actor: "owner", note: noteIn.value.trim() };
+        if (["upgrade", "downgrade"].includes(action)) {
+          if (!planSel) return toast("پلن مقصدی وجود ندارد؛ اول پلن دیگری بساز.", "error");
+          opts.plan = draftPlans().find((p) => p.id === planSel.value);
+        }
+        if (action === "start_grace") opts.graceDays = Number(graceIn.value) || 0;
+        if (action === "override") opts.overrides = overrideEditor.read();
+        const result = applySubscriptionAction(sub, action, opts);
+        if (!result.ok) return toast(result.reason, "error");
+        writeBilling({ subscriptions: readSubs().map((s) => (s.id === sub.id ? result.subscription : s)) });
+        logBillingEvent({ kind: "subscription", action: `${meta.label} — ${sub.userKey}`, subId: sub.id, userKey: sub.userKey, from: sub.status, to: result.subscription.status });
+        logAudit({ kind: "plan", action: `اشتراک: ${meta.label}`, target: sub.userKey });
+        closeModal();
+        renderers.subscriptions(section);
+        toast(`${meta.label} انجام شد.`, "success");
+      });
+      grid.append(btn);
+    }
+    body.append(grid);
+    if (!grid.children.length) body.append(el("p", { class: "ohint", text: "این وضعیت اجازهٔ اقدام دیگری نمی‌دهد." }));
+    showModal(`اقدام‌های ${sub.userKey}`, body);
+  }
+
+  function showSubHistory(sub) {
+    const fresh = readSubs().find((s) => s.id === sub.id) || sub;
+    const body = el("div");
+    const { wrap: tbl, tbody } = table(["زمان", "اقدام", "از", "به", "یادداشت"], []);
+    for (const h of (fresh.history || []).slice().reverse()) {
+      const tr = el("tr");
+      tr.append(el("td", { text: new Date(h.at).toLocaleString("fa-IR") }));
+      tr.append(el("td", { text: SUB_ACTIONS[h.action]?.label || h.action }));
+      tr.append(el("td", { text: SUB_STATUSES[h.from] || h.from || "—" }));
+      tr.append(el("td", { text: SUB_STATUSES[h.to] || h.to || "—" }));
+      tr.append(el("td", { text: h.note || h.actor || "—" }));
+      tbody.append(tr);
+    }
+    if (!fresh.history?.length) emptyRow(tbody, 5, "تاریخچه‌ای ثبت نشده است.");
+    body.append(tbl);
+    body.append(el("h4", { class: "ow-h3", text: "پرداخت‌های مرتبط" }));
+    const pays = readBilling().payments.filter((p) => p.subscriptionId === fresh.id);
+    const pt = table(["فاکتور", "مبلغ", "وضعیت", "تاریخ"], []);
+    if (!pays.length) emptyRow(pt.tbody, 4, "پرداختی ثبت نشده است.");
+    for (const p of pays) {
+      const tr = el("tr");
+      tr.append(el("td", { text: p.invoiceNo }));
+      tr.append(el("td", { text: formatMoney(p.amount, p.currency || currencyNow()) }));
+      const st = el("td");
+      st.append(tag(PAYMENT_STATUSES[p.status] || p.status, p.status === "paid" ? "ok" : p.status === "failed" ? "bad" : ""));
+      tr.append(st);
+      tr.append(el("td", { text: new Date(p.paidAt || p.createdAt).toLocaleDateString("fa-IR") }));
+      pt.tbody.append(tr);
+    }
+    body.append(pt.wrap);
+    showModal(`تاریخچهٔ ${fresh.userKey}`, body);
+  }
+
+  function openSubPayment(sub, section) {
+    const body = el("div", { class: "form-grid" });
+    const amountIn = numberInput(sub.amount || 0);
+    const statusSel = selectInput(Object.entries(PAYMENT_STATUSES).map(([value, label]) => ({ value, label })), "paid");
+    const providerIds = Object.keys(readBilling().providers);
+    const providerSel = selectInput([{ value: "manual", label: "دستی (مالک)" }, ...providerIds.map((id) => ({ value: id, label: PROVIDERS.find((p) => p.id === id)?.label || id }))], "manual");
+    const noteIn = el("input", { type: "text" });
+    body.append(fieldRow("مبلغ", amountIn), fieldRow("وضعیت", statusSel), fieldRow("درگاه", providerSel), fieldRow("یادداشت", noteIn, "span2"));
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ثبت پرداخت" });
+    save.addEventListener("click", () => {
+      const payment = recordPayment({ subscription: sub, amount: Number(amountIn.value) || 0, currency: currencyNow(), provider: providerSel.value, status: statusSel.value, note: noteIn.value.trim() });
+      logAudit({ kind: "plan", action: `ثبت پرداخت ${payment.invoiceNo}`, target: sub.userKey });
+      closeModal();
+      renderers.subscriptions(section);
+      toast(`فاکتور ${payment.invoiceNo} ثبت شد.`, "success");
+    });
+    showModal("ثبت پرداخت", body, [save]);
+  }
+
+  function sweepExpired(section) {
+    const now = Date.now();
+    let changed = 0;
+    const list = readSubs().map((sub) => {
+      const overduePeriod = Number(sub.currentPeriodEnd) && now > Number(sub.currentPeriodEnd) && ["active", "trialing"].includes(sub.status);
+      const overdueGrace = sub.status === "grace" && Number(sub.graceEndsAt) && now > Number(sub.graceEndsAt);
+      if (!overduePeriod && !overdueGrace) return sub;
+      const result = applySubscriptionAction(sub, "expire", { actor: "owner", note: "بررسی خودکار انقضا" });
+      if (!result.ok) return sub;
+      changed += 1;
+      logBillingEvent({ kind: "subscription", action: `انقضای خودکار — ${sub.userKey}`, subId: sub.id, userKey: sub.userKey });
+      return result.subscription;
+    });
+    if (changed) writeBilling({ subscriptions: list });
+    logAudit({ kind: "plan", action: "بررسی انقضای اشتراک‌ها", target: `${changed} مورد` });
+    renderers.subscriptions(section);
+    toast(changed ? `${changed} اشتراک منقضی شد.` : "اشتراک منقضی‌ای نبود.");
+  }
+
+  /* ----- coupons ----- */
+  renderers.coupons = (section) => {
+    section.replaceChildren();
+    const bill = readBilling();
+    const coupons = bill.coupons.map((c) => normalizeCoupon(c)).sort((a, b) => b.createdAt - a.createdAt);
+    const plans = draftPlans();
+    const head = card("کدهای تخفیف", "کمپین درصدی و مبلغی با سقف استفاده، محدودیت پلن و بازهٔ زمانی. شمارش استفاده هنگام اتصال پرداخت سروری افزایش می‌یابد.");
+    const bar = el("div", { class: "ow-toolbar" });
+    const add = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "کد جدید" });
+    add.addEventListener("click", () => openCouponEditor(null, section));
+    bar.append(add);
+    head.append(bar);
+    section.append(head);
+
+    const listCard = el("article", { class: "ocard" });
+    listCard.append(el("h2", { text: "فهرست کدها" }));
+    const { wrap: tbl, tbody } = table(["کد", "نوع", "مقدار", "استفاده", "بازه", "پلن‌ها", "وضعیت", "اقدام"], []);
+    if (!coupons.length) emptyRow(tbody, 8, "کدی ساخته نشده است.");
+    for (const c of coupons) {
+      const tr = el("tr");
+      tr.append(el("td", { text: c.code }));
+      tr.append(el("td", { text: c.type === "percent" ? "درصدی" : "مبلغی" }));
+      tr.append(el("td", { text: c.type === "percent" ? `٪${c.value.toLocaleString("fa-IR")}` : formatMoney(c.value, currencyNow()) }));
+      tr.append(el("td", { text: c.maxUses ? `${c.usedCount} / ${c.maxUses}` : `${c.usedCount} / نامحدود` }));
+      tr.append(el("td", { text: `${c.startsAt ? dateFa(Date.parse(c.startsAt)) : "—"} تا ${c.expiresAt ? dateFa(Date.parse(c.expiresAt)) : "—"}` }));
+      tr.append(el("td", { text: c.planIds.length ? c.planIds.map((id) => plans.find((p) => p.id === id)?.name || id).join("، ") : "همه" }));
+      const st = el("td");
+      st.append(tag(c.status === "active" ? "فعال" : "غیرفعال", c.status === "active" ? "ok" : "bad"));
+      tr.append(st);
+      const act = el("td");
+      act.append(miniBtn("ویرایش", () => openCouponEditor(c, section)));
+      act.append(miniBtn(c.status === "active" ? "غیرفعال" : "فعال", () => {
+        writeBilling({ coupons: bill.coupons.map((x) => (normalizeCoupon(x).id === c.id ? { ...normalizeCoupon(x), status: c.status === "active" ? "disabled" : "active" } : x)) });
+        logBillingEvent({ kind: "coupon", action: `${c.status === "active" ? "غیرفعال‌سازی" : "فعال‌سازی"} کد ${c.code}` });
+        logAudit({ kind: "plan", action: c.status === "active" ? "غیرفعال‌سازی کد تخفیف" : "فعال‌سازی کد تخفیف", target: c.code });
+        renderers.coupons(section);
+      }));
+      tr.append(act);
+      tbody.append(tr);
+    }
+    listCard.append(tbl);
+    section.append(listCard);
+
+    const testCard = card("آزمایش کد", "اعتبارسنجی همان منطقی است که پرداخت استفاده می‌کند؛ بدون ثبت استفاده.");
+    const testGrid = el("div", { class: "form-grid" });
+    const codeSel = selectInput(coupons.length ? coupons.map((c) => ({ value: c.code, label: c.code })) : [{ value: "", label: "کدی نیست" }], coupons.length ? coupons[0].code : "");
+    const amountIn = numberInput(0);
+    const planSel = selectInput([{ value: "", label: "همهٔ پلن‌ها" }, ...plans.map((p) => ({ value: p.id, label: p.name }))], "");
+    testGrid.append(fieldRow("کد", codeSel), fieldRow("مبلغ سفارش", amountIn), fieldRow("پلن", planSel));
+    testCard.append(testGrid);
+    const out = el("p", { class: "ohint ow-mt" });
+    const run = el("button", { class: "btn btn-secondary btn-sm ow-mt", type: "button", text: "بررسی" });
+    run.addEventListener("click", () => {
+      const c = coupons.find((x) => x.code === codeSel.value);
+      const res = validateCoupon(c, { planId: planSel.value, amount: Number(amountIn.value) || 0 });
+      out.textContent = res.ok
+        ? `معتبر است؛ تخفیف ${formatMoney(res.discount, currencyNow())} و مبلغ نهایی ${formatMoney(res.final, currencyNow())}.`
+        : res.reason;
+    });
+    testCard.append(run, out);
+    section.append(testCard);
+  };
+
+  function openCouponEditor(coupon, section) {
+    const isNew = !coupon;
+    const base = normalizeCoupon(coupon || {});
+    const plans = draftPlans().filter((p) => p.status !== "deleted");
+    const body = el("div", { class: "form-grid" });
+    const codeIn = el("input", { type: "text", dir: "ltr" });
+    codeIn.value = base.code;
+    const typeSel = selectInput([{ value: "percent", label: "درصدی" }, { value: "fixed", label: "مبلغ ثابت" }], base.type);
+    const valueIn = numberInput(base.value);
+    const minIn = numberInput(base.minAmount);
+    const maxIn = numberInput(base.maxUses);
+    const perUserIn = numberInput(base.perUserLimit);
+    const startIn = dateInput(base.startsAt);
+    const endIn = dateInput(base.expiresAt);
+    const affiliateIn = el("input", { type: "text" });
+    affiliateIn.value = base.affiliate || "";
+    const statusSel = selectInput([{ value: "active", label: "فعال" }, { value: "disabled", label: "غیرفعال" }], base.status);
+    const planBox = el("div", { class: "pb-planpick span2" });
+    const checks = plans.map((p) => {
+      const l = el("label", { class: "ow-chip" });
+      const cb = el("input", { type: "checkbox" });
+      cb.checked = base.planIds.includes(p.id);
+      cb.value = p.id;
+      l.append(cb, el("span", { text: p.name }));
+      planBox.append(l);
+      return cb;
+    });
+    if (!plans.length) planBox.append(el("span", { class: "hint-s", text: "پلنی برای محدودسازی نیست؛ کد روی همه معتبر است." }));
+    body.append(
+      fieldRow("کد", codeIn), fieldRow("نوع تخفیف", typeSel), fieldRow("مقدار", valueIn),
+      fieldRow("حداقل مبلغ سفارش", minIn), fieldRow("سقف استفاده", maxIn), fieldRow("سقف هر کاربر", perUserIn),
+      fieldRow("شروع", startIn), fieldRow("پایان", endIn), fieldRow("کد معرف (اختیاری)", affiliateIn), fieldRow("وضعیت", statusSel),
+      fieldRow("محدود به پلن‌ها (خالی = همه)", planBox, "span2")
+    );
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیرهٔ کد" });
+    save.addEventListener("click", () => {
+      const code = codeIn.value.trim().toUpperCase();
+      if (!code) return toast("کد تخفیف لازم است.", "error");
+      if (typeSel.value === "percent" && Number(valueIn.value) > 100) return toast("درصد تخفیف حداکثر ۱۰۰ است.", "error");
+      const next = normalizeCoupon({
+        ...base,
+        code,
+        type: typeSel.value,
+        value: Math.max(0, Number(valueIn.value) || 0),
+        minAmount: Math.max(0, Number(minIn.value) || 0),
+        maxUses: Math.max(0, Number(maxIn.value) || 0),
+        perUserLimit: Math.max(0, Number(perUserIn.value) || 0),
+        startsAt: startIn.value,
+        expiresAt: endIn.value,
+        affiliate: affiliateIn.value.trim(),
+        status: statusSel.value,
+        planIds: checks.filter((cb) => cb.checked).map((cb) => cb.value)
+      });
+      const bill = readBilling();
+      if (bill.coupons.some((x) => normalizeCoupon(x).id !== next.id && normalizeCoupon(x).code === next.code)) return toast("این کد قبلاً ثبت شده است.", "error");
+      const exists = bill.coupons.some((x) => normalizeCoupon(x).id === next.id);
+      writeBilling({ coupons: exists ? bill.coupons.map((x) => (normalizeCoupon(x).id === next.id ? next : x)) : [next, ...bill.coupons] });
+      logBillingEvent({ kind: "coupon", action: isNew ? `ساخت کد ${next.code}` : `ویرایش کد ${next.code}` });
+      logAudit({ kind: "plan", action: isNew ? "ساخت کد تخفیف" : "ویرایش کد تخفیف", target: next.code });
+      closeModal();
+      renderers.coupons(section);
+      toast("کد تخفیف ذخیره شد.", "success");
+    });
+    showModal(isNew ? "کد تخفیف جدید" : `ویرایش ${base.code}`, body, [save]);
+  }
+
+  /* ----- financial dashboard ----- */
+  renderers.finance = (section) => {
+    section.replaceChildren();
+    const cur = currencyNow();
+    const billing = readBilling();
+    const m = computeMetrics({ plans: draftPlans(), billing });
+    const head = card("داشبورد مالی", "شاخص‌ها از اشتراک‌ها و پرداخت‌های ثبت‌شده در همین کنسول محاسبه می‌شوند؛ پس از اتصال بک‌اند همان فرمول روی دادهٔ سروری اجرا می‌شود.");
+    const kpis = el("div", { class: "fin-grid" });
+    const kpi = (label, value, hint) => {
+      const a = el("article", { class: "fin-kpi" });
+      a.append(el("span", { class: "fin-lbl", text: label }), el("strong", { text: value }));
+      if (hint) a.append(el("small", { text: hint }));
+      return a;
+    };
+    kpis.append(
+      kpi("درآمد ماهانهٔ تکرارشونده (MRR)", formatMoney(m.mrr, cur)),
+      kpi("درآمد سالانهٔ تکرارشونده (ARR)", formatMoney(m.arr, cur)),
+      kpi("اشتراک فعال", String(m.active), `${m.totalSubs} کل اشتراک`),
+      kpi("اشتراک جدید (۳۰ روز)", String(m.newSubs)),
+      kpi("لغو (۳۰ روز)", String(m.canceled30), `نرخ ریزش ٪${m.churnRate.toLocaleString("fa-IR")}`),
+      kpi("پرداخت ناموفق (۳۰ روز)", String(m.failed30)),
+      kpi("درآمد ثبت‌شده", formatMoney(m.revenueTotal, cur), `${m.totalPayments} پرداخت`),
+      kpi("پیش‌بینی ماه بعد", formatMoney(m.forecast, cur))
+    );
+    head.append(kpis);
+    section.append(head);
+
+    const charts = el("div", { class: "fin-charts" });
+    const rev = el("article", { class: "ocard" });
+    rev.append(el("h2", { text: "روند درآمد ۶ ماه" }));
+    rev.append(lineChart({ labels: m.revenueSeries.map((r) => r.label), values: m.revenueSeries.map((r) => r.value), color: "#7c5cff" }));
+    charts.append(rev);
+    const dist = el("article", { class: "ocard" });
+    dist.append(el("h2", { text: "توزیع اشتراک بین پلن‌ها" }));
+    dist.append(donut({ items: m.distribution }));
+    charts.append(dist);
+    section.append(charts);
+
+    const flow = el("article", { class: "ocard" });
+    flow.append(el("h2", { text: "ارتقا و تنزل (۳۰ روز)" }));
+    flow.append(barChart({ labels: ["ارتقا", "تنزل"], values: [m.upgrades, m.downgrades], color: "#22d3ee" }));
+    section.append(flow);
+
+    const recent = el("article", { class: "ocard" });
+    recent.append(el("h2", { text: "آخرین پرداخت‌ها" }));
+    const { wrap: tbl, tbody } = table(["فاکتور", "کاربر", "پلن", "مبلغ", "وضعیت", "تاریخ"], []);
+    const pays = billing.payments.slice(0, 6);
+    if (!pays.length) emptyRow(tbody, 6, "پرداختی ثبت نشده؛ از صفحهٔ پرداخت‌ها یا اشتراک‌ها ثبت کن.");
+    for (const p of pays) {
+      const tr = el("tr");
+      tr.append(el("td", { text: p.invoiceNo }));
+      tr.append(el("td", { text: p.userKey || "—" }));
+      tr.append(el("td", { text: p.planName || "—" }));
+      tr.append(el("td", { text: formatMoney(p.amount, p.currency || cur) }));
+      const st = el("td");
+      st.append(tag(PAYMENT_STATUSES[p.status] || p.status, p.status === "paid" ? "ok" : p.status === "failed" ? "bad" : ""));
+      tr.append(st);
+      tr.append(el("td", { text: new Date(p.paidAt || p.createdAt).toLocaleDateString("fa-IR") }));
+      tbody.append(tr);
+    }
+    recent.append(tbl);
+    const go = el("button", { class: "btn btn-ghost btn-sm ow-mt", type: "button", text: "مدیریت پرداخت‌ها" });
+    go.addEventListener("click", () => ctx.showView("payments"));
+    recent.append(go);
+    section.append(recent);
+    section.append(honesty("MRR از قیمت مؤثر پلن‌ها (با تخفیف فعال) و دورهٔ هر اشتراک محاسبه می‌شود؛ بدون اشتراک واقعی، اعداد صفر می‌مانند."));
+  };
 
   /* ----- pricing / premium / payments ----- */
   renderers.pricing = (section) => {
     section.replaceChildren();
-    const wrap = card("قیمت‌گذاری", "پلن پریمیوم واقعی سایت از تنظیمات منتشرشده خوانده می‌شود. پلن‌های اضافی از صفحهٔ پلن‌های اشتراک مدیریت می‌شوند.");
-    const grid = el("div", { class: "toggle-grid" });
-    grid.append(cfgSwitch("نمایش دکمهٔ خرید", "plans.premiumEnabled", !!ctx.getDraft()?.plans?.premiumEnabled));
+    const draft = ctx.getDraft();
+    const cur = currencyNow();
+    const wrap = card("قیمت‌گذاری", "ارز نمایش و نمای زندهٔ صفحهٔ قیمت. با وجود پلن عمومی منتشرشده، کارت‌های سایت از داده ساخته می‌شوند؛ در غیر این صورت کارت‌های ثابت قبلی حفظ می‌شوند.");
+    const currencySel = selectInput(Object.values(CURRENCIES).map((c) => ({ value: c.id, label: `${c.label} (${c.id})` })), cur);
+    currencySel.dataset.cfg = "billing.currency";
+    const grid = el("div", { class: "form-grid" });
+    grid.append(fieldRow("ارز نمایش قیمت", currencySel));
     wrap.append(grid);
+    const pub = draftPlans().filter((p) => p.status === "published" && p.visibility === "public");
+    const info = el("p", { class: "ohint ow-mt" });
+    info.textContent = pub.length
+      ? `${pub.length} پلن عمومی منتشرشده روی صفحهٔ قیمت سایت نمایش داده می‌شود.`
+      : "پلن عمومی منتشرشده‌ای نیست؛ کارت‌های ثابت قبلی سایت نمایش داده می‌شوند.";
+    wrap.append(info);
+    if (pub.length) {
+      wrap.append(el("h3", { class: "ow-h3", text: "پیش‌نمایش زنده" }));
+      const preview = el("div", { class: "pricing-grid pb-pricing-preview" });
+      for (const plan of pub) preview.append(planCard(plan, { currency: cur }));
+      wrap.append(preview);
+      const actions = el("div", { class: "ov-actions ow-mt" });
+      const openPlans = el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "سازندهٔ پلن" });
+      openPlans.addEventListener("click", () => ctx.showView("plans"));
+      const previewBtn = el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "پیش‌نمایش سایت" });
+      previewBtn.addEventListener("click", () => ctx.previewSite());
+      actions.append(openPlans, previewBtn);
+      wrap.append(actions);
+    }
+    section.append(wrap);
+
+    const legacy = card("پلن پریمیوم ساده", "اگر پلن منتشرشده‌ای وجود نداشته باشد، این دکمه و لینک پرداخت روی کارت پریمیوم ثابت سایت استفاده می‌شود.");
+    const toggle = el("div", { class: "toggle-grid" });
+    toggle.append(cfgSwitch("نمایش دکمهٔ خرید", "plans.premiumEnabled", !!draft?.plans?.premiumEnabled));
+    legacy.append(toggle);
     const f = el("div", { class: "form-grid ow-mt" });
     f.append(cfgField("قیمت (فارسی)", "plans.premiumPriceFa"));
     f.append(cfgField("Price (English)", "plans.premiumPriceEn"));
     f.append(cfgField("لینک پرداخت", "plans.premiumUrl", "url", { attrs: { dir: "ltr" } }));
-    wrap.append(f);
+    legacy.append(f);
     const link = el("p", { class: "ohint ow-mt" });
-    link.textContent = ctx.getDraft()?.plans?.premiumUrl ? `لینک فعلی: ${ctx.getDraft().plans.premiumUrl}` : "لینک پرداخت خالی است؛ دکمهٔ خرید غیرفعال می‌ماند.";
-    wrap.append(link);
-    section.append(wrap);
+    link.textContent = draft?.plans?.premiumUrl ? `لینک فعلی: ${draft.plans.premiumUrl}` : "لینک پرداخت خالی است؛ دکمهٔ خرید غیرفعال می‌ماند.";
+    legacy.append(link);
+    section.append(legacy);
     ctx.renderInputs();
   };
   renderers.premium = (section) => {
@@ -736,10 +1488,74 @@ export function createCenter(ctx) {
   };
   renderers.payments = (section) => {
     section.replaceChildren();
-    const wrap = card("پرداخت‌ها", "پایهٔ اتصال درگاه پرداخت. فعال‌سازی واقعی اشتراک نیازمند بک‌اند و وب‌هوک درگاه است.");
-    const { wrap: tbl, tbody } = table(["درگاه", "وضعیت", "اقدام"], []);
+    const bill = readBilling();
+    const cur = currencyNow();
+    section.append(card("پرداخت‌ها", "چند درگاه قابل تنظیم است. کلیدهای محرمانه هرگز در مرورگر ذخیره یا نمایش داده نمی‌شوند و فقط در سرور تنظیم می‌شوند."));
+
+    const providersCard = el("article", { class: "ocard" });
+    providersCard.append(el("h2", { text: "درگاه‌های پرداخت" }));
+    const provGrid = el("div", { class: "prov-grid" });
+    for (const meta of PROVIDERS) {
+      const saved = sanitizeProviderConfig(bill.providers[meta.id] || { id: meta.id }) || { id: meta.id, mode: "disabled", callbackUrl: "", fields: {} };
+      const box = el("article", { class: "prov-card" });
+      box.append(el("h3", { text: meta.label }), el("p", { class: "hint-s", text: meta.note }));
+      const modeSel = selectInput(Object.entries(PROVIDER_MODES).map(([value, label]) => ({ value, label })), saved.mode);
+      box.append(fieldRow("حالت", modeSel));
+      const fieldInputs = {};
+      for (const f of meta.publicFields) {
+        const inp = el("input", { type: "text", dir: "ltr", placeholder: f.placeholder || "" });
+        inp.value = saved.fields[f.key] || "";
+        fieldInputs[f.key] = inp;
+        box.append(fieldRow(f.label, inp));
+      }
+      const cbIn = el("input", { type: "url", dir: "ltr", placeholder: "https://…/api/billing/callback" });
+      cbIn.value = saved.callbackUrl || "";
+      box.append(fieldRow("Callback URL", cbIn));
+      const secrets = el("ul", { class: "prov-secrets" });
+      for (const s of meta.secretFields) secrets.append(el("li", { text: `${s.env} — فقط در سرور` }));
+      box.append(secrets);
+      const readProvider = () => sanitizeProviderConfig({
+        id: meta.id,
+        mode: modeSel.value,
+        callbackUrl: cbIn.value.trim(),
+        fields: Object.fromEntries(Object.entries(fieldInputs).map(([k, input]) => [k, input.value])),
+        secretsRef: true,
+        updatedAt: Date.now()
+      });
+      const health = el("div", { class: "prov-health" });
+      for (const c of providerHealth(readProvider()).checks) health.append(el("span", { class: c.ok ? "ok" : "warn", text: `${c.ok ? "✓" : "•"} ${c.text}` }));
+      box.append(health);
+      const actions = el("div", { class: "ov-actions ow-mt" });
+      const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیرهٔ تنظیمات" });
+      save.addEventListener("click", () => {
+        const cfg = readProvider();
+        writeBilling({ providers: { ...readBilling().providers, [meta.id]: cfg } });
+        logBillingEvent({ kind: "provider", action: `ذخیرهٔ تنظیمات ${meta.label}`, providerId: meta.id });
+        logAudit({ kind: "plan", action: `تنظیم درگاه ${meta.label}`, target: cfg.mode });
+        renderers.payments(section);
+        toast("تنظیمات عمومی درگاه ذخیره شد؛ بدون کلید محرمانه.", "success");
+      });
+      const test = el("button", { class: "btn btn-secondary btn-sm", type: "button", text: "تست اتصال" });
+      test.addEventListener("click", () => {
+        try {
+          createCheckout(meta.id, readProvider(), { planId: "", amount: 0 });
+          toast("تراکنش آزمایشی ساخته شد.", "success");
+        } catch (err) {
+          const honest = err.code === "backend_required";
+          toast(honest ? `${meta.label}: ساخت تراکنش نیازمند سرور است؛ تنظیمات عمومی معتبر است.` : err.message, honest ? "info" : "error");
+        }
+      });
+      actions.append(save, test);
+      box.append(actions);
+      provGrid.append(box);
+    }
+    providersCard.append(provGrid);
+    section.append(providersCard);
+
+    const hosted = card("لینک پرداخت میزبانی‌شده", "ساده‌ترین مسیر فروش بدون بک‌اند؛ روی کارت پریمیوم ثابت سایت استفاده می‌شود.");
+    const { wrap: tbl, tbody } = table(["روش", "وضعیت", "اقدام"], []);
     const tr = el("tr");
-    tr.append(el("td", { text: "لینک پرداخت میزبانی‌شده" }));
+    tr.append(el("td", { text: "لینک پرداخت" }));
     const st = el("td");
     st.append(tag(ctx.getDraft()?.plans?.premiumUrl ? "تنظیم‌شده" : "تنظیم نشده", ctx.getDraft()?.plans?.premiumUrl ? "ok" : "bad"));
     tr.append(st);
@@ -747,11 +1563,63 @@ export function createCenter(ctx) {
     act.append(miniBtn("تنظیم لینک", () => ctx.showView("pricing")));
     tr.append(act);
     tbody.append(tr);
-    emptyRow(tbody, 3, "درگاه خودکار و وب‌هوک: نیازمند بک‌اند.");
-    wrap.append(tbl);
-    section.append(wrap);
-    section.append(honesty("هیچ تراکنش ساختگی ثبت نمی‌شود. تا اتصال درگاه، فقط لینک پرداخت واقعی قابل تنظیم است."));
+    hosted.append(tbl);
+    section.append(hosted);
+
+    const paysCard = el("article", { class: "ocard" });
+    paysCard.append(el("h2", { text: "تراکنش‌ها" }));
+    const payBar = el("div", { class: "ow-toolbar" });
+    const manual = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "پرداخت دستی" });
+    manual.addEventListener("click", () => openManualPayment(section));
+    payBar.append(manual);
+    paysCard.append(payBar);
+    const pt = table(["فاکتور", "کاربر", "پلن", "مبلغ", "درگاه", "وضعیت", "تاریخ", "اقدام"], []);
+    const payments = bill.payments.slice(0, 40);
+    if (!payments.length) emptyRow(pt.tbody, 8, "تراکنشی ثبت نشده است.");
+    for (const p of payments) {
+      const row = el("tr");
+      row.append(el("td", { text: p.invoiceNo }), el("td", { text: p.userKey || "—" }), el("td", { text: p.planName || "—" }), el("td", { text: formatMoney(p.amount, p.currency || cur) }), el("td", { text: p.provider }));
+      const stTd = el("td");
+      stTd.append(tag(PAYMENT_STATUSES[p.status] || p.status, p.status === "paid" ? "ok" : p.status === "failed" ? "bad" : ""));
+      row.append(stTd);
+      row.append(el("td", { text: new Date(p.paidAt || p.createdAt).toLocaleDateString("fa-IR") }));
+      const pAct = el("td");
+      for (const status of ["paid", "failed", "refunded", "void"]) {
+        if (status === p.status) continue;
+        pAct.append(miniBtn(PAYMENT_STATUSES[status], () => {
+          updatePaymentStatus(p.id, status);
+          logAudit({ kind: "plan", action: `وضعیت ${p.invoiceNo}: ${PAYMENT_STATUSES[status]}`, target: p.invoiceNo });
+          renderers.payments(section);
+        }, status === "refunded" || status === "void"));
+      }
+      row.append(pAct);
+      pt.tbody.append(row);
+    }
+    paysCard.append(pt.wrap);
+    section.append(paysCard);
+    section.append(honesty("کلید محرمانه، وب‌هوک و ایجاد تراکنش فقط در سرور انجام می‌شود. تا اتصال بک‌اند، این صفحه پیکربندی عمومی را ذخیره می‌کند و هیچ تراکنش ساختگی نمی‌سازد."));
   };
+
+  function openManualPayment(section) {
+    const body = el("div", { class: "form-grid" });
+    const amountIn = numberInput(0);
+    const statusSel = selectInput(Object.entries(PAYMENT_STATUSES).map(([value, label]) => ({ value, label })), "paid");
+    const userIn = el("input", { type: "text" });
+    const noteIn = el("input", { type: "text" });
+    body.append(fieldRow("مبلغ", amountIn), fieldRow("وضعیت", statusSel), fieldRow("کاربر (اختیاری)", userIn), fieldRow("یادداشت", noteIn, "span2"));
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ثبت" });
+    save.addEventListener("click", () => {
+      const amount = Number(amountIn.value) || 0;
+      if (amount <= 0) return toast("مبلغ باید بزرگ‌تر از صفر باشد.", "error");
+      const userKey = userIn.value.trim();
+      const payment = recordPayment({ subscription: userKey ? { userKey } : null, amount, currency: currencyNow(), provider: "manual", status: statusSel.value, note: noteIn.value.trim() });
+      logAudit({ kind: "plan", action: `ثبت پرداخت ${payment.invoiceNo}`, target: userKey || "مهمان" });
+      closeModal();
+      renderers.payments(section);
+      toast(`فاکتور ${payment.invoiceNo} ثبت شد.`, "success");
+    });
+    showModal("پرداخت دستی", body, [save]);
+  }
 
   /* ----- theme studio ----- */
   renderers.theme = (section) => {
@@ -1338,6 +2206,7 @@ export function createCenter(ctx) {
     document.getElementById("qaBackup")?.addEventListener("click", () => { ctx.downloadJson(); logAudit({ kind: "backup", action: "دانلود تنظیمات از داشبورد" }); });
     document.getElementById("qaLock")?.addEventListener("click", () => ctx.lockConsole());
     document.getElementById("qaFeature")?.addEventListener("click", () => ctx.showView("features"));
+    document.getElementById("qaFinance")?.addEventListener("click", () => ctx.showView("finance"));
   }
 
   function refreshAll() {

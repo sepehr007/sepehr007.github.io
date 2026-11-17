@@ -902,3 +902,20 @@ html[data-theme="light"] .auth-notice{background:#fff7e8;border-color:#f3d5a4;co
 .site-tagline{margin:0 0 6px;font-size:12.5px;line-height:1.8;opacity:.72}
 .site-support{display:inline-block;margin-bottom:8px;font-size:12.5px;font-weight:600;color:var(--accent-2,#22d3ee);text-decoration:none}
 .site-support:hover{text-decoration:underline}
+
+/* Piece 4: dynamic pricing cards */
+.plan-card-public { position: relative; display: flex; flex-direction: column; gap: 10px; border: 1px solid rgba(255,255,255,.08); }
+html[data-theme="light"] .plan-card-public { border-color: rgba(15,23,42,.1); background: #fff; }
+.plan-card-public.is-popular { border-color: rgba(124,92,255,.55); box-shadow: 0 0 0 1px rgba(124,92,255,.22), 0 18px 44px rgba(124,92,255,.16); }
+.plan-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.plan-badge { font-size: 10.5px; font-weight: 800; padding: 3px 9px; border-radius: 999px; }
+.plan-badge.hot { background: rgba(255,82,140,.16); color: #ff7ba3; }
+.plan-badge.rec { background: rgba(34,211,238,.14); color: #67e8f9; }
+.plan-badge.custom { background: rgba(124,92,255,.16); color: #b7a5ff; }
+.plan-ico { font-style: normal; margin-inline-end: 6px; }
+.plan-trial { margin: 0; font-size: 12px; font-weight: 700; color: #7ce7a2; }
+.price-old { display: block; margin-bottom: 2px; font-size: 12px; opacity: .55; text-decoration: line-through; }
+.price-off { display: inline-block; margin-top: 6px; font-style: normal; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px; background: rgba(34,211,238,.14); color: #67e8f9; }
+html[data-theme="light"] .price-off { background: rgba(14,165,183,.12); color: #0e7490; }
+.plan-card-public .price-list { flex: 1; }
+.pricing-grid.pricing-single { grid-template-columns: minmax(0, 380px); justify-content: center; }

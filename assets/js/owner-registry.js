@@ -58,7 +58,8 @@ export const CONFIG_REGISTRY = [
   def("plans.premiumPriceFa", "قیمت (فارسی)", "billing", "string", str(30)),
   def("plans.premiumPriceEn", "Price (English)", "billing", "string", str(30)),
   def("plans.premiumNoteFa", "توضیح پلن (فارسی)", "billing", "string", str(140)),
-  def("plans.premiumNoteEn", "Plan note (English)", "billing", "string", str(140))
+  def("plans.premiumNoteEn", "Plan note (English)", "billing", "string", str(140)),
+  def("billing.currency", "ارز پرداخت", "billing", "enum", enumOf("IRT", "USD"), "واحد نمایش قیمت پلن‌ها در سایت و داشبورد مالی.")
 ];
 
 for (const item of CONFIG_REGISTRY) {
@@ -141,10 +142,14 @@ export const PAGE_DEFS = [
   page("features", null, "مرکز قابلیت‌ها", "◧", "experience", "مرکز قابلیت‌ها", "کنترل سراسری همهٔ قابلیت‌های موجود + خاموشی اضطراری.", "core", "feature center قابلیت"),
   page("limits", null, "محدودیت‌ها", "⏱", "experience", "محدودیت‌ها", "ظرفیت اتاق و نرخ مجاز چت، آواتار و اکشن.", "core", "limits محدودیت"),
 
-  page("plans", null, "پلن‌های اشتراک", "◇", "business", "پلن‌های اشتراک", "پایهٔ مدیریت چند پلن با مزایا و محدودیت‌ها.", "dynamic", "plans subscription پلن اشتراک"),
-  page("pricing", null, "قیمت‌گذاری", "⌘", "business", "قیمت‌گذاری", "نمای قیمت‌ها و پلن پایهٔ پریمیوم.", "dynamic", "pricing قیمت"),
+  page("plans", null, "پلن‌های اشتراک", "◇", "business", "سازندهٔ پلن", "ساخت، ویرایش، کپی، آرشیو و ترتیب پلن‌ها با قیمت‌گذاری کامل.", "dynamic", "plans subscription پلن اشتراک builder"),
+  page("entitlements", null, "دسترسی‌های پلن", "⛃", "business", "دسترسی‌های پلن", "ماتریس قابلیت‌ها و سهمیه‌های هر پلن؛ اعمال مرکزی.", "dynamic", "entitlements دسترسی قابلیت سهمیه quota"),
+  page("subscriptions", null, "اشتراک‌ها", "◷", "business", "اشتراک‌ها", "چرخهٔ عمر کامل اشتراک: فعال‌سازی، تمدید، لغو و بازگشت.", "dynamic", "subscriptions اشتراک lifecycle"),
+  page("coupons", null, "کدهای تخفیف", "٪", "business", "کدهای تخفیف", "کمپین درصدی و مبلغی با سقف استفاده و بازهٔ زمانی.", "dynamic", "coupons تخفیف kupon promo"),
+  page("finance", null, "داشبورد مالی", "₿", "business", "داشبورد مالی", "MRR، ARR، اشتراک فعال، پرداخت ناموفق و روندها.", "dynamic", "finance مالی درآمد mrr arr charts"),
+  page("pricing", null, "قیمت‌گذاری", "⌘", "business", "قیمت‌گذاری", "ارز، نمای زندهٔ پلن‌ها و لینک پرداخت ساده.", "dynamic", "pricing قیمت"),
   page("premium", null, "قابلیت‌های پریمیوم", "✦", "business", "قابلیت‌های پریمیوم", "مزایای پلن‌ها و سطح دسترسی.", "dynamic", "premium پریمیوم"),
-  page("payments", null, "پرداخت‌ها", "₪", "business", "پرداخت‌ها", "پایهٔ اتصال درگاه پرداخت.", "dynamic", "payments پرداخت"),
+  page("payments", null, "پرداخت‌ها", "₪", "business", "پرداخت‌ها", "درگاه‌های پرداخت، تراکنش‌ها و وضعیت اتصال.", "dynamic", "payments پرداخت gateway درگاه"),
 
   page("website", null, "سازندهٔ سایت", "⌂", "content", "سازندهٔ سایت", "پایهٔ مدیریت صفحات، ناوبری و فوتر.", "dynamic", "website builder سایت"),
   page("pages", null, "صفحه‌ساز", "▦", "content", "صفحه‌ساز", "پایهٔ ساخت صفحات بدون کد.", "dynamic", "page builder صفحه"),

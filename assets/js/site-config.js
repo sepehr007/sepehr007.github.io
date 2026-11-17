@@ -1,4 +1,5 @@
 import { store } from "./core.js";
+import { renderPricingSection } from "./pricing.js";
 
 const CONFIG_URL = new URL("../data/site-config.json", import.meta.url);
 const SESSION_KEY = "wt.ownerSession";
@@ -69,6 +70,10 @@ export const SITE_CONFIG_DEFAULTS = {
     premiumPriceEn: "Coming soon",
     premiumNoteFa: "چند اتاق هم‌زمان، آپلود ابری و ظاهرهای بیشتر.",
     premiumNoteEn: "Multiple rooms, cloud uploads and more themes."
+  },
+  billing: {
+    currency: "IRT",
+    plans: []
   }
 };
 
@@ -127,6 +132,9 @@ export function normalizeSiteConfig(raw) {
   };
   merged.site.supportUrl = httpUrl(merged.site.supportUrl);
   merged.plans.premiumUrl = httpUrl(merged.plans.premiumUrl);
+  if (!["IRT", "USD"].includes(merged.billing.currency)) merged.billing.currency = "IRT";
+  if (!Array.isArray(merged.billing.plans)) merged.billing.plans = [];
+  merged.billing.plans = merged.billing.plans.slice(0, 60);
   const text = (v, max) => String(v ?? "").trim().slice(0, max);
   merged.site.metaTitleFa = text(merged.site.metaTitleFa, 70);
   merged.site.metaTitleEn = text(merged.site.metaTitleEn, 70);
@@ -327,6 +335,8 @@ export function applySiteConfig(cfg = current, { root = document } = {}) {
     a.textContent = fa ? "پشتیبانی سایت ↗" : "Site support ↗";
     footer.prepend(a);
   }
+
+  renderPricingSection(cfg, root);
 
   const premiumCard = root.querySelector(".price-soon");
   if (premiumCard) {
