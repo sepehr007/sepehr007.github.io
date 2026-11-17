@@ -1817,7 +1817,9 @@ function wireVoice() {
     voice.setDeafened(!voice.deafened);
     syncDeafenUI();
     renderVoiceTiles();
+    toast(t(voice.deafened ? "toast.deafened" : "toast.undeafened"), "info");
   });
+  if (voice) { syncMicUI(); syncDeafenUI(); }
 }
 
 async function toggleVoice() {
@@ -1848,6 +1850,11 @@ function leaveVoice() {
 function syncMicUI() {
   const btn = $("#micBtn");
   btn.classList.toggle("active", !voice.muted);
+  btn.classList.toggle("state-on", !voice.muted);
+  btn.classList.toggle("state-off", voice.muted);
+  btn.title = t(voice.muted ? "voice.unmute" : "voice.mute");
+  btn.setAttribute("aria-label", btn.title);
+  btn.setAttribute("aria-pressed", String(!voice.muted));
   btn.innerHTML = voice.muted
     ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l16 16M9 4v3M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>'
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
@@ -1856,7 +1863,17 @@ function syncMicUI() {
 }
 
 function syncDeafenUI() {
-  $("#deafenBtn").classList.toggle("active", voice.deafened);
+  const btn = $("#deafenBtn");
+  if (!btn) return;
+  btn.classList.toggle("active", voice.deafened);
+  btn.classList.toggle("state-on", !voice.deafened);
+  btn.classList.toggle("state-off", voice.deafened);
+  btn.title = t(voice.deafened ? "voice.undeafen" : "voice.deafen");
+  btn.setAttribute("aria-label", btn.title);
+  btn.setAttribute("aria-pressed", String(voice.deafened));
+  btn.innerHTML = voice.deafened
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4l16 16M4 14v-2a8 8 0 0 1 3.1-6.3"/><path d="M14.5 4.4A8 8 0 0 1 20 12v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/></svg>';
 }
 
 /* ================= screen share ================= */
@@ -1868,8 +1885,11 @@ function paintScreenState() {
   const btn = $("#shareBtn");
   if (!btn) return;
   btn.classList.toggle("active", screenSharing);
+  btn.classList.toggle("state-on", screenSharing);
+  btn.classList.toggle("state-off", !screenSharing);
   btn.title = t(screenSharing ? "screen.stop" : "screen.start");
   btn.setAttribute("aria-label", btn.title);
+  btn.setAttribute("aria-pressed", String(screenSharing));
 }
 
 function sendScreenTo(peerId) {
