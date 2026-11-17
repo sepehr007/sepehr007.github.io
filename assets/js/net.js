@@ -197,6 +197,7 @@ export class Net {
     this.pwdHash = null;
     this.localFile = null;
     this.fileRx = null;
+    this.subs = null;
   }
 
   async start() {
@@ -470,6 +471,7 @@ export class Net {
   async #handleHello(conn, msg) {
     if (this.members.has(conn.peer)) {
       this.#sendTo(conn.peer, { t: "welcome", ...this.#snapshot(this.members.get(conn.peer)) });
+      if (this.subs) this.#sendTo(conn.peer, { t: "subs", cues: this.subs });
       return;
     }
     const nick = String(msg.nick || conn.nick || "").trim().slice(0, 20) || "Guest";
@@ -487,6 +489,7 @@ export class Net {
       const f = this.localFile;
       this.#sendTo(conn.peer, { t: "fileOffer", id: f.id, name: f.name, size: f.size });
     }
+    if (this.subs) this.#sendTo(conn.peer, { t: "subs", cues: this.subs });
     this.#broadcastMembers();
     this.emit("system", { key: "join", nick: finalNick });
   }
@@ -738,6 +741,7 @@ export class Net {
       case "denied": this.emit("denied", msg.reason); break;
       case "forceMute": this.emit("forceMute", msg.muted); break;
       case "voice": this.emit("voice", { id: msg.id, on: msg.on, nick: msg.nick }); break;
+      case "subs": this.emit("subs", msg.cues); break;
       case "fileOffer": this.emit("fileOffer", { id: msg.id, name: msg.name, size: msg.size }); break;
       case "fileStart":
         this.fileRx = { id: msg.id, name: msg.name, size: Number(msg.size) || 0, chunks: [], received: 0, lastEmit: 0 };
@@ -797,6 +801,12 @@ export class Net {
     };
     this.playback = p;
     this.#broadcast({ t: "playback", state: p });
+  }
+
+  shareSubtitles(cues) {
+    if (!this.isHost) return;
+    this.subs = Array.isArray(cues) && cues.length ? cues : null;
+    if (this.subs) this.#broadcast({ t: "subs", cues: this.subs });
   }
 
   async #hostFileSend(peerId, id) {

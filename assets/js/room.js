@@ -260,6 +260,11 @@ function wireNet() {
   });
 
   net.on("localFile", (file) => receiveLocalFile(file));
+  net.on("subs", (cues) => {
+    if (isHost || !Array.isArray(cues) || !cues.length) return;
+    player.setCues(cues);
+    toast(t("toast.subsShared"), "success");
+  });
   net.on("queue", (items) => renderQueue(items));
   net.on("room", (room) => { roomInfo = room; applyRoomSettings(room); });
 
@@ -1001,6 +1006,7 @@ function wireSettings() {
     const cues = parseSubtitles(raw);
     if (!cues.length) return toast(getLang() === "fa" ? "زیرنویس معتبر نبود" : "Invalid subtitle file", "error");
     player.setCues(cues);
+    if (isHost) net.shareSubtitles(cues);
     toast(getLang() === "fa" ? `${cues.length} خط زیرنویس بارگذاری شد` : `${cues.length} cues loaded`, "success");
   });
   $("#subsSize").addEventListener("input", (e) => player.setSubsSize(e.target.value));
