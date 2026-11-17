@@ -63,7 +63,7 @@ export function passwordChecks(raw) {
     length: s.length >= PASSWORD_MIN,
     lower: /[a-z]/.test(s),
     upper: /[A-Z]/.test(s),
-    digit: /\d/.test(s),
+    digit: /[0-9۰-۹٠-٩]/.test(s),
     long: s.length >= 12
   };
 }
@@ -508,6 +508,7 @@ export function initAuthPage() {
     if (!username) return err(fa ? "نام کاربری را وارد کن." : "Enter your username.");
     if (!isRealName(name)) return err(fa ? "اسم واقعیِ ثبت‌شده را کامل بنویس." : "Enter the real name used at signup.");
     if (!isPassword(password)) return err(t("auth.pwWeak"));
+    if (password !== $("#recPassword2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
     if (Number(normalizeDigits($("#recCaptchaA").value)) !== recCaptcha.a) {
       drawRecCaptcha();
       return err(fa ? "جواب کپچا درست نیست؛ دوباره تلاش کن." : "Captcha answer is wrong, try again.");
