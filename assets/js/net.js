@@ -199,7 +199,8 @@ export class Net {
       privacy: this.privacy,
       control: "mods",
       locked: false,
-      approval: false
+      approval: false,
+      slow: 0
     };
     this.members = new Map();
     this.banned = new Set();
@@ -619,6 +620,11 @@ export class Net {
     const text = String(msg.text || "").slice(0, 500).trim();
     if (!text) return;
     const now = Date.now();
+    if (this.room.slow) {
+      const wait = this.room.slow * 1000 - (now - (member.lastChatAt || 0));
+      if (wait > 0) { this.#sendTo(member.id, { t: "slow", wait: Math.ceil(wait / 1000) }); return; }
+    }
+    member.lastChatAt = now;
     member.chatHits = (member.chatHits || []).filter((t) => now - t < 3000);
     if (member.chatHits.length >= 6) return;
     member.chatHits.push(now);
@@ -744,11 +750,12 @@ export class Net {
 
   #hostSettings(member, patch) {
     if (member.role !== "owner" || !patch) return;
-    const allowed = ["control", "locked", "approval", "capacity"];
+    const allowed = ["control", "locked", "approval", "capacity", "slow"];
     for (const k of allowed) {
       if (!(k in patch)) continue;
       if (k === "capacity") this.room.capacity = Math.min(24, Math.max(2, Number(patch[k]) || 6));
       else if (k === "control") this.room.control = ["host", "mods", "all"].includes(patch[k]) ? patch[k] : this.room.control;
+      else if (k === "slow") this.room.slow = [0, 3, 5, 10, 30].includes(Number(patch[k])) ? Number(patch[k]) : this.room.slow;
       else this.room[k] = !!patch[k];
     }
     this.#broadcast({ t: "room", room: this.room });
@@ -817,6 +824,7 @@ export class Net {
       case "chatUpdate": this.emit("chatUpdate", msg.msg); break;
       case "chatClear": this.emit("chatClear", { by: msg.by }); break;
       case "typing": this.emit("typing", { id: msg.id, nick: msg.nick }); break;
+      case "slow": this.emit("slow", Number(msg.wait) || 0); break;
       case "playback": this.emit("playback", msg.state); break;
       case "room": this.roomState = msg.room; this.emit("room", msg.room); break;
       case "queue": this.emit("queue", msg.items); break;

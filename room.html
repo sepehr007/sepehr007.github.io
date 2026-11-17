@@ -318,6 +318,17 @@
           <input type="checkbox" id="optApproval">
           <span class="switch"></span>
         </label>
+        <div class="setting">
+          <label for="optSlow" data-i18n="settings.slow">حالت آهستهٔ چت</label>
+          <select id="optSlow">
+            <option value="0" data-i18n="settings.slowOff">غیرفعال</option>
+            <option value="3" data-i18n="settings.slow3">۳ ثانیه</option>
+            <option value="5" data-i18n="settings.slow5">۵ ثانیه</option>
+            <option value="10" data-i18n="settings.slow10">۱۰ ثانیه</option>
+            <option value="30" data-i18n="settings.slow30">۳۰ ثانیه</option>
+          </select>
+          <p class="hint" data-i18n="settings.slowHint">حداقل فاصلهٔ بین پیام‌های همهٔ اعضا، از جمله میزبان.</p>
+        </div>
         <label class="switch-row" id="wakeRow">
           <span data-i18n="settings.wake">روشن نگه‌داشتن صفحه هنگام پخش</span>
           <input type="checkbox" id="optWake" checked>

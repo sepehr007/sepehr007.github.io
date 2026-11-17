@@ -81,6 +81,7 @@ let replyTo = null;
 let editingId = null;
 let searchTerm = "";
 let chatJumpCount = 0;
+let lastChatMsgAt = 0;
 const CHAT_TIMER_KEY = "wt.chatTimer";
 let chatTimerElapsed = 0;
 let chatTimerSince = null;
@@ -288,6 +289,7 @@ function wireNet() {
     typingUsers.set(id, { nick: n, at: Date.now() });
     renderTyping();
   });
+  net.on("slow", (wait) => toast(t("toast.slowWait", { s: String(wait || 1) }), "info"));
   net.on("playback", (state) => {
     if (state?.kind === "local") {
       pendingLocalState = state;
@@ -877,7 +879,11 @@ function wireChat() {
       chatInput.placeholder = t("chat.placeholder");
       $("#replyBar").classList.add("hidden");
     } else {
+      const slow = Number(roomInfo?.slow) || 0;
+      const wait = slow ? Math.ceil((slow * 1000 - (Date.now() - lastChatMsgAt)) / 1000) : 0;
+      if (wait > 0) { toast(t("toast.slowWait", { s: String(wait) }), "info"); return; }
       net.command("chat", { text, replyTo });
+      lastChatMsgAt = Date.now();
       replyTo = null;
       $("#replyBar").classList.add("hidden");
     }
@@ -1415,7 +1421,8 @@ function applyRoomSettings(room) {
   $("#optControl").value = room.control || "mods";
   $("#optLock").checked = !!room.locked;
   $("#optApproval").checked = !!room.approval;
-  [$("#optControl"), $("#optLock"), $("#optApproval")].forEach((n) => { n.disabled = !isOwner; });
+  $("#optSlow").value = String(room.slow || 0);
+  [$("#optControl"), $("#optLock"), $("#optApproval"), $("#optSlow")].forEach((n) => { n.disabled = !isOwner; });
   syncAdminTools();
 }
 
@@ -1523,6 +1530,7 @@ function wireSettings() {
   $("#optControl").addEventListener("change", (e) => push({ control: e.target.value }));
   $("#optLock").addEventListener("change", (e) => push({ locked: e.target.checked }));
   $("#optApproval").addEventListener("change", (e) => push({ approval: e.target.checked }));
+  $("#optSlow").addEventListener("change", (e) => push({ slow: Number(e.target.value) }));
   $("#optQuality").addEventListener("change", (e) => player.setLevel(e.target.value));
   $("#optAudio").addEventListener("change", (e) => player.setAudio(e.target.value));
 
