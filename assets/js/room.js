@@ -38,6 +38,10 @@ let voice = null;
 let members = [];
 let queueItems = [];
 let roomInfo = null;
+const WAKE_KEY = "wt.wake";
+let wakeWanted = store.get(WAKE_KEY, true) !== false;
+let wakeSentinel = null;
+let wakePending = false;
 let selfVoice = false;
 let currentPlayback = null;
 let localMode = false;
@@ -110,6 +114,7 @@ async function boot() {
   wirePeople();
   wireQueue();
   wireSettings();
+  wireWakeLock();
   wirePrefs();
   wireVoice();
   wireMisc();
@@ -1106,6 +1111,51 @@ function applyRoomSettings(room) {
   $("#optLock").checked = !!room.locked;
   $("#optApproval").checked = !!room.approval;
   [$("#optControl"), $("#optLock"), $("#optApproval")].forEach((n) => { n.disabled = !isOwner; });
+}
+
+/* ================= screen wake lock ================= */
+async function applyWakeLock() {
+  const video = $("#video");
+  const should = () => wakeWanted && !document.hidden && !!video && !video.paused;
+  if (should()) {
+    if (wakeSentinel || wakePending) return;
+    wakePending = true;
+    let sentinel = null;
+    try {
+      sentinel = await navigator.wakeLock.request("screen");
+      sentinel.addEventListener("release", () => { wakeSentinel = null; }, { once: true });
+    } catch { sentinel = null; }
+    wakePending = false;
+    wakeSentinel = sentinel;
+    if (sentinel && !should()) {
+      wakeSentinel = null;
+      try { await sentinel.release(); } catch {}
+    }
+  } else if (wakeSentinel) {
+    const sentinel = wakeSentinel;
+    wakeSentinel = null;
+    try { await sentinel.release(); } catch {}
+  }
+}
+
+function wireWakeLock() {
+  const input = $("#optWake");
+  if (!input) return;
+  if (!("wakeLock" in navigator)) {
+    $("#wakeRow")?.classList.add("hidden");
+    return;
+  }
+  input.checked = wakeWanted;
+  input.addEventListener("change", () => {
+    wakeWanted = input.checked;
+    store.set(WAKE_KEY, wakeWanted);
+    applyWakeLock();
+  });
+  const video = $("#video");
+  video.addEventListener("play", applyWakeLock);
+  video.addEventListener("pause", applyWakeLock);
+  document.addEventListener("visibilitychange", applyWakeLock);
+  applyWakeLock();
 }
 
 function wireSettings() {
