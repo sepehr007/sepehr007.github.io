@@ -134,6 +134,7 @@ export function validateMediaUrl(raw) {
 
 /* ---------- personal appearance ---------- */
 export const PREF_DEFAULTS = {
+  theme: "dark",
   accent: "#7c5cff",
   accent2: "#22d3ee",
   brightness: 100,
@@ -161,6 +162,10 @@ export function resetPrefs() {
 }
 
 export function applyUIPrefs(prefs = getPrefs()) {
+  const theme = prefs.theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = theme;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = theme === "light" ? "#f3f5fa" : "#07080d";
   const root = document.documentElement.style;
   root.setProperty("--accent", prefs.accent);
   root.setProperty("--accent-2", prefs.accent2);

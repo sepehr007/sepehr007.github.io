@@ -1521,6 +1521,21 @@ function wirePrefs() {
     const cur = getPrefs().accent;
     $$(".accent-swatch", row).forEach((s) => s.classList.toggle("active", s.dataset.a === cur));
   }
+  const themeRow = $("#themeRow");
+  function markTheme() {
+    if (!themeRow) return;
+    const cur = getPrefs().theme === "light" ? "light" : "dark";
+    $$(".theme-opt", themeRow).forEach((b) => b.classList.toggle("active", b.dataset.themeOpt === cur));
+  }
+  if (themeRow) {
+    $$(".theme-opt", themeRow).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        savePrefs({ theme: btn.dataset.themeOpt });
+        markTheme();
+      });
+    });
+  }
+  markTheme();
   ACCENTS.forEach((acc) => row.append(makeSwatch(acc)));
   if (!ACCENTS.some((acc) => acc.a === prefs.accent)) {
     row.append(makeSwatch({ a: prefs.accent, b: prefs.accent2 }));
@@ -1554,6 +1569,7 @@ function wirePrefs() {
     $("#prefChatBright").value = String(d.chatBright);
     $("#prefChatBrightVal").textContent = `${d.chatBright}%`;
     markAccent();
+    markTheme();
     toast(t("prefs.resetDone"), "success");
   });
 }
