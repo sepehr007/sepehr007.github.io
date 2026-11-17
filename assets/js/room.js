@@ -389,6 +389,39 @@ function wirePlayer() {
   video.addEventListener("play", () => updatePlayUI(true));
   video.addEventListener("pause", () => updatePlayUI(false));
 
+  const volRange = $("#volRange");
+  const volBtn = $("#volBtn");
+  const storedVol = store.get("wt.vol", null);
+  const initialVol = typeof storedVol === "number" ? Math.min(1, Math.max(0, storedVol)) : 1;
+  video.volume = initialVol;
+  video.muted = store.get("wt.muted", false) === true;
+  const syncVolume = () => {
+    const silent = video.muted || video.volume === 0;
+    volRange.value = String(Math.round(video.volume * 100));
+    $(".i-vol", volBtn).classList.toggle("hidden", silent);
+    $(".i-mute", volBtn).classList.toggle("hidden", !silent);
+    volBtn.title = silent ? "Unmute" : "Mute";
+  };
+  volRange.addEventListener("input", () => {
+    const level = Number(volRange.value) / 100;
+    video.volume = level;
+    video.muted = level === 0;
+    store.set("wt.vol", level);
+    store.set("wt.muted", video.muted);
+  });
+  volBtn.addEventListener("click", () => {
+    if (video.muted || video.volume === 0) {
+      if (video.volume === 0) video.volume = 0.6;
+      video.muted = false;
+    } else {
+      video.muted = true;
+    }
+    store.set("wt.muted", video.muted);
+    store.set("wt.vol", video.volume);
+  });
+  video.addEventListener("volumechange", syncVolume);
+  syncVolume();
+
   document.addEventListener("keydown", (e) => {
     const target = e.target instanceof Element ? e.target : null;
     if (target?.closest("input,textarea,select,[contenteditable]")) return;
