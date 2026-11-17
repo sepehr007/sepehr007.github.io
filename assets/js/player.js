@@ -227,7 +227,7 @@ export class Player {
   }
 
   #savePosition() {
-    if (!this.url) return;
+    if (!this.url || this.url.startsWith("blob:")) return;
     const d = this.video.duration;
     const t = this.video.currentTime;
     if (!d || !Number.isFinite(d) || t < 5 || d - t < 10) return;

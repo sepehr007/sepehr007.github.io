@@ -575,6 +575,7 @@ export class Net {
     if (!text) return;
     entry.text = text; entry.edited = true;
     this.#broadcast({ t: "chatUpdate", msg: entry });
+    this.emit("chatUpdate", entry);
   }
 
   #hostChatDelete(member, msg) {
@@ -583,6 +584,7 @@ export class Net {
     if (entry.by !== member.id && !this.isMod(member)) return;
     entry.deleted = true; entry.text = "";
     this.#broadcast({ t: "chatUpdate", msg: entry });
+    this.emit("chatUpdate", entry);
   }
 
   #hostReact(member, msg) {
@@ -595,6 +597,7 @@ export class Net {
     if (idx >= 0) list.splice(idx, 1); else list.push(member.id);
     if (!list.length) delete entry.reactions[emoji];
     this.#broadcast({ t: "chatUpdate", msg: entry });
+    this.emit("chatUpdate", entry);
   }
 
   #hostPin(member, msg) {
@@ -603,6 +606,7 @@ export class Net {
     if (!entry) return;
     entry.pinned = !entry.pinned;
     this.#broadcast({ t: "chatUpdate", msg: entry });
+    this.emit("chatUpdate", entry);
   }
 
   #hostTyping(member) {

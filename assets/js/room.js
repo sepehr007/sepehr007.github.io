@@ -1254,12 +1254,12 @@ function renderVoiceTiles() {
 
 /* ================= misc ================= */
 function wireMisc() {
-  const invite = async () => {
+  const invite = async (useShare) => {
     const base = `${location.origin}${location.pathname.replace(/room\.html$/, "")}room.html`;
     const q = new URLSearchParams({ room: code });
     if (roomInfo?.privacy === "password") q.set("pwd", "1");
     const url = `${base}?${q.toString()}`;
-    if (navigator.share) {
+    if (useShare && navigator.share && matchMedia("(pointer: coarse)").matches) {
       try {
         await navigator.share({
           title: "هم‌تماشا",
@@ -1274,8 +1274,8 @@ function wireMisc() {
     const ok = await copyText(url);
     if (ok) toast(t("toast.copied"), "success");
   };
-  $("#copyLinkBtn").addEventListener("click", invite);
-  $("#inviteBtn").addEventListener("click", invite);
+  $("#copyLinkBtn").addEventListener("click", () => invite(false));
+  $("#inviteBtn").addEventListener("click", () => invite(true));
 
   $("#leaveBtn").addEventListener("click", async () => {
     const ok = await confirmDialog({
