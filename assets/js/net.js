@@ -4,6 +4,7 @@ const SIGNAL_BASE = "https://ntfy.sh";
 const MAX_CHAT = 400;
 const JOIN_RETRY_MS = 2500;
 const JOIN_MAX_TRIES = 9;
+const PRESENCE_MS = 30000;
 
 const ICE = {
   iceServers: [
@@ -167,10 +168,12 @@ export class Net {
     this.members = new Map();
     this.banned = new Set();
     this.pendingApprovals = new Map();
-    this.playback = { url: "", playing: false, time: 0, at: Date.now(), rate: 1, by: "" };
+    this.playback = { kind: "url", url: "", playing: false, time: 0, at: Date.now(), rate: 1, by: "" };
     this.chat = [];
     this.queue = [];
     this.pwdHash = null;
+    this.localFile = null;
+    this.fileRx = null;
   }
 
   async start() {
@@ -197,25 +200,25 @@ export class Net {
     this.emit("welcome", this.#snapshot(owner));
     const beat = () => this.#sig({ k: "presence", from: this.selfId, nick: this.nick, host: true });
     beat();
-    this.presenceTimer = setInterval(beat, 15000);
+    this.presenceTimer = setInterval(beat, PRESENCE_MS);
   }
 
   async #guestJoin() {
     const beat = async () => {
       if (this.joined || this.destroyed) return;
       if (this.joinTries++ > JOIN_MAX_TRIES) {
-        clearInterval(this.joinTimer);
         this.emit("status", "offline");
         this.emit("deny", "unreachable");
         return;
       }
-      await this.#sig({
+      const ok = await this.#sig({
         k: "join", from: this.selfId, nick: this.nick,
         pwdHash: this.password ? await sha256hex(this.password) : null
       });
+      if (this.joined || this.destroyed) return;
+      this.joinTimer = setTimeout(beat, ok ? JOIN_RETRY_MS : Math.min(15000, 1500 * this.joinTries));
     };
     beat();
-    this.joinTimer = setInterval(beat, JOIN_RETRY_MS);
   }
 
   #sig(obj) {
@@ -302,6 +305,7 @@ export class Net {
 
   #wireHostDc(guestId, dc, pc, nick) {
     const conn = { dc, pc, peer: guestId, nick, hello: false };
+    dc.binaryType = "arraybuffer";
     this.conns.set(guestId, conn);
     dc.onopen = () => { conn.open = true; };
     dc.onmessage = (e) => {
@@ -326,6 +330,7 @@ export class Net {
     const { pc } = this.#createPc(`d:${msg.from}`);
     pc.ondatachannel = (e) => {
       this.dc = e.channel;
+      e.channel.binaryType = "arraybuffer";
       const conn = { dc: e.channel, pc, peer: msg.from, open: false };
       this.hostConn = conn;
       e.channel.onopen = () => {
@@ -333,6 +338,7 @@ export class Net {
         this.sendHello();
       };
       e.channel.onmessage = (ev) => {
+        if (typeof ev.data !== "string") return this.#onFileChunk(ev.data);
         let m;
         try { m = JSON.parse(ev.data); } catch { return; }
         this.#onHostMessage(m);
@@ -427,6 +433,7 @@ export class Net {
       case "settings": return this.#hostSettings(member, msg.patch);
       case "mod": return this.#hostMod(member, msg);
       case "voice": return this.#hostVoice(member, !!msg.on);
+      case "fileRequest": return this.#hostFileSend(conn.peer, msg.id);
       case "syncRequest": return this.#sendTo(conn.peer, { t: "playback", state: this.playback });
       default: return;
     }
@@ -448,6 +455,10 @@ export class Net {
     const member = { id: conn.peer, nick: finalNick, role: "member", muted: false, voice: false, joinedAt: Date.now() };
     this.members.set(conn.peer, member);
     this.#sendTo(conn.peer, { t: "welcome", ...this.#snapshot(member) });
+    if (this.localFile) {
+      const f = this.localFile;
+      this.#sendTo(conn.peer, { t: "fileOffer", id: f.id, name: f.name, size: f.size });
+    }
     this.#broadcastMembers();
     this.emit("system", { key: "join", nick: finalNick });
   }
@@ -571,7 +582,8 @@ export class Net {
     if (!this.canControl(member)) return this.#sendTo(member.id, { t: "denied", reason: "control" });
     const v = validateMediaUrl(url);
     if (!v.ok) return this.#sendTo(member.id, { t: "denied", reason: v.reason });
-    this.playback = { url: v.url, playing: false, time: 0, at: Date.now(), rate: 1, by: member.nick };
+    this.localFile = null;
+    this.playback = { kind: "url", url: v.url, playing: false, time: 0, at: Date.now(), rate: 1, by: member.nick };
     this.#broadcast({ t: "playback", state: this.playback });
     this.emit("playback", this.playback);
   }
@@ -615,7 +627,7 @@ export class Net {
     if (!this.canControl(member)) return this.#sendTo(member.id, { t: "denied", reason: "control" });
     const item = this.queue.find((q) => q.id === id);
     if (!item) return;
-    this.playback = { url: item.url, playing: false, time: 0, at: Date.now(), rate: 1, by: member.nick };
+    this.playback = { kind: "url", url: item.url, playing: false, time: 0, at: Date.now(), rate: 1, by: member.nick };
     this.#broadcast({ t: "playback", state: this.playback });
     this.emit("playback", this.playback);
   }
@@ -698,6 +710,20 @@ export class Net {
       case "denied": this.emit("denied", msg.reason); break;
       case "forceMute": this.emit("forceMute", msg.muted); break;
       case "voice": this.emit("voice", { id: msg.id, on: msg.on, nick: msg.nick }); break;
+      case "fileOffer": this.emit("fileOffer", { id: msg.id, name: msg.name, size: msg.size }); break;
+      case "fileStart":
+        this.fileRx = { id: msg.id, name: msg.name, size: Number(msg.size) || 0, chunks: [], received: 0, lastEmit: 0 };
+        this.emit("fileProgress", { id: msg.id, received: 0, size: this.fileRx.size });
+        break;
+      case "fileEnd": {
+        const rx = this.fileRx;
+        if (!rx || rx.id !== msg.id) break;
+        this.fileRx = null;
+        const blob = new Blob(rx.chunks, { type: "video/mp4" });
+        const url = URL.createObjectURL(blob);
+        this.emit("localFile", { id: rx.id, name: rx.name, size: blob.size, blob, url });
+        break;
+      }
       default: break;
     }
   }
@@ -719,6 +745,63 @@ export class Net {
       return;
     }
     try { if (this.dc?.readyState === "open") this.dc.send(JSON.stringify({ t: type, ...payload })); } catch {}
+  }
+
+  /* ================= local file sharing ================= */
+  shareLocalFile(file) {
+    this.localFile = file ? { id: file.id, name: file.name, size: file.size, blob: file.blob } : null;
+    if (!this.isHost || !this.localFile) return;
+    const f = this.localFile;
+    this.#broadcast({ t: "fileOffer", id: f.id, name: f.name, size: f.size });
+  }
+
+  syncLocalState(state) {
+    if (!this.isHost) return;
+    const p = {
+      kind: "local",
+      id: state.id || this.playback?.id || "",
+      url: "",
+      playing: !!state.playing,
+      time: Math.max(0, Number(state.time) || 0),
+      rate: Number(state.rate) || 1,
+      at: Date.now(),
+      by: this.nick
+    };
+    this.playback = p;
+    this.#broadcast({ t: "playback", state: p });
+  }
+
+  async #hostFileSend(peerId, id) {
+    const f = this.localFile;
+    const conn = this.conns.get(peerId);
+    if (!f || !conn || f.id !== id) return;
+    const dc = conn.dc;
+    if (dc?.readyState !== "open") return;
+    try { dc.send(JSON.stringify({ t: "fileStart", id: f.id, name: f.name, size: f.size })); } catch { return; }
+    const CHUNK = 64 * 1024;
+    const HIGH = 2 * 1024 * 1024;
+    for (let off = 0; off < f.size; off += CHUNK) {
+      while (dc.readyState === "open" && dc.bufferedAmount > HIGH) await new Promise((r) => setTimeout(r, 25));
+      if (dc.readyState !== "open") return;
+      let buf;
+      try { buf = await f.blob.slice(off, off + CHUNK).arrayBuffer(); } catch { return; }
+      try { dc.send(buf); } catch { return; }
+    }
+    try { dc.send(JSON.stringify({ t: "fileEnd", id: f.id })); } catch {}
+  }
+
+  #onFileChunk(data) {
+    const rx = this.fileRx;
+    if (!rx) return;
+    const buf = data instanceof ArrayBuffer ? data : data?.buffer;
+    if (!buf) return;
+    rx.chunks.push(buf);
+    rx.received += buf.byteLength;
+    const now = Date.now();
+    if (now - rx.lastEmit > 120) {
+      rx.lastEmit = now;
+      this.emit("fileProgress", { id: rx.id, received: rx.received, size: rx.size });
+    }
   }
 
   #applyLocal(me, type, payload) {

@@ -40,6 +40,9 @@ let selfVoice = false;
 let currentPlayback = null;
 let localMode = false;
 let currentLocalUrl = null;
+let localFileId = "";
+let pendingLocalState = null;
+let fileOfferId = "";
 
 const chatList = $("#chatList");
 const peopleList = $("#peopleList");
@@ -106,6 +109,7 @@ async function boot() {
   wireVoice();
   wireMisc();
   wireFileLoad();
+  setInterval(() => broadcastLocalState(), 4000);
 
   createNet();
 }
@@ -217,13 +221,45 @@ function wireNet() {
     renderTyping();
   });
   net.on("playback", (state) => {
+    if (state?.kind === "local") {
+      pendingLocalState = state;
+      if (localFileId && state.id === localFileId && player.url) {
+        localMode = true;
+        $("#localBadge").classList.remove("hidden");
+        $("#localBadge").textContent = t("room.localBadgeGuest");
+        applyLocalState(state);
+        syncStageEmpty();
+      }
+      return;
+    }
     if (state?.url && state.url !== player.url) localMode = false;
+    localFileId = "";
+    fileOfferId = "";
+    $("#fileOfferBar").classList.add("hidden");
     $("#localBadge").classList.add("hidden");
     currentPlayback = state;
     player.applyState(state);
     updatePlayUI(state.playing);
     syncStageEmpty();
   });
+
+  net.on("fileOffer", ({ id, name, size }) => {
+    if (isHost || !id) return;
+    if (localFileId === id && player.url) return;
+    fileOfferId = id;
+    $("#foName").textContent = name || "video";
+    $("#foSub").textContent = t("room.fileOfferSub", { size: fmtBytes(size) });
+    $("#fileOfferBar").classList.remove("hidden");
+  });
+
+  net.on("fileProgress", ({ id, received, size }) => {
+    if (!fileOfferId || id !== fileOfferId) return;
+    const p = size ? received / size : 0;
+    setPrepProgress(p);
+    $("#prepSub").textContent = `${fmtBytes(received)} / ${fmtBytes(size)} · ${Math.round(p * 100)}%`;
+  });
+
+  net.on("localFile", (file) => receiveLocalFile(file));
   net.on("queue", (items) => renderQueue(items));
   net.on("room", (room) => { roomInfo = room; applyRoomSettings(room); });
 
@@ -243,7 +279,8 @@ function wireNet() {
       rejected: getLang() === "fa" ? "میزبان ورود را تأیید نکرد" : "Host declined the request"
     };
     toast(map[reason] || t("toast.connLost"), "error");
-    $("#netLabel").textContent = t("net.offline");
+    const netLabel = $("#netLabel");
+    if (netLabel) netLabel.textContent = t("net.offline");
     setTimeout(() => location.replace("./"), 2200);
   });
 
@@ -384,6 +421,70 @@ function applyLocalControl(action, time, value) {
     player.state = { ...player.state, url: player.url, rate: v.playbackRate, time: v.currentTime, at: Date.now() };
   }
   updatePlayUI(!v.paused);
+  broadcastLocalState();
+}
+
+function localStatePayload() {
+  return {
+    id: localFileId,
+    playing: !player.video.paused,
+    time: player.video.currentTime || 0,
+    rate: player.video.playbackRate || 1
+  };
+}
+
+function broadcastLocalState() {
+  if (!isHost || !localMode || !localFileId) return;
+  net.syncLocalState(localStatePayload());
+}
+
+function applyLocalState(state) {
+  const v = player.video;
+  if (!player.url) return;
+  player.state = {
+    url: player.url,
+    playing: !!state.playing,
+    time: Math.max(0, Number(state.time) || 0),
+    at: Number(state.at) || Date.now(),
+    rate: Number(state.rate) || 1
+  };
+  const target = player.expectedTime();
+  if (Number.isFinite(target) && Math.abs((v.currentTime || 0) - target) > 0.6) {
+    player.programmaticSeekAt = performance.now();
+    v.currentTime = target;
+  }
+  v.playbackRate = Math.max(0.25, Math.min(4, player.state.rate));
+  if (state.playing) v.play().catch(() => {});
+  else v.pause();
+  updatePlayUI(!!state.playing);
+}
+
+function fmtBytes(n) {
+  const v = Number(n) || 0;
+  if (v >= 1073741824) return `${(v / 1073741824).toFixed(1)} GB`;
+  if (v >= 1048576) return `${(v / 1048576).toFixed(1)} MB`;
+  if (v >= 1024) return `${Math.round(v / 1024)} KB`;
+  return `${v} B`;
+}
+
+function receiveLocalFile({ id, name, size, url }) {
+  if (currentLocalUrl && currentLocalUrl !== url) URL.revokeObjectURL(currentLocalUrl);
+  currentLocalUrl = url;
+  localFileId = id;
+  localMode = true;
+  player.destroyHls();
+  player.url = url;
+  player.state = { url, playing: false, time: 0, at: Date.now(), rate: 1 };
+  player.video.src = url;
+  player.video.load();
+  $("#fileOfferBar").classList.add("hidden");
+  hidePrep();
+  $("#localBadge").classList.remove("hidden");
+  $("#localBadge").textContent = t("room.localBadgeGuest");
+  syncStageEmpty();
+  toast(t("toast.fileReceived"), "success");
+  if (pendingLocalState?.id === id) applyLocalState(pendingLocalState);
+  else if (pendingLocalState?.playing) applyLocalState(pendingLocalState);
 }
 
 function wireFileLoad() {
@@ -402,6 +503,15 @@ function wireFileLoad() {
     $("#stageEmpty").classList.remove("hidden");
     $("#videoUrlInput").focus();
   });
+  $("#foGetBtn").addEventListener("click", () => {
+    if (!fileOfferId) return;
+    $("#fileOfferBar").classList.add("hidden");
+    showPrep();
+    $("#prepTitle").textContent = t("room.downloading");
+    $("#prepSub").textContent = "0%";
+    net.command("fileRequest", { id: fileOfferId });
+  });
+  $("#foDismiss").addEventListener("click", () => $("#fileOfferBar").classList.add("hidden"));
 
   stage.addEventListener("dragover", (e) => {
     if (!isHost) return;
@@ -485,6 +595,7 @@ function startLocalPlayback(url, fileName, converted) {
   player.video.load();
   syncStageEmpty();
   $("#localBadge").classList.remove("hidden");
+  $("#localBadge").textContent = t("room.localBadge");
   updatePlayUI(false);
   toast(
     converted
@@ -493,10 +604,21 @@ function startLocalPlayback(url, fileName, converted) {
     "success"
   );
   if (isHost) {
+    localFileId = "lf" + Date.now().toString(36);
+    net.syncLocalState({ id: localFileId, playing: false, time: 0, rate: 1 });
+    const shareId = localFileId;
+    (async () => {
+      try {
+        const blob = await (await fetch(url)).blob();
+        if (localFileId === shareId && player.url === url) {
+          net.shareLocalFile({ id: shareId, name: fileName, size: blob.size, blob });
+        }
+      } catch {}
+    })();
     net.command("chat", {
       text: getLang() === "fa"
-        ? `🎬 ${nick} فایل محلی «${fileName}» را پخش می‌کند (فقط روی دستگاه میزبان).`
-        : `🎬 ${nick} is playing the local file "${fileName}" (host device only).`
+        ? `🎬 ${nick} فایل «${fileName}» را پخش می‌کند — برای تماشای هم‌زمان، فایل را دریافت کن.`
+        : `🎬 ${nick} is playing "${fileName}" — download it to watch along.`
     });
   }
 }

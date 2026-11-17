@@ -180,6 +180,13 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .prep-bar{height:6px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden}
 .prep-bar span{display:block;height:100%;width:0;background:var(--grad);transition:width .25s ease}
 .local-badge{position:absolute;top:12px;inset-inline-start:12px;z-index:4;padding:5px 11px;border-radius:99px;background:rgba(251,191,36,.14);border:1px solid rgba(251,191,36,.4);color:#fbbf24;font-size:11.5px;font-weight:600}
+.file-offer{position:absolute;inset-inline:12px;bottom:60px;z-index:5;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:rgba(16,18,28,.92);border:1px solid rgba(124,92,255,.45);box-shadow:0 18px 40px rgba(0,0,0,.45);backdrop-filter:blur(10px);animation:foIn .25s ease}
+@keyframes foIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.file-offer .fo-ico{font-size:20px;line-height:1}
+.file-offer .fo-body{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.file-offer .fo-body strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-offer .fo-sub{font-size:11.5px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-offer .btn{flex-shrink:0}
 .stage.dragging::after{content:"";position:absolute;inset:8px;border:2px dashed rgba(124,92,255,.8);border-radius:14px;background:rgba(124,92,255,.08);z-index:5;pointer-events:none}
 .stage-controls{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:6px;padding:10px 12px;background:linear-gradient(transparent,rgba(0,0,0,.82));z-index:4;transition:opacity .25s}
 .stage-controls.idle{opacity:0;pointer-events:none}

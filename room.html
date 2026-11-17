@@ -84,6 +84,16 @@
         </div>
         <div class="local-badge hidden" id="localBadge" data-i18n="room.localBadge">پخش محلی — فقط روی دستگاه میزبان</div>
 
+        <div class="file-offer hidden" id="fileOfferBar">
+          <span class="fo-ico">📥</span>
+          <div class="fo-body">
+            <strong id="foName"></strong>
+            <span class="fo-sub" id="foSub"></span>
+          </div>
+          <button class="btn btn-primary btn-sm" id="foGetBtn" type="button" data-i18n="room.download">دریافت و تماشا</button>
+          <button class="icon-btn" id="foDismiss" type="button" aria-label="Close">×</button>
+        </div>
+
         <div class="stage-controls" id="stageControls">
           <button class="ctl" id="playBtn" type="button" data-i18n-title="player.play" title="Play">
             <svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5L8 5.5z"/></svg>

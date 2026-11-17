@@ -51,6 +51,7 @@ export class Player {
       this.onLoaded?.({ duration: this.video.duration || 0 });
       this.#restorePosition();
       this.#syncNow();
+      this.#emitTime();
     });
     this.video.addEventListener("error", () => this.onError?.("media"));
     this.video.addEventListener("play", () => { if (!this.applying) this.#request("play"); });
