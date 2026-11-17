@@ -327,6 +327,22 @@
             <label data-i18n="settings.subsOffset">تأخیر (ثانیه)</label>
             <input type="number" id="subsOffset" step="0.1" value="0" style="width:80px">
           </div>
+          <div class="subs-style">
+            <span data-i18n="settings.subsColor">رنگ زیرنویس</span>
+            <div class="subs-swatches" id="subsColors" role="group" aria-label="Subtitle color">
+              <button type="button" class="subs-swatch active" data-color="#ffffff" style="--sw:#ffffff" aria-label="White" title="White"></button>
+              <button type="button" class="subs-swatch" data-color="#ffe066" style="--sw:#ffe066" aria-label="Yellow" title="Yellow"></button>
+              <button type="button" class="subs-swatch" data-color="#7dd3fc" style="--sw:#7dd3fc" aria-label="Sky" title="Sky"></button>
+              <button type="button" class="subs-swatch" data-color="#86efac" style="--sw:#86efac" aria-label="Green" title="Green"></button>
+              <button type="button" class="subs-swatch" data-color="#f9a8d4" style="--sw:#f9a8d4" aria-label="Pink" title="Pink"></button>
+            </div>
+            <label for="subsBg" data-i18n="settings.subsBg">پس‌زمینه</label>
+            <select id="subsBg">
+              <option value="0.72" data-i18n="settings.subsBgDark">تیره</option>
+              <option value="0.35" data-i18n="settings.subsBgSoft">ملایم</option>
+              <option value="0" data-i18n="settings.subsBgNone">بدون</option>
+            </select>
+          </div>
           <div class="subs-list hidden" id="subsList"></div>
         </div>
         <p class="hint" data-i18n="settings.shortcuts">میانبرها: Space پخش/توقف · ← → ۵ ثانیه · J L ۱۰ ثانیه · F تمام‌صفحه</p>

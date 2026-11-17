@@ -51,6 +51,14 @@ const PTT_KEY = "wt.ptt";
 let pttOn = store.get(PTT_KEY, false) === true;
 let pttHeld = false;
 let pttRestoreMute = true;
+const SUB_COLOR_KEY = "wt.subColor";
+const SUB_BG_KEY = "wt.subBg";
+const SUB_SIZE_KEY = "wt.subSize";
+const SUB_OFFSET_KEY = "wt.subOffset";
+let subColor = store.get(SUB_COLOR_KEY, "#ffffff");
+let subBg = Number(store.get(SUB_BG_KEY, 0.72));
+let subSize = Number(store.get(SUB_SIZE_KEY, 120)) || 120;
+let subOffset = Number(store.get(SUB_OFFSET_KEY, 0)) || 0;
 let selfVoice = false;
 let currentPlayback = null;
 let localMode = false;
@@ -1378,8 +1386,51 @@ function wireSettings() {
     toast(getLang() === "fa" ? `${cues.length} خط زیرنویس بارگذاری شد` : `${cues.length} cues loaded`, "success");
     e.target.value = "";
   });
-  $("#subsSize").addEventListener("input", (e) => player.setSubsSize(e.target.value));
-  $("#subsOffset").addEventListener("input", (e) => player.setSubsOffset(e.target.value));
+  const layer = $("#subtitleLayer");
+  const applySubStyle = () => {
+    if (!layer) return;
+    layer.style.setProperty("--sub-color", subColor);
+    layer.style.setProperty("--sub-bg", `rgba(0,0,0,${subBg})`);
+  };
+  const sizeInput = $("#subsSize");
+  const offsetInput = $("#subsOffset");
+  if (sizeInput) {
+    sizeInput.value = String(subSize);
+    player.setSubsSize(subSize);
+    sizeInput.addEventListener("input", (e) => {
+      subSize = Number(e.target.value) || 120;
+      store.set(SUB_SIZE_KEY, subSize);
+      player.setSubsSize(subSize);
+    });
+  }
+  if (offsetInput) {
+    offsetInput.value = String(subOffset);
+    player.setSubsOffset(subOffset);
+    offsetInput.addEventListener("input", (e) => {
+      subOffset = Number(e.target.value) || 0;
+      store.set(SUB_OFFSET_KEY, subOffset);
+      player.setSubsOffset(subOffset);
+    });
+  }
+  $$("#subsColors .subs-swatch").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.color === subColor);
+    btn.addEventListener("click", () => {
+      subColor = btn.dataset.color || "#ffffff";
+      store.set(SUB_COLOR_KEY, subColor);
+      $$("#subsColors .subs-swatch").forEach((b) => b.classList.toggle("active", b === btn));
+      applySubStyle();
+    });
+  });
+  const bgSel = $("#subsBg");
+  if (bgSel) {
+    bgSel.value = String(subBg);
+    bgSel.addEventListener("change", () => {
+      subBg = Number(bgSel.value) || 0;
+      store.set(SUB_BG_KEY, subBg);
+      applySubStyle();
+    });
+  }
+  applySubStyle();
 }
 
 function renderQuality(info) {
