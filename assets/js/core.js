@@ -132,8 +132,56 @@ export function validateMediaUrl(raw) {
   return { ok: true, url: url.href };
 }
 
-export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-export function makeCode(len = 6) {
+/* ---------- personal appearance ---------- */
+export const PREF_DEFAULTS = {
+  accent: "#7c5cff",
+  accent2: "#22d3ee",
+  brightness: 100,
+  chatSize: 13.4,
+  chatAlpha: 72,
+  chatBright: 100
+};
+
+export function getPrefs() {
+  const saved = store.get("wt.prefs", null);
+  return { ...PREF_DEFAULTS, ...(saved && typeof saved === "object" ? saved : {}) };
+}
+
+export function savePrefs(patch) {
+  const next = { ...getPrefs(), ...patch };
+  store.set("wt.prefs", next);
+  applyUIPrefs(next);
+  return next;
+}
+
+export function resetPrefs() {
+  store.del("wt.prefs");
+  applyUIPrefs(PREF_DEFAULTS);
+  return { ...PREF_DEFAULTS };
+}
+
+export function applyUIPrefs(prefs = getPrefs()) {
+  const root = document.documentElement.style;
+  root.setProperty("--accent", prefs.accent);
+  root.setProperty("--accent-2", prefs.accent2);
+  root.setProperty("--grad", `linear-gradient(135deg,${prefs.accent} 0%,${prefs.accent2} 100%)`);
+  root.setProperty("--chat-size", `${prefs.chatSize}px`);
+  root.setProperty("--side-alpha", String(prefs.chatAlpha / 100));
+  root.setProperty("--chat-bright", String(prefs.chatBright / 100));
+  const video = document.getElementById("video");
+  if (video) video.style.filter = prefs.brightness === 100 ? "" : `brightness(${prefs.brightness / 100})`;
+}
+
+export const ACCENTS = [
+  { a: "#7c5cff", b: "#22d3ee" },
+  { a: "#f472b6", b: "#f59e0b" },
+  { a: "#34d399", b: "#22d3ee" },
+  { a: "#fb7185", b: "#a855f7" },
+  { a: "#60a5fa", b: "#818cf8" },
+  { a: "#f5b64a", b: "#f97316" }
+];
+
+export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";export function makeCode(len = 6) {
   let out = "";
   const buf = new Uint8Array(len);
   crypto.getRandomValues(buf);

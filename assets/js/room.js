@@ -2,7 +2,7 @@ import { initI18n, t, applyI18n, getLang } from "./i18n.js";
 import {
   $, $$, el, escapeHtml, colorFor, initials, fmtTime, fmtClock, toast,
   confirmDialog, copyText, store, validateMediaUrl, createLimiter, debounce,
-  highlightMentions, registerServiceWorker
+  highlightMentions, registerServiceWorker, applyUIPrefs, getPrefs, savePrefs, resetPrefs, ACCENTS
 } from "./core.js";
 import { Net } from "./net.js";
 import { Player, parseSubtitles } from "./player.js";
@@ -10,6 +10,7 @@ import { Voice } from "./voice.js";
 import { currentUser } from "./auth.js";
 
 initI18n();
+applyUIPrefs();
 registerServiceWorker();
 
 const params = new URLSearchParams(location.search);
@@ -106,6 +107,7 @@ async function boot() {
   wirePeople();
   wireQueue();
   wireSettings();
+  wirePrefs();
   wireVoice();
   wireMisc();
   wireFileLoad();
@@ -370,13 +372,23 @@ function wirePlayer() {
   video.addEventListener("pause", () => updatePlayUI(false));
 
   document.addEventListener("keydown", (e) => {
-    if (/input|textarea|select/i.test(e.target.tagName)) return;
-    if (e.key === " " || e.key === "k") { e.preventDefault(); player.togglePlay(); }
-    else if (e.key === "ArrowRight") player.seekBy(getLang() === "fa" ? -5 : 5);
-    else if (e.key === "ArrowLeft") player.seekBy(getLang() === "fa" ? 5 : -5);
-    else if (e.key === "f") player.toggleFullscreen();
-    else if (e.key === "t") player.toggleTheater();
-    else if (e.key === "p") player.togglePiP();
+    const target = e.target instanceof Element ? e.target : null;
+    if (target?.closest("input,textarea,select,[contenteditable]")) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "Escape") { $("#sidebar").classList.remove("open"); return; }
+    if (!player?.url) return;
+    const k = e.key.toLowerCase();
+    const back = getLang() === "fa" ? 1 : -1;
+    if (k === " " && target?.closest("button,a")) return;
+    if (k === " " || k === "k") { e.preventDefault(); player.togglePlay(); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); player.seekBy(5 * -back); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); player.seekBy(5 * back); }
+    else if (k === "j") { e.preventDefault(); player.seekBy(-10); }
+    else if (k === "l") { e.preventDefault(); player.seekBy(10); }
+    else if (k === "f") { e.preventDefault(); player.toggleFullscreen(); }
+    else if (k === "t") { e.preventDefault(); player.toggleTheater(); }
+    else if (k === "p") { e.preventDefault(); player.togglePiP(); }
+    else if (k === "m" && selfVoice) { e.preventDefault(); $("#micBtn").click(); }
   });
 
   let idleTimer = null;
@@ -414,6 +426,8 @@ function loadVideoFromInput() {
 /* ================= local files & conversion ================= */
 function applyLocalControl(action, time, value) {
   const v = player.video;
+  player.applying = true;
+  setTimeout(() => { player.applying = false; }, 60);
   if (action === "play") {
     v.play().catch(() => {});
     player.state = { ...player.state, url: player.url, playing: true, time: v.currentTime, at: Date.now() };
@@ -421,6 +435,7 @@ function applyLocalControl(action, time, value) {
     v.pause();
     player.state = { ...player.state, url: player.url, playing: false, time: v.currentTime, at: Date.now() };
   } else if (action === "seek") {
+    player.programmaticSeekAt = performance.now();
     v.currentTime = Math.max(0, Number(time) || 0);
     player.state = { ...player.state, url: player.url, time: v.currentTime, at: Date.now() };
   } else if (action === "rate") {
@@ -1011,6 +1026,67 @@ function wireSettings() {
   });
   $("#subsSize").addEventListener("input", (e) => player.setSubsSize(e.target.value));
   $("#subsOffset").addEventListener("input", (e) => player.setSubsOffset(e.target.value));
+}
+
+/* ================= personal appearance ================= */
+function wirePrefs() {
+  const prefs = getPrefs();
+  const row = $("#accentRow");
+  const makeSwatch = (acc) => {
+    const b = el("button", {
+      class: "accent-swatch",
+      type: "button",
+      "aria-label": acc.a,
+      title: acc.a
+    });
+    b.style.background = `linear-gradient(135deg,${acc.a},${acc.b})`;
+    b.dataset.a = acc.a;
+    b.dataset.b = acc.b;
+    b.addEventListener("click", () => {
+      savePrefs({ accent: acc.a, accent2: acc.b });
+      markAccent();
+    });
+    return b;
+  };
+  function markAccent() {
+    const cur = getPrefs().accent;
+    $$(".accent-swatch", row).forEach((s) => s.classList.toggle("active", s.dataset.a === cur));
+  }
+  ACCENTS.forEach((acc) => row.append(makeSwatch(acc)));
+  if (!ACCENTS.some((acc) => acc.a === prefs.accent)) {
+    row.append(makeSwatch({ a: prefs.accent, b: prefs.accent2 }));
+  }
+
+  const bindRange = (id, valId, key, fmt) => {
+    const inp = $(id);
+    const out = $(valId);
+    inp.value = String(prefs[key]);
+    out.textContent = fmt(prefs[key]);
+    inp.addEventListener("input", () => {
+      const v = Number(inp.value);
+      savePrefs({ [key]: v });
+      out.textContent = fmt(v);
+    });
+  };
+  bindRange("#prefBrightness", "#prefBrightnessVal", "brightness", (v) => `${v}%`);
+  bindRange("#prefChatSize", "#prefChatSizeVal", "chatSize", (v) => String(v.toFixed(1)));
+  bindRange("#prefChatAlpha", "#prefChatAlphaVal", "chatAlpha", (v) => `${v}%`);
+  bindRange("#prefChatBright", "#prefChatBrightVal", "chatBright", (v) => `${v}%`);
+  markAccent();
+
+  $("#prefsReset").addEventListener("click", () => {
+    const d = resetPrefs();
+    $("#prefBrightness").value = String(d.brightness);
+    $("#prefBrightnessVal").textContent = `${d.brightness}%`;
+    $("#prefChatSize").value = String(d.chatSize);
+    $("#prefChatSizeVal").textContent = d.chatSize.toFixed(1);
+    $("#prefChatAlpha").value = String(d.chatAlpha);
+    $("#prefChatAlphaVal").textContent = `${d.chatAlpha}%`;
+    $("#prefChatBright").value = String(d.chatBright);
+    $("#prefChatBrightVal").textContent = `${d.chatBright}%`;
+    markAccent();
+    toast(t("prefs.resetDone"), "success");
+  });
 }
 
 /* ================= tabs ================= */

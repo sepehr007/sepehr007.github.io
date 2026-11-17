@@ -1,13 +1,35 @@
 import { initI18n, t } from "./i18n.js";
-import { $, toast, makeCode, store, registerServiceWorker } from "./core.js";
-import { requireAuth, currentUser, mountUserChip, isRealName } from "./auth.js";
+import { $, toast, makeCode, store, registerServiceWorker, applyUIPrefs } from "./core.js";
+import { currentUser, mountUserChip, isRealName } from "./auth.js";
 
+applyUIPrefs();
 initI18n();
 registerServiceWorker();
 
+mountUserChip();
+
 const user = currentUser();
-if (!user) requireAuth("index.html");
-else mountUserChip();
+if (user) resumePendingRoom();
+
+function resumePendingRoom() {
+  let raw = "";
+  try { raw = sessionStorage.getItem("wt.pending") || ""; } catch {}
+  if (!raw) return;
+  try { sessionStorage.removeItem("wt.pending"); } catch {}
+  let pending = null;
+  try { pending = JSON.parse(raw); } catch { return; }
+  if (!pending?.q || Date.now() - (pending.at || 0) > 30 * 60 * 1000) return;
+  location.replace(`room.html?${pending.q}`);
+}
+
+function startRoom(q) {
+  if (!currentUser()) {
+    try { sessionStorage.setItem("wt.pending", JSON.stringify({ q: q.toString(), at: Date.now() })); } catch {}
+    location.href = `auth.html?next=${encodeURIComponent("index.html")}`;
+    return;
+  }
+  location.href = `room.html?${q.toString()}`;
+}
 
 const nameInput = $("#createName");
 const createNick = $("#createNick");
@@ -45,7 +67,7 @@ $("#createBtn").addEventListener("click", () => {
     cap: capacityInput.value,
     privacy
   });
-  location.href = `room.html?${q.toString()}`;
+  startRoom(q);
 });
 
 $("#joinBtn").addEventListener("click", joinRoom);
@@ -72,8 +94,7 @@ function joinRoom() {
     return;
   }
   store.set("wt.nick", nick);
-  const q = new URLSearchParams({ room: code, nick });
-  location.href = `room.html?${q.toString()}`;
+  startRoom(new URLSearchParams({ room: code, nick }));
 }
 
 function getLangIsFa() {

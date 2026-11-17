@@ -1,4 +1,4 @@
-import { $, colorFor, initials } from "./core.js";
+import { $, colorFor, initials, applyUIPrefs } from "./core.js";
 import { t } from "./i18n.js";
 
 const USERS_KEY = "wt.users";
@@ -130,8 +130,14 @@ export function makeCaptcha() {
 export function mountUserChip() {
   const user = currentUser();
   const chip = $("#userChip");
+  const links = $("#authActions");
   if (!chip) return;
-  if (!user) { chip.classList.add("hidden"); return; }
+  if (!user) {
+    chip.classList.add("hidden");
+    links?.classList.remove("hidden");
+    return;
+  }
+  links?.classList.add("hidden");
   chip.classList.remove("hidden");
   const av = $("#userAvatar");
   if (av) { av.textContent = initials(user.nick); av.style.background = user.color; }
@@ -139,7 +145,7 @@ export function mountUserChip() {
   if (nm) nm.textContent = user.nick;
   $("#logoutBtn")?.addEventListener("click", () => {
     logout();
-    location.replace("auth.html");
+    location.replace("index.html");
   });
 }
 
@@ -147,6 +153,7 @@ export function mountUserChip() {
 export function initAuthPage() {
   const form = $("#authForm");
   if (!form) return;
+  applyUIPrefs();
 
   let mode = new URLSearchParams(location.search).get("mode") === "login" ? "login" : "register";
   let captcha = makeCaptcha();

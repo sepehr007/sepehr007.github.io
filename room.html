@@ -187,6 +187,34 @@
     <section class="panel" data-panel="settings">
       <div class="panel-head"><h2 data-i18n="settings.title">تنظیمات اتاق</h2></div>
       <div class="settings-list" id="settingsList">
+        <div class="pref-card" id="prefCard">
+          <div class="pref-head">
+            <label data-i18n="prefs.title">ظاهر و پلیر</label>
+            <button class="link-btn" id="prefsReset" type="button" data-i18n="prefs.reset">بازنشانی</button>
+          </div>
+          <div class="accent-row" id="accentRow" role="radiogroup" aria-label="Accent color"></div>
+          <div class="pref-row">
+            <label for="prefBrightness" data-i18n="prefs.brightness">روشنایی تصویر</label>
+            <input type="range" id="prefBrightness" min="60" max="130" step="5" value="100">
+            <span class="pref-val" id="prefBrightnessVal">100%</span>
+          </div>
+          <div class="pref-row">
+            <label for="prefChatSize" data-i18n="prefs.chatSize">اندازهٔ متن چت</label>
+            <input type="range" id="prefChatSize" min="12" max="17" step="0.2" value="13.4">
+            <span class="pref-val" id="prefChatSizeVal">13.4</span>
+          </div>
+          <div class="pref-row">
+            <label for="prefChatAlpha" data-i18n="prefs.chatAlpha">تیرگی پنل چت</label>
+            <input type="range" id="prefChatAlpha" min="40" max="100" step="2" value="72">
+            <span class="pref-val" id="prefChatAlphaVal">72%</span>
+          </div>
+          <div class="pref-row">
+            <label for="prefChatBright" data-i18n="prefs.chatBright">روشنایی متن چت</label>
+            <input type="range" id="prefChatBright" min="85" max="120" step="5" value="100">
+            <span class="pref-val" id="prefChatBrightVal">100%</span>
+          </div>
+          <p class="hint pref-note" data-i18n="prefs.note">این تنظیمات فقط روی دستگاه خودت اعمال می‌شود.</p>
+        </div>
         <div class="setting">
           <label for="optControl" data-i18n="settings.whoControls">چه کسی کنترل پخش دارد؟</label>
           <select id="optControl">
@@ -215,6 +243,7 @@
             <input type="number" id="subsOffset" step="0.1" value="0" style="width:80px">
           </div>
         </div>
+        <p class="hint" data-i18n="settings.shortcuts">میانبرها: Space پخش/توقف · ← → ۵ ثانیه · J L ۱۰ ثانیه · F تمام‌صفحه</p>
         <p class="hint" data-i18n="settings.note">تغییرات در همین مرورگر ذخیره می‌شوند.</p>
       </div>
     </section>
