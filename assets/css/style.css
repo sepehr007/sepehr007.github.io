@@ -214,7 +214,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .react-fab{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:#fff;background:rgba(10,12,20,.55);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(10px);transition:.2s}
 .react-fab:hover,.react-fab[aria-expanded="true"]{background:rgba(124,92,255,.5);transform:scale(1.06)}
 .react-fab svg{width:19px;height:19px}
-.react-tray{display:flex;flex-direction:column;gap:5px;padding:7px;border-radius:999px;background:rgba(10,12,20,.74);border:1px solid var(--border);backdrop-filter:blur(12px);opacity:0;pointer-events:none;transform:translateY(8px) scale(.94);transition:.18s ease}
+.react-tray{position:absolute;bottom:calc(100% + 8px);inset-inline-end:0;display:flex;flex-direction:column;gap:5px;padding:7px;border-radius:999px;background:rgba(10,12,20,.74);border:1px solid var(--border);backdrop-filter:blur(12px);opacity:0;pointer-events:none;transform:translateY(8px) scale(.94);transition:.18s ease}
 .react-tray.open{opacity:1;pointer-events:auto;transform:none}
 .react-tray button{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-size:19px;line-height:1;transition:.15s}
 .react-tray button:hover{background:rgba(255,255,255,.13);transform:scale(1.16)}
@@ -499,7 +499,8 @@ html[dir="rtl"] .avatar-choice.active::after{right:auto;left:5px}
   .vol-wrap{display:flex}
   .vol-wrap .vol{display:none}
   .react-dock{top:8px;bottom:auto;transform:none;inset-inline-start:8px;inset-inline-end:auto;flex-direction:column-reverse;align-items:flex-start}
-  .react-tray{flex-direction:row;width:max-content;border-radius:999px}
+  .react-tray{top:calc(100% + 8px);bottom:auto;inset-inline-start:0;inset-inline-end:auto;flex-direction:row;width:max-content;border-radius:999px;transform:translateY(-8px) scale(.94)}
+  .react-tray.open{transform:none}
   .react-tray button{width:30px;height:30px;font-size:17px}
   .ctl-txt{display:none}
   #speedBtn{display:grid;min-width:34px;padding:0;font-size:11px}
