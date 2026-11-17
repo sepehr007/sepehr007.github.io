@@ -589,6 +589,13 @@ html[dir="rtl"] .avatar-choice.active::after{right:auto;left:5px}
 .theme-opt{flex:1;padding:7px 6px;border-radius:9px;font-size:12px;font-weight:700;color:var(--text-dim);transition:background .2s,color .2s,box-shadow .2s}
 .theme-opt:hover{color:var(--text)}
 .theme-opt.active{background:var(--grad);color:#fff;box-shadow:0 8px 18px -10px rgba(124,92,255,.8)}
+.palette-row{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.palette-row .accent-row{margin-bottom:0}
+.accent-custom{position:relative;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;border:1px dashed var(--border-strong);color:var(--text-dim);cursor:pointer;flex:none;transition:border-color .15s,box-shadow .15s}
+.accent-custom:hover{color:var(--text)}
+.accent-custom.active{border-style:solid;border-color:rgba(255,255,255,.7);color:#fff;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 24%,transparent)}
+.accent-custom input{position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;cursor:pointer}
+.accent-custom svg{width:13px;height:13px;pointer-events:none}
 .accent-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
 .accent-swatch{width:26px;height:26px;border-radius:50%;border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);transition:transform .15s,border-color .15s;padding:0}
 .accent-swatch:hover{transform:scale(1.1)}

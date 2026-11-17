@@ -2,7 +2,7 @@ import { initI18n, t, applyI18n, getLang } from "./i18n.js";
 import {
   $, $$, el, escapeHtml, colorFor, initials, fmtTime, fmtClock, toast,
   confirmDialog, copyText, store, validateMediaUrl, createLimiter, debounce,
-  registerServiceWorker, applyUIPrefs, getPrefs, savePrefs, resetPrefs, ACCENTS
+  registerServiceWorker, applyUIPrefs, getPrefs, savePrefs, resetPrefs, ACCENTS, lightenHex
 } from "./core.js";
 import { Net } from "./net.js";
 import { Player, parseSubtitles } from "./player.js";
@@ -1611,8 +1611,16 @@ function wirePrefs() {
     return b;
   };
   function markAccent() {
-    const cur = getPrefs().accent;
-    $$(".accent-swatch", row).forEach((s) => s.classList.toggle("active", s.dataset.a === cur));
+    const p = getPrefs();
+    const preset = ACCENTS.some((acc) => acc.a === p.accent);
+    $$(".accent-swatch", row).forEach((s) => s.classList.toggle("active", s.dataset.a === p.accent));
+    const wrap = $("#accentCustomWrap");
+    const input = $("#accentCustom");
+    if (input) input.value = p.accent;
+    if (wrap) {
+      wrap.classList.toggle("active", !preset);
+      wrap.style.background = preset ? "" : `linear-gradient(135deg,${p.accent},${p.accent2})`;
+    }
   }
   const themeRow = $("#themeRow");
   function markTheme() {
@@ -1630,9 +1638,15 @@ function wirePrefs() {
   }
   markTheme();
   ACCENTS.forEach((acc) => row.append(makeSwatch(acc)));
-  if (!ACCENTS.some((acc) => acc.a === prefs.accent)) {
-    row.append(makeSwatch({ a: prefs.accent, b: prefs.accent2 }));
+  const customInput = $("#accentCustom");
+  if (customInput) {
+    customInput.addEventListener("input", () => {
+      savePrefs({ accent: customInput.value, accent2: lightenHex(customInput.value) });
+      markAccent();
+    });
+    customInput.addEventListener("change", () => toast(t("toast.customAccent"), "success"));
   }
+  markAccent();
 
   const bindRange = (id, valId, key, fmt) => {
     const inp = $(id);

@@ -144,7 +144,13 @@
         <h2 data-i18n="profile.appearance">ظاهر</h2>
         <div class="field">
           <span data-i18n="profile.accent">رنگ لهجه</span>
-          <div class="accent-row" id="accentRow" role="radiogroup" aria-label="Accent color"></div>
+          <div class="palette-row">
+            <div class="accent-row" id="accentRow" role="radiogroup" aria-label="Accent color"></div>
+            <label class="accent-custom" id="accentCustomWrap" data-i18n-title="prefs.custom" title="رنگ دلخواه">
+              <input type="color" id="accentCustom" aria-label="Custom accent color">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            </label>
+          </div>
         </div>
         <button class="link-btn" id="lookReset" type="button" data-i18n="profile.lookReset">بازنشانی ظاهر</button>
       </section>

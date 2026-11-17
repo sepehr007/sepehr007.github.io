@@ -1,7 +1,7 @@
 import { initI18n, t } from "./i18n.js";
 import {
   $, $$, el, toast, initials, applyUIPrefs, getPrefs, savePrefs, resetPrefs,
-  ACCENTS, registerServiceWorker
+  ACCENTS, lightenHex, registerServiceWorker
 } from "./core.js";
 import {
   currentUser, getProfile, saveProfile, changeUsername, changePassword,
@@ -335,7 +335,15 @@ function wireAppearance() {
   const row = $("#accentRow");
   const paint = () => {
     const prefs = getPrefs();
+    const preset = ACCENTS.some((a) => a.a === prefs.accent);
     [...row.children].forEach((b) => b.classList.toggle("active", b.dataset.a === prefs.accent));
+    const input = $("#accentCustom");
+    const wrap = $("#accentCustomWrap");
+    if (input) input.value = prefs.accent;
+    if (wrap) {
+      wrap.classList.toggle("active", !preset);
+      wrap.style.background = preset ? "" : `linear-gradient(135deg,${prefs.accent},${prefs.accent2})`;
+    }
   };
   for (const acc of ACCENTS) {
     const b = el("button", { class: "accent-swatch", type: "button", "data-a": acc.a, title: acc.a });
@@ -345,6 +353,13 @@ function wireAppearance() {
       paint();
     });
     row.append(b);
+  }
+  const custom = $("#accentCustom");
+  if (custom) {
+    custom.addEventListener("input", () => {
+      savePrefs({ accent: custom.value, accent2: lightenHex(custom.value) });
+      paint();
+    });
   }
   paint();
   $("#lookReset").addEventListener("click", () => {

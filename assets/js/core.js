@@ -177,6 +177,14 @@ export function applyUIPrefs(prefs = getPrefs()) {
   if (video) video.style.filter = prefs.brightness === 100 ? "" : `brightness(${prefs.brightness / 100})`;
 }
 
+export function lightenHex(hex, amount = 0.35) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const mix = (c) => Math.round(c + (255 - c) * amount).toString(16).padStart(2, "0");
+  return `#${mix((n >> 16) & 255)}${mix((n >> 8) & 255)}${mix(n & 255)}`;
+}
+
 export const ACCENTS = [
   { a: "#7c5cff", b: "#22d3ee" },
   { a: "#f472b6", b: "#f59e0b" },
