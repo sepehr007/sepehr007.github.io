@@ -653,7 +653,9 @@ export class Net {
     const entry = this.chat.find((m) => m.id === msg.id);
     if (!entry) return;
     if (entry.by !== member.id && !this.isMod(member)) return;
-    entry.deleted = true; entry.text = "";
+    entry.deleted = true;
+    entry.text = "";
+    entry.pinned = false;
     this.#broadcast({ t: "chatUpdate", msg: entry });
     this.emit("chatUpdate", entry);
   }
