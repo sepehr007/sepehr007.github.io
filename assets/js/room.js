@@ -103,6 +103,11 @@ async function boot() {
     location.replace("index.html");
     return;
   }
+  if (isHost && !accessOn("roomCreate", siteCfg)) {
+    toast(getLang() === "fa" ? "ساخت اتاق موقتاً بسته شده است." : "Room creation is temporarily closed.", "error");
+    setTimeout(() => location.replace("./"), 1400);
+    return;
+  }
   if (!isHost && !accessOn("roomJoin", siteCfg)) {
     toast(getLang() === "fa" ? "ورود به اتاق‌ها موقتاً بسته شده است." : "Joining rooms is temporarily closed.", "error");
     setTimeout(() => location.replace("./"), 1400);
