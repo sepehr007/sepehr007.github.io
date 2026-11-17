@@ -605,9 +605,30 @@ export class Net {
   }
   isMod(member) { return member?.role === "owner" || member?.role === "mod"; }
 
+  #allow(member, kind, max, windowMs) {
+    if (!member) return true;
+    const now = Date.now();
+    const rates = member.rates || (member.rates = {});
+    const hits = (rates[kind] || []).filter((t) => now - t < windowMs);
+    if (hits.length >= max) {
+      rates[kind] = hits;
+      if (now - (rates[`${kind}!`] || 0) > 1200) {
+        rates[`${kind}!`] = now;
+        const payload = { t: "throttle", kind, wait: Math.ceil(windowMs / 1000) };
+        if (member.id === this.selfId) this.emit("throttle", payload);
+        else this.#sendTo(member.id, payload);
+      }
+      return false;
+    }
+    hits.push(now);
+    rates[kind] = hits;
+    return true;
+  }
+
   #hostReaction(member, msg) {
     const emoji = String(msg.emoji || "");
     if (!LIVE_REACTIONS.includes(emoji)) return;
+    if (!this.#allow(member, "reaction", 8, 5000)) return;
     const now = Date.now();
     if (now - (member.lastReactionAt || 0) < 600) return;
     member.lastReactionAt = now;
@@ -625,9 +646,7 @@ export class Net {
       if (wait > 0) { this.#sendTo(member.id, { t: "slow", wait: Math.ceil(wait / 1000) }); return; }
     }
     member.lastChatAt = now;
-    member.chatHits = (member.chatHits || []).filter((t) => now - t < 3000);
-    if (member.chatHits.length >= 6) return;
-    member.chatHits.push(now);
+    if (!this.#allow(member, "chat", 6, 3000)) return;
     const entry = {
       id: uid(), by: member.id, nick: member.nick, role: member.role,
       text, at: now, replyTo: msg.replyTo || null,
@@ -640,6 +659,7 @@ export class Net {
   }
 
   #hostChatEdit(member, msg) {
+    if (!this.#allow(member, "chatEdit", 8, 5000)) return;
     const entry = this.chat.find((m) => m.id === msg.id);
     if (!entry || entry.by !== member.id || entry.deleted) return;
     const text = String(msg.text || "").slice(0, 500).trim();
@@ -650,6 +670,7 @@ export class Net {
   }
 
   #hostChatDelete(member, msg) {
+    if (!this.#allow(member, "chatDelete", 10, 5000)) return;
     const entry = this.chat.find((m) => m.id === msg.id);
     if (!entry) return;
     if (entry.by !== member.id && !this.isMod(member)) return;
@@ -662,12 +683,14 @@ export class Net {
 
   #hostChatClear(member) {
     if (!this.isMod(member) || !this.chat.length) return;
+    if (!this.#allow(member, "chatClear", 4, 10000)) return;
     this.chat = [];
     this.#broadcast({ t: "chatClear", by: member.nick });
     this.emit("chatClear", { by: member.nick });
   }
 
   #hostReact(member, msg) {
+    if (!this.#allow(member, "react", 15, 5000)) return;
     const entry = this.chat.find((m) => m.id === msg.id);
     if (!entry) return;
     const emoji = String(msg.emoji || "").slice(0, 8);
@@ -682,6 +705,7 @@ export class Net {
 
   #hostPin(member, msg) {
     if (!this.isMod(member)) return;
+    if (!this.#allow(member, "pin", 10, 5000)) return;
     const entry = this.chat.find((m) => m.id === msg.id);
     if (!entry) return;
     entry.pinned = !entry.pinned;
@@ -690,11 +714,13 @@ export class Net {
   }
 
   #hostTyping(member) {
+    if (!this.#allow(member, "typing", 6, 3000)) return;
     this.#broadcast({ t: "typing", id: member.id, nick: member.nick }, member.id);
   }
 
   #hostLoadVideo(member, url) {
     if (!this.canControl(member)) return this.#sendTo(member.id, { t: "denied", reason: "control" });
+    if (!this.#allow(member, "loadVideo", 4, 15000)) return;
     const v = validateMediaUrl(url);
     if (!v.ok) return this.#sendTo(member.id, { t: "denied", reason: v.reason });
     this.localFile = null;
@@ -705,6 +731,7 @@ export class Net {
 
   #hostControl(member, msg) {
     if (!this.canControl(member)) return this.#sendTo(member.id, { t: "denied", reason: "control" });
+    if (!this.#allow(member, "control", 12, 3000)) return;
     const p = { ...this.playback };
     switch (msg.action) {
       case "play": p.playing = true; p.at = Date.now(); break;
@@ -721,6 +748,7 @@ export class Net {
   }
 
   #hostQueueAdd(member, url) {
+    if (!this.#allow(member, "queueAdd", 5, 15000)) return;
     const v = validateMediaUrl(url);
     if (!v.ok) return this.#sendTo(member.id, { t: "denied", reason: v.reason });
     if (this.queue.some((q) => q.url === v.url)) return;
@@ -730,6 +758,7 @@ export class Net {
   }
 
   #hostQueueVote(member, id) {
+    if (!this.#allow(member, "queueVote", 20, 5000)) return;
     const item = this.queue.find((q) => q.id === id);
     if (!item) return;
     const i = item.votes.indexOf(member.id);
@@ -740,6 +769,7 @@ export class Net {
 
   #hostQueuePlay(member, id) {
     if (!this.canControl(member)) return this.#sendTo(member.id, { t: "denied", reason: "control" });
+    if (!this.#allow(member, "control", 12, 3000)) return;
     const item = this.queue.find((q) => q.id === id);
     if (!item) return;
     this.queue = this.queue.filter((q) => q.id !== id);
@@ -752,6 +782,7 @@ export class Net {
 
   #hostSettings(member, patch) {
     if (member.role !== "owner" || !patch) return;
+    if (!this.#allow(member, "settings", 10, 3000)) return;
     const allowed = ["control", "locked", "approval", "capacity", "slow"];
     for (const k of allowed) {
       if (!(k in patch)) continue;
@@ -766,6 +797,7 @@ export class Net {
 
   #hostMod(member, msg) {
     if (!this.isMod(member)) return;
+    if (!this.#allow(member, "mod", 15, 5000)) return;
     const target = this.members.get(msg.target);
     if (!target || target.role === "owner") return;
     const action = msg.action;
@@ -827,6 +859,7 @@ export class Net {
       case "chatClear": this.emit("chatClear", { by: msg.by }); break;
       case "typing": this.emit("typing", { id: msg.id, nick: msg.nick }); break;
       case "slow": this.emit("slow", Number(msg.wait) || 0); break;
+      case "throttle": this.emit("throttle", { kind: msg.kind, wait: Number(msg.wait) || 0 }); break;
       case "playback": this.emit("playback", msg.state); break;
       case "room": this.roomState = msg.room; this.emit("room", msg.room); break;
       case "queue": this.emit("queue", msg.items); break;

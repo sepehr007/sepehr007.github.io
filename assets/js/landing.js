@@ -1,5 +1,5 @@
 import { initI18n, t } from "./i18n.js";
-import { $, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt } from "./core.js";
+import { $, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt, createLimiter } from "./core.js";
 import { currentUser, mountUserChip, isRealName } from "./auth.js";
 
 applyUIPrefs();
@@ -41,6 +41,16 @@ const pwdInput = $("#createPassword");
 const joinCode = $("#joinCode");
 const joinNick = $("#joinNick");
 
+const createGuard = createLimiter(1, 1800);
+const joinGuard = createLimiter(2, 1800);
+let guardWarnAt = 0;
+function guardWarn() {
+  const now = Date.now();
+  if (now - guardWarnAt < 1500) return;
+  guardWarnAt = now;
+  toast(t("toast.slowDown"), "error");
+}
+
 const savedNick = user?.nick || store.get("wt.nick", "");
 if (savedNick) { createNick.value = savedNick; joinNick.value = savedNick; }
 
@@ -68,6 +78,7 @@ $("#createBtn").addEventListener("click", () => {
     cap: capacityInput.value,
     privacy
   });
+  if (!createGuard()) { guardWarn(); return; }
   startRoom(q);
 });
 
@@ -95,6 +106,7 @@ function joinRoom() {
     return;
   }
   store.set("wt.nick", nick);
+  if (!joinGuard()) { guardWarn(); return; }
   startRoom(new URLSearchParams({ room: code, nick }));
 }
 

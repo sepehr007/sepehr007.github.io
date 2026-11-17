@@ -1,7 +1,7 @@
 import { initI18n, t } from "./i18n.js";
 import {
   $, $$, el, toast, initials, applyUIPrefs, getPrefs, savePrefs, resetPrefs,
-  ACCENTS, lightenHex, registerServiceWorker
+  ACCENTS, lightenHex, registerServiceWorker, createLimiter
 } from "./core.js";
 import {
   currentUser, getProfile, saveProfile, changeUsername, changePassword,
@@ -231,9 +231,21 @@ function wireDetails() {
 
 /* ---------- avatar ---------- */
 function wireAvatar() {
+  const avatarGuard = createLimiter(3, 1200);
+  let warnAt = 0;
+  const allowAvatar = () => {
+    if (avatarGuard()) return true;
+    const now = Date.now();
+    if (now - warnAt > 1500) {
+      warnAt = now;
+      toast(t("toast.avatarSpam"), "error");
+    }
+    return false;
+  };
+
   $("#avatarGallery").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-avatar]");
-    if (!btn) return;
+    if (!btn || !allowAvatar()) return;
     try {
       const res = setAvatar(presetValue(btn.dataset.avatar));
       if (!res.ok) throw new Error(res.error);
@@ -250,6 +262,7 @@ function wireAvatar() {
     renderAvatarGallery();
   }));
   $("#avatarRemove").addEventListener("click", () => {
+    if (!allowAvatar()) return;
     try {
       setAvatar("");
       profile.avatar = "";

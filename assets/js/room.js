@@ -385,6 +385,8 @@ function wireNet() {
     else toast(t("toast.videoInvalid"), "error");
   });
 
+  net.on("throttle", () => toast(t("toast.slowDown"), "error"));
+
   net.on("joinRequest", async ({ peerId, nick: n }) => {
     const ok = await confirmDialog({
       title: getLang() === "fa" ? "درخواست ورود" : "Join request",
