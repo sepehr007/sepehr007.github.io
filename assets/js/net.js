@@ -16,6 +16,7 @@ const JOIN_RETRY_MS = 2500;
 const JOIN_MAX_TRIES = 9;
 const PRESENCE_MS = 30000;
 const AVATAR_RE = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
+const LIVE_REACTIONS = ["❤️", "😂", "😮", "👏", "🔥", "🍿"];
 
 function cleanAvatar(value) {
   const id = avatarId(value);
@@ -482,6 +483,7 @@ export class Net {
       case "chatEdit": return this.#hostChatEdit(member, msg);
       case "chatDelete": return this.#hostChatDelete(member, msg);
       case "react": return this.#hostReact(member, msg);
+      case "reaction": return this.#hostReaction(member, msg);
       case "pin": return this.#hostPin(member, msg);
       case "typing": return this.#hostTyping(member);
       case "loadVideo": return this.#hostLoadVideo(member, msg.url);
@@ -581,6 +583,17 @@ export class Net {
     return false;
   }
   isMod(member) { return member?.role === "owner" || member?.role === "mod"; }
+
+  #hostReaction(member, msg) {
+    const emoji = String(msg.emoji || "");
+    if (!LIVE_REACTIONS.includes(emoji)) return;
+    const now = Date.now();
+    if (now - (member.lastReactionAt || 0) < 600) return;
+    member.lastReactionAt = now;
+    const out = { id: uid(), emoji, nick: member.nick, at: now };
+    this.#broadcast({ t: "reaction", ...out });
+    this.emit("reaction", out);
+  }
 
   #hostChat(member, msg) {
     const text = String(msg.text || "").slice(0, 500).trim();
@@ -770,6 +783,7 @@ export class Net {
         this.emit("members", msg.members);
         break;
       case "chat": this.emit("chat", msg.msg); break;
+      case "reaction": this.emit("reaction", msg); break;
       case "chatUpdate": this.emit("chatUpdate", msg.msg); break;
       case "typing": this.emit("typing", { id: msg.id, nick: msg.nick }); break;
       case "playback": this.emit("playback", msg.state); break;
@@ -886,6 +900,7 @@ export class Net {
       chatEdit: () => this.#hostChatEdit(me, payload),
       chatDelete: () => this.#hostChatDelete(me, payload),
       react: () => this.#hostReact(me, payload),
+      reaction: () => this.#hostReaction(me, payload),
       pin: () => this.#hostPin(me, payload),
       typing: () => { this.#broadcast({ t: "typing", id: me.id, nick: me.nick }); this.emit("typing", { id: me.id, nick: me.nick, self: true }); },
       loadVideo: () => this.#hostLoadVideo(me, payload.url),

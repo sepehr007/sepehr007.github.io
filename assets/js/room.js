@@ -40,6 +40,7 @@ let queueItems = [];
 let roomInfo = null;
 let activeTabName = "chat";
 let unreadChat = 0;
+const LIVE_EMOJIS = ["❤️", "😂", "😮", "👏", "🔥", "🍿"];
 const WAKE_KEY = "wt.wake";
 let wakeWanted = store.get(WAKE_KEY, true) !== false;
 let wakeSentinel = null;
@@ -118,6 +119,7 @@ async function boot() {
   wireSettings();
   wireWakeLock();
   wireSleepTimer();
+  wireReactions();
   wirePrefs();
   wireVoice();
   wireMisc();
@@ -232,6 +234,7 @@ function wireNet() {
   });
 
   net.on("chat", (msg) => { appendMessage(msg, true); noteIncomingChat(); scrollChat(); });
+  net.on("reaction", (r) => floatReaction(r.emoji));
   net.on("chatUpdate", (msg) => updateMessage(msg));
   net.on("typing", ({ id, nick: n }) => {
     if (id === me.id) return;
@@ -1517,6 +1520,41 @@ function renderVoiceTiles() {
     }
     strip.append(tile);
   }
+}
+
+/* ================= live reactions ================= */
+function floatReaction(emoji) {
+  const frame = $("#videoFrame");
+  if (!frame || !frame.classList.contains("has-media")) return;
+  const node = el("span", { class: "live-reaction", text: emoji });
+  node.style.setProperty("--x", `${12 + Math.random() * 76}%`);
+  node.style.setProperty("--dx", `${Math.round((Math.random() - 0.5) * 90)}px`);
+  frame.append(node);
+  setTimeout(() => node.remove(), 2300);
+}
+
+function wireReactions() {
+  const dock = $("#reactDock");
+  const tray = $("#reactTray");
+  const toggle = $("#reactToggle");
+  if (!dock || !tray || !toggle) return;
+  const close = () => {
+    tray.classList.remove("open");
+    toggle.setAttribute("aria-expanded", "false");
+  };
+  for (const emoji of LIVE_EMOJIS) {
+    tray.append(el("button", {
+      type: "button", role: "menuitem", text: emoji, "aria-label": emoji,
+      onclick: () => { close(); net.command("reaction", { emoji }); }
+    }));
+  }
+  toggle.addEventListener("click", () => {
+    const open = tray.classList.toggle("open");
+    toggle.setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("pointerdown", (e) => {
+    if (tray.classList.contains("open") && !dock.contains(e.target)) close();
+  });
 }
 
 /* ================= misc ================= */
