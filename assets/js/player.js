@@ -143,7 +143,7 @@ export class Player {
     const list = this.hls.audioTracks || [];
     if (!list.length) { this.onAudio?.(null); return; }
     const tracks = list.map((a, i) => ({ i, name: a.name || "", lang: a.lang || "" }));
-    this.onAudio?.({ tracks, current: this.hls.audioTrack });
+    this.onAudio?.({ tracks, current: this.hls.audioTrack ?? 0 });
   }
 
   setAudio(i) {
