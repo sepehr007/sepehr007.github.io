@@ -370,6 +370,11 @@ function wirePlayer() {
   });
   $("#fullBtn").addEventListener("click", () => player.toggleFullscreen());
   $("#pipBtn").addEventListener("click", () => player.togglePiP());
+  $("#castBtn")?.addEventListener("click", async () => {
+    try { await video.remote.prompt(); }
+    catch { toast(t("toast.castFail"), "error"); }
+  });
+  if ("remote" in HTMLVideoElement.prototype && video.remote) $("#castBtn").classList.remove("hidden");
   $("#theaterBtn").addEventListener("click", () => player.toggleTheater());
   $("#subsBtn").addEventListener("click", () => activateTab("settings"));
 

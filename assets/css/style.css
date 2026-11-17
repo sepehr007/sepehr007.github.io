@@ -498,6 +498,8 @@ html[dir="rtl"] .avatar-choice.active::after{right:auto;left:5px}
   .react-tray{flex-direction:row;width:max-content;border-radius:999px}
   .react-tray button{width:30px;height:30px;font-size:17px}
   .ctl-txt{display:none}
+  #speedBtn{display:grid;min-width:34px;padding:0;font-size:11px}
+  #castBtn{display:none}
   .invite-btn span{display:none}
   .invite-btn{width:26px;height:26px;padding:0;border-radius:50%}
   .status-label{display:none}
