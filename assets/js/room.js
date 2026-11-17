@@ -47,6 +47,10 @@ let wakeSentinel = null;
 let wakePending = false;
 const QUEUE_AUTO_KEY = "wt.queueAuto";
 let queueAuto = store.get(QUEUE_AUTO_KEY, true) !== false;
+const PTT_KEY = "wt.ptt";
+let pttOn = store.get(PTT_KEY, false) === true;
+let pttHeld = false;
+let pttRestoreMute = true;
 let selfVoice = false;
 let currentPlayback = null;
 let localMode = false;
@@ -126,6 +130,7 @@ async function boot() {
   wireReactions();
   wirePrefs();
   wireVoice();
+  wirePtt();
   wireMisc();
   wireViewport();
   wireSheet();
@@ -1544,6 +1549,7 @@ function wireVoice() {
   $("#voiceLeaveBtn").addEventListener("click", leaveVoice);
   $("#micBtn").addEventListener("click", () => {
     if (!selfVoice) return toast(t("toast.notInVoice"));
+    if (pttOn) return;
     voice.setMuted(!voice.muted);
     syncMicUI();
   });
@@ -1560,6 +1566,7 @@ async function toggleVoice() {
   const ok = await voice.join();
   if (!ok) return;
   selfVoice = true;
+  if (pttOn) voice.setMuted(true);
   net.command("voice", { on: true });
   $("#voiceBtn").classList.add("active");
   $("#voiceDock").classList.remove("hidden");
@@ -1591,6 +1598,74 @@ function syncMicUI() {
 
 function syncDeafenUI() {
   $("#deafenBtn").classList.toggle("active", voice.deafened);
+}
+
+/* ---------- push-to-talk ---------- */
+function wirePtt() {
+  const input = $("#optPtt");
+  if (!input) return;
+  input.checked = pttOn;
+  input.addEventListener("change", () => {
+    pttOn = input.checked;
+    store.set(PTT_KEY, pttOn);
+    if (pttHeld) pttRelease();
+    if (pttOn) {
+      if (selfVoice && !voice.muted) { voice.setMuted(true); syncMicUI(); }
+      toast(t("toast.pttOn"), "info", 4200);
+    } else {
+      toast(t("toast.pttOff"));
+    }
+  });
+
+  const typing = (target) => target instanceof Element && !!target.closest("input,textarea,select,[contenteditable]");
+  document.addEventListener("keydown", (e) => {
+    if (!pttOn || !selfVoice) return;
+    if (e.key.toLowerCase() !== "v" || e.repeat) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (typing(e.target)) return;
+    e.preventDefault();
+    pttPress();
+  });
+  document.addEventListener("keyup", (e) => {
+    if (e.key.toLowerCase() === "v") pttRelease();
+  });
+  window.addEventListener("blur", pttRelease);
+
+  /* holding the mic button also works (touch friendly) */
+  const mic = $("#micBtn");
+  let micHeld = false;
+  mic.addEventListener("pointerdown", (e) => {
+    if (!pttOn || !selfVoice) return;
+    micHeld = true;
+    try { mic.setPointerCapture(e.pointerId); } catch {}
+    pttPress();
+  });
+  const releaseMic = () => {
+    if (!micHeld) return;
+    micHeld = false;
+    pttRelease();
+  };
+  mic.addEventListener("pointerup", releaseMic);
+  mic.addEventListener("pointercancel", releaseMic);
+  mic.addEventListener("lostpointercapture", releaseMic);
+}
+
+function pttPress() {
+  if (!pttOn || !selfVoice) return;
+  if (!pttHeld) {
+    pttRestoreMute = voice.muted;
+    pttHeld = true;
+  }
+  if (voice.muted) { voice.setMuted(false); syncMicUI(); }
+}
+
+function pttRelease() {
+  if (!pttHeld) return;
+  pttHeld = false;
+  if (pttRestoreMute && selfVoice && !voice.muted) {
+    voice.setMuted(true);
+    syncMicUI();
+  }
 }
 
 function renderVoiceTiles() {
