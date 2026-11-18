@@ -206,3 +206,6 @@ html[data-theme="light"] .activity-room{color:#9a3412;background:rgba(var(--bran
 .plan-status p{margin-top:2px;font-size:12px}
 .plan-card-link{align-self:flex-start}
 html[data-theme="light"] .plan-status{background:rgba(15,23,42,.03)}
+
+.recovery-btn{display:block;margin:12px auto 0;background:none;font-size:12px;color:var(--text-dim)}
+.recovery-msg{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.9;word-break:break-word}

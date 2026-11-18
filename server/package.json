@@ -11,7 +11,7 @@
     "seed": "node seed.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
   },
   "dependencies": {
     "@fastify/cors": "^11.4.3",

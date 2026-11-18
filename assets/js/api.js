@@ -223,11 +223,11 @@ export function apiHealth() {
 }
 
 export const authApi = {
-  register({ username, email, password, avatar }) {
+  register({ username, email, password, avatar, nick }) {
     return apiFetch("/auth/register", {
       method: "POST",
       auth: false,
-      body: { username, email, password, avatar }
+      body: { username, email, password, avatar, nick }
     });
   },
   login({ identifier, email, username, password }) {
@@ -242,6 +242,28 @@ export const authApi = {
   },
   me() {
     return apiFetch("/auth/me");
+  },
+  updateProfile(patch) {
+    return apiFetch("/auth/me", { method: "PATCH", body: patch });
+  },
+  changePassword({ current, next }) {
+    return apiFetch("/auth/password", { method: "POST", body: { current, next } }).then((res) => {
+      if (res?.token) apiSetToken(res.token);
+      return res;
+    });
+  },
+  recover({ identifier, code, password }) {
+    return apiFetch("/auth/recover", {
+      method: "POST",
+      auth: false,
+      body: { identifier, code, password }
+    }).then((res) => {
+      if (res?.token) apiSetToken(res.token);
+      return res;
+    });
+  },
+  newRecoveryCode({ password }) {
+    return apiFetch("/auth/recovery-code", { method: "POST", body: { password } });
   },
   logout() {
     return apiFetch("/auth/logout", { method: "POST" }).finally(() => apiClearToken());

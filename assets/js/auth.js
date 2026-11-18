@@ -4,7 +4,7 @@ import { avatarId, avatarSrc, isAvatarId, presetValue } from "./avatars.js";
 import { loadSiteConfig, applySiteConfig, accessOn, featureOn } from "./site-config.js";
 import { buildFlagContext, recordFeatureUse } from "./feature-flags.js";
 import { logModeration } from "./modlog.js";
-import { apiFetch, apiGetToken, apiSetToken, apiClearToken } from "./api.js";
+import { apiFetch, apiGetToken, apiSetToken, apiClearToken, authApi } from "./api.js";
 import { dbPut, dbDelete } from "./db.js";
 
 const USERS_KEY = "wt.users";
@@ -37,6 +37,38 @@ async function hashPassword(password, saltHex) {
     256
   );
   return hex(bits);
+}
+
+const RECOVERY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function makeRecoveryCode() {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  const chars = [...bytes].map((b) => RECOVERY_ALPHABET[b % RECOVERY_ALPHABET.length]);
+  return [0, 4, 8].map((i) => chars.slice(i, i + 4).join("")).join("-");
+}
+
+function normalizeRecoveryCode(raw) {
+  return String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+async function attachRecovery(rec, code) {
+  const salt = randHex(16);
+  return { ...rec, recSalt: salt, recHash: await hashPassword(normalizeRecoveryCode(code), salt) };
+}
+
+async function matchesRecovery(rec, code) {
+  if (!rec?.recHash || !rec?.recSalt) return false;
+  try {
+    return (await hashPassword(normalizeRecoveryCode(code), rec.recSalt)) === rec.recHash;
+  } catch {
+    return false;
+  }
+}
+
+function syncProfileToServer(patch) {
+  if (!apiGetToken()) return;
+  apiFetch("/auth/me", { method: "PATCH", body: patch, timeoutMs: 8000 }).catch(() => {});
 }
 
 function readUsers() {
@@ -77,13 +109,22 @@ function readApiUser() {
 }
 function writeApiUser(user) {
   if (!user?.username) return null;
+  const prof = user.profile && typeof user.profile === "object" ? user.profile : {};
   const safe = {
     id: user.id || "",
     username: user.username,
     email: user.email || "",
     role: user.role || "user",
-    avatar: user.avatar || "",
-    createdAt: user.createdAt || null
+    avatar: prof.avatar || user.avatar || "",
+    nick: user.nick || prof.nick || "",
+    createdAt: user.createdAt || null,
+    profile: {
+      nick: prof.nick || user.nick || "",
+      birthdate: prof.birthdate || "",
+      city: prof.city || "",
+      bio: prof.bio || "",
+      avatar: prof.avatar || user.avatar || ""
+    }
   };
   try { localStorage.setItem(API_USER_KEY, JSON.stringify(safe)); } catch {}
   return safe;
@@ -106,21 +147,31 @@ function backendUnavailable(err) {
   if (err.status === 0 || err.status === 404 || err.status === 503) return true;
   return err.status >= 500;
 }
-async function mirrorApiAccount(apiUser, { password = "", nick = "" } = {}) {
+async function mirrorApiAccount(apiUser, { password = "", nick = "", force = false } = {}) {
   const key = localKey(apiUser?.username);
   if (!key) return "";
   const users = readUsers();
   const existing = users[key];
   const session = readLocalSession();
   const sessionActive = Boolean(session?.u) && (!session.exp || Date.now() <= session.exp);
-  if (!existing && sessionActive && session.u !== key) return "";
+  if (!force && !existing && sessionActive && session.u !== key) return "";
+  const serverProfile = apiUser?.profile && typeof apiUser.profile === "object" ? apiUser.profile : {};
+  const serverNick = normalizeName(apiUser?.nick || serverProfile.nick || "");
   if (existing) {
     let changed = false;
     if (!existing.email && apiUser.email) { existing.email = apiUser.email; changed = true; }
-    if (password && !existing.hash) {
+    if (serverNick && normalizeName(existing.nick) !== serverNick) { existing.nick = serverNick; changed = true; }
+    const merged = { ...(existing.profile || {}) };
+    if (serverProfile.birthdate && merged.birthdate !== serverProfile.birthdate) { merged.birthdate = serverProfile.birthdate; changed = true; }
+    if (serverProfile.city && merged.city !== serverProfile.city) { merged.city = serverProfile.city; changed = true; }
+    if (serverProfile.bio && merged.bio !== serverProfile.bio) { merged.bio = serverProfile.bio; changed = true; }
+    if (serverProfile.avatar && merged.avatar !== serverProfile.avatar) { merged.avatar = serverProfile.avatar; changed = true; }
+    if (changed) existing.profile = merged;
+    if (password) {
       try {
-        existing.salt = existing.salt || randHex(16);
-        existing.hash = await hashPassword(password, existing.salt);
+        const salt = randHex(16);
+        existing.salt = salt;
+        existing.hash = await hashPassword(password, salt);
         changed = true;
       } catch {}
     }
@@ -137,12 +188,17 @@ async function mirrorApiAccount(apiUser, { password = "", nick = "" } = {}) {
   }
   users[key] = {
     u: apiUser.username,
-    nick: normalizeName(nick) || apiUser.username,
+    nick: serverNick || normalizeName(nick) || apiUser.username,
     salt,
     hash: hashValue,
     email: apiUser.email || "",
     createdAt: Date.parse(apiUser.createdAt) || Date.now(),
-    profile: { avatar: apiUser.avatar || "" },
+    profile: {
+      avatar: serverProfile.avatar || apiUser.avatar || "",
+      birthdate: serverProfile.birthdate || "",
+      city: serverProfile.city || "",
+      bio: serverProfile.bio || ""
+    },
     friends: []
   };
   writeUsers(users);
@@ -342,6 +398,12 @@ export function saveProfile({ nick, birthdate, city, bio }) {
   };
   users[key] = { ...rec, nick: cleanNick, profile };
   writeUsers(users);
+  syncProfileToServer({
+    nick: cleanNick,
+    birthdate: profile.birthdate,
+    city: profile.city,
+    bio: profile.bio
+  });
   return { ok: true, nick: cleanNick };
 }
 
@@ -353,6 +415,15 @@ export async function changeUsername(raw) {
   const { users, rec, key } = ctx;
   if (newU === key) return { ok: true, username: newU };
   if (users[newU]) return { ok: false, error: "exists" };
+  if (apiGetToken()) {
+    try {
+      await apiFetch("/auth/me", { method: "PATCH", body: { username: newU }, timeoutMs: 10000 });
+    } catch (err) {
+      if (!backendUnavailable(err)) {
+        return { ok: false, error: err.status === 409 || err.payload?.error === "already_exists" ? "exists" : "username" };
+      }
+    }
+  }
   users[newU] = { ...rec, u: newU };
   delete users[key];
   for (const other of Object.values(users)) {
@@ -361,6 +432,8 @@ export async function changeUsername(raw) {
     }
   }
   writeUsers(users);
+  const apiUser = readApiUser();
+  if (apiUser && localKey(apiUser.username) === key) writeApiUser({ ...apiUser, username: newU });
   saveSession(newU);
   return { ok: true, username: newU };
 }
@@ -369,11 +442,25 @@ export async function changePassword({ current, next }) {
   let ctx;
   try { ctx = requireSessionUser(); } catch { return { ok: false, error: "session" }; }
   const { users, rec, key } = ctx;
+  if (!isPassword(next)) return { ok: false, error: "password" };
   let currentHash;
   try { currentHash = await hashPassword(String(current || ""), rec.salt); }
   catch { return { ok: false, error: "secure" }; }
-  if (currentHash !== rec.hash) return { ok: false, error: "current" };
-  if (!isPassword(next)) return { ok: false, error: "password" };
+  const localOk = Boolean(rec.hash) && currentHash === rec.hash;
+  let serverOk = false;
+  if (apiGetToken()) {
+    try {
+      const res = await apiFetch("/auth/password", { method: "POST", body: { current, next }, timeoutMs: 12000 });
+      if (res?.token) apiSetToken(res.token);
+      serverOk = true;
+    } catch (err) {
+      if (!backendUnavailable(err)) {
+        const code = err.payload?.error || "";
+        return { ok: false, error: code === "wrong_password" ? "current" : code === "invalid_password" ? "password" : "server" };
+      }
+    }
+  }
+  if (!localOk && !serverOk) return { ok: false, error: "current" };
   const salt = randHex(16);
   let hashValue;
   try { hashValue = await hashPassword(next, salt); }
@@ -393,6 +480,7 @@ export function setAvatar(value) {
   else return { ok: false, error: "image" };
   users[key] = { ...rec, profile };
   writeUsers(users);
+  syncProfileToServer({ avatar: profile.avatar || "" });
   return { ok: true, avatar: profile.avatar || "" };
 }
 
@@ -494,15 +582,24 @@ export async function register({ name, username, email, password }) {
       method: "POST",
       auth: false,
       timeoutMs: 12000,
-      body: { username: u, email: mail, password }
+      body: { username: u, email: mail, password, nick }
     });
     if (res?.token && res.user) {
       apiSetToken(res.token);
       writeApiUser(res.user);
-      const key = await mirrorApiAccount(res.user, { password, nick });
-      if (key) saveSession(key);
+      const key = await mirrorApiAccount(res.user, { password, nick, force: true });
+      if (key) {
+        saveSession(key);
+        if (res.recoveryCode) {
+          const users = readUsers();
+          if (users[key]) {
+            users[key] = await attachRecovery(users[key], res.recoveryCode);
+            writeUsers(users);
+          }
+        }
+      }
       clearThrottle(u);
-      return { ok: true, nick, remote: true };
+      return { ok: true, nick, remote: true, recoveryCode: res.recoveryCode || "" };
     }
   } catch (err) { apiErr = err; }
   if (apiErr && !backendUnavailable(apiErr)) {
@@ -517,10 +614,14 @@ export async function register({ name, username, email, password }) {
   let hashValue;
   try { hashValue = await hashPassword(password, salt); }
   catch { return { ok: false, error: "secure" }; }
-  users[u] = { u, nick, salt, hash: hashValue, email: mail, createdAt: Date.now(), profile: {}, friends: [] };
+  const recoveryCode = makeRecoveryCode();
+  let record = { u, nick, salt, hash: hashValue, email: mail, createdAt: Date.now(), profile: {}, friends: [] };
+  try { record = await attachRecovery(record, recoveryCode); }
+  catch { return { ok: false, error: "secure" }; }
+  users[u] = record;
   writeUsers(users);
   saveSession(u);
-  return { ok: true, nick };
+  return { ok: true, nick, recoveryCode };
 }
 
 export async function login({ username, password }) {
@@ -550,7 +651,7 @@ export async function login({ username, password }) {
     if (res?.token && res.user) {
       apiSetToken(res.token);
       writeApiUser(res.user);
-      const key = await mirrorApiAccount(res.user, { password });
+      const key = await mirrorApiAccount(res.user, { password, force: true });
       const localRec = key ? readUsers()[key] : null;
       saveSession(key || localKey(res.user.username));
       clearThrottle(u);
@@ -576,25 +677,95 @@ export async function login({ username, password }) {
   return { ok: true, nick: rec.nick };
 }
 
-export async function recover({ username, name, password }) {
-  const u = String(username || "").trim().toLowerCase();
+export async function recover({ username, name, code, password }) {
+  const identifier = String(username || "").trim();
+  const u = identifier.toLowerCase();
   const nick = normalizeName(name);
+  const recoveryCode = normalizeRecoveryCode(code);
   if (locallyBanned(u)) return { ok: false, error: "blocked" };
   const wait = lockedFor(u);
   if (wait) return { ok: false, error: "locked", wait };
+  if (!identifier) return { ok: false, error: "credentials" };
+  if (!isPassword(password)) return { ok: false, error: "password" };
+  if (!recoveryCode && !isRealName(nick)) return { ok: false, error: "credentials" };
+
+  if (recoveryCode) {
+    let apiErr = null;
+    try {
+      const res = await authApi.recover({ identifier, code: recoveryCode, password });
+      if (res?.token && res.user) {
+        apiSetToken(res.token);
+        writeApiUser(res.user);
+        const key = await mirrorApiAccount(res.user, { password, force: true });
+        if (key) {
+          saveSession(key);
+          const users = readUsers();
+          if (users[key] && res.recoveryCode) {
+            users[key] = await attachRecovery(users[key], res.recoveryCode);
+            writeUsers(users);
+          }
+        }
+        clearThrottle(u);
+        return { ok: true, nick: res.user.nick || res.user.username, remote: true, recoveryCode: res.recoveryCode || "" };
+      }
+    } catch (err) { apiErr = err; }
+    if (apiErr && !backendUnavailable(apiErr)) {
+      if (apiErr.status === 429) return { ok: false, error: "rate" };
+      if (apiErr.payload?.error === "invalid_password") return { ok: false, error: "password" };
+      return { ok: false, error: "credentials" };
+    }
+  }
+
   const users = readUsers();
   const rec = users[u];
-  if (!rec || normalizeName(rec.nick) !== nick) { noteFailure(u); return { ok: false, error: "credentials" }; }
-  if (!isPassword(password)) return { ok: false, error: "password" };
+  if (!rec) { noteFailure(u); return { ok: false, error: "credentials" }; }
+  const legacyOk = !rec.recHash && isRealName(nick) && normalizeName(rec.nick) === nick;
+  const codeOk = recoveryCode ? await matchesRecovery(rec, recoveryCode) : false;
+  if (!legacyOk && !codeOk) { noteFailure(u); return { ok: false, error: "credentials" }; }
   const salt = randHex(16);
   let hashValue;
   try { hashValue = await hashPassword(password, salt); }
   catch { return { ok: false, error: "secure" }; }
-  users[u] = { ...rec, salt, hash: hashValue, updatedAt: Date.now() };
+  const newCode = makeRecoveryCode();
+  let record = { ...rec, salt, hash: hashValue, updatedAt: Date.now() };
+  try { record = await attachRecovery(record, newCode); }
+  catch { return { ok: false, error: "secure" }; }
+  users[u] = record;
   writeUsers(users);
   clearThrottle(u);
   saveSession(u);
-  return { ok: true, nick: rec.nick };
+  return { ok: true, nick: rec.nick, recoveryCode: newCode };
+}
+
+export async function rotateRecoveryCode({ password } = {}) {
+  let ctx;
+  try { ctx = requireSessionUser(); } catch { return { ok: false, error: "session" }; }
+  const { users, rec, key } = ctx;
+  let hashValue;
+  try { hashValue = await hashPassword(String(password || ""), rec.salt); }
+  catch { return { ok: false, error: "secure" }; }
+  const localOk = Boolean(rec.hash) && hashValue === rec.hash;
+  if (apiGetToken()) {
+    try {
+      const res = await authApi.newRecoveryCode({ password });
+      if (res?.recoveryCode) {
+        users[key] = await attachRecovery(users[key], res.recoveryCode);
+        writeUsers(users);
+        return { ok: true, recoveryCode: res.recoveryCode };
+      }
+    } catch (err) {
+      if (!backendUnavailable(err)) {
+        const code = err.payload?.error || "";
+        return { ok: false, error: code === "wrong_password" ? "current" : "server" };
+      }
+    }
+  }
+  if (!localOk) return { ok: false, error: "current" };
+  const recoveryCode = makeRecoveryCode();
+  try { users[key] = await attachRecovery(users[key], recoveryCode); }
+  catch { return { ok: false, error: "secure" }; }
+  writeUsers(users);
+  return { ok: true, recoveryCode };
 }
 
 /* ---------- captcha ---------- */
@@ -652,6 +823,7 @@ export async function initAuthPage() {
   let recCaptcha = makeCaptcha();
   let busy = false;
   let recovering = false;
+  let lastRecoveryCode = "";
 
   const nextRaw = new URLSearchParams(location.search).get("next") || "";
   const next = safeNext(nextRaw);
@@ -714,6 +886,34 @@ export async function initAuthPage() {
     $("#forgotLink")?.classList.toggle("hidden", m !== "login" || !featureOn("passwordReset", cfg));
     if (m === "register") drawCaptcha();
     $("#username")?.focus();
+  }
+
+  function showRecoveryPanel(code) {
+    const box = $("#recoveryReveal");
+    $("#authForm")?.classList.add("hidden");
+    $("#recoverForm")?.classList.add("hidden");
+    document.querySelector(".auth-tabs")?.classList.add("hidden");
+    if (!box) { location.replace(next); return; }
+    lastRecoveryCode = code;
+    const codeNode = $("#rcCode");
+    if (codeNode) codeNode.textContent = code;
+    box.classList.remove("hidden");
+    $("#authTitle").textContent = t("auth.recoveryTitle");
+    $("#authSub").textContent = "";
+    const copy = $("#rcCopy");
+    if (copy) {
+      copy.textContent = t("auth.recoveryCopy");
+      copy.onclick = async () => {
+        try { await navigator.clipboard.writeText(code); copy.textContent = t("auth.recoveryCopied"); }
+        catch { copy.textContent = code; }
+      };
+    }
+    const done = $("#rcDone");
+    if (done) {
+      done.textContent = t("auth.recoveryContinue");
+      done.onclick = () => location.replace(next);
+    }
+    $("#rcCode")?.scrollIntoView({ block: "center" });
   }
 
   function showRecover(on) {
@@ -782,6 +982,11 @@ export async function initAuthPage() {
   applyAccess();
   document.addEventListener("langchange", () => {
     applySiteConfig(cfg);
+    const reveal = $("#recoveryReveal");
+    if (reveal && !reveal.classList.contains("hidden") && lastRecoveryCode) {
+      showRecoveryPanel(lastRecoveryCode);
+      return;
+    }
     if (recovering) showRecover(true); else setMode(mode);
     applyAccess();
   });
@@ -799,9 +1004,10 @@ export async function initAuthPage() {
     if (!featureOn("passwordReset", cfg)) return err(fa ? "بازیابی رمز غیرفعال شده است." : "Password recovery is disabled.");
     const username = $("#recUsername").value.trim();
     const name = $("#recName").value;
+    const code = $("#recCode")?.value || "";
     const password = $("#recPassword").value;
     if (!username) return err(fa ? "نام کاربری را وارد کن." : "Enter your username.");
-    if (!isRealName(name)) return err(fa ? "اسم واقعیِ ثبت‌شده را کامل بنویس." : "Enter the real name used at signup.");
+    if (!code.trim() && !isRealName(name)) return err(fa ? "کد بازیابی را وارد کن؛ اگر حساب قدیمی داری، اسم واقعی‌ات را بنویس." : "Enter your recovery code, or the real name for older accounts.");
     if (!isPassword(password)) return err(t("auth.pwWeak"));
     if (password !== $("#recPassword2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
     if (Number(normalizeDigits($("#recCaptchaA").value)) !== recCaptcha.a) {
@@ -813,22 +1019,24 @@ export async function initAuthPage() {
     const old = btn.textContent;
     btn.disabled = true;
     btn.textContent = fa ? "کمی صبر…" : "Please wait…";
-    const res = await recover({ username, name, password });
+    const res = await recover({ username, name, code, password });
     busy = false;
     btn.disabled = false;
     btn.textContent = old;
     if (!res.ok) {
       const map = {
-        credentials: fa ? "این نام کاربری و اسم واقعی با هم هم‌خوانی ندارند." : "Username and real name do not match.",
+        credentials: fa ? "این نام کاربری و کد بازیابی با هم هم‌خوانی ندارند." : "Username and recovery code do not match.",
         password: t("auth.pwWeak"),
         locked: t("auth.locked"),
         blocked: fa ? "این حساب به‌دست مدیر سایت مسدود شده است." : "This account is blocked by the site owner.",
-        secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https."
+        secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https.",
+        rate: fa ? "درخواست‌های زیادی فرستادی؛ کمی صبر کن." : "Too many attempts; wait a moment."
       };
       logModeration("recoverFail", `تلاش ناموفق بازیابی رمز @${username}`);
       return err(map[res.error] || "Error");
     }
     logModeration("recover", `بازیابی رمز @${String(username).trim().toLowerCase()}`);
+    if (res.recoveryCode) return showRecoveryPanel(res.recoveryCode);
     location.replace(next);
   });
 
@@ -897,6 +1105,7 @@ export async function initAuthPage() {
     const u = username.trim().toLowerCase();
     logModeration(mode === "register" ? "register" : "login", `${mode === "register" ? "ساخت حساب" : "ورود"} @${u}`);
     recordFeatureUse(mode === "register" ? "account.registration" : "account.login", buildFlagContext({ user: currentUser() }));
+    if (mode === "register" && res.recoveryCode) return showRecoveryPanel(res.recoveryCode);
     location.replace(next);
   });
 }

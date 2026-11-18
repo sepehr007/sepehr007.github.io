@@ -6,7 +6,7 @@ import {
 import {
   currentUser, getProfile, saveProfile, changeUsername, changePassword,
   setAvatar, addFriend, removeFriend, logout, passwordScore, isPassword,
-  isLocallyBanned, syncRemoteSession
+  isLocallyBanned, syncRemoteSession, rotateRecoveryCode
 } from "./auth.js";
 import { AVATAR_PRESETS, avatarId, avatarSrc, presetValue } from "./avatars.js";
 import { dbGetByIndex } from "./db.js";
@@ -315,6 +315,24 @@ function wirePassword() {
     renderMeter("");
     msg(out, t("profile.pwChanged"), true);
     toast(t("profile.pwChanged"), "success");
+  });
+
+  $("#recoveryGen")?.addEventListener("click", async () => {
+    const out = $("#recoveryMsg");
+    clearMsg(out);
+    const current = $("#pCur").value;
+    if (!current) return msg(out, t("profile.recoveryNeedPw"));
+    const btn = $("#recoveryGen");
+    btn.disabled = true;
+    const res = await rotateRecoveryCode({ password: current });
+    btn.disabled = false;
+    if (!res.ok) {
+      const key = res.error === "current" ? "profile.pwWrong" : res.error === "session" ? "profile.session" : "profile.secure";
+      return msg(out, t(key));
+    }
+    const line = t("profile.recoveryDone", { code: res.recoveryCode });
+    msg(out, line, true);
+    toast(t("profile.recoveryDone", { code: res.recoveryCode }), "success");
   });
 }
 

@@ -127,7 +127,7 @@
       <button class="btn btn-primary btn-block btn-lg" id="submitBtn" type="submit" data-i18n="auth.register">ساخت حساب</button>
       <p class="auth-error" id="authError" role="alert"></p>
       <button class="link-btn hidden" id="forgotLink" type="button" data-i18n="auth.forgot">رمز را فراموش کردی؟</button>
-      <p class="hint auth-foot" data-i18n="auth.note">اطلاعات حسابت روی همین مرورگر نگه‌داری می‌شود؛ دفعهٔ بعد خودکار وارد می‌شوی.</p>
+      <p class="hint auth-foot" data-i18n="auth.note">رمز عبور به‌صورت هش ذخیره می‌شود و هیچ‌جا به شکل متن ساده نگه داشته نمی‌شود.</p>
     </form>
 
     <form id="recoverForm" class="hidden" autocomplete="on">
@@ -136,7 +136,12 @@
         <input id="recUsername" type="text" maxlength="20" dir="ltr" autocomplete="username" spellcheck="false" data-i18n-ph="auth.usernamePh" placeholder="ali_2026">
       </label>
       <label class="field">
-        <span data-i18n="auth.name">اسم واقعی</span>
+        <span data-i18n="auth.recoverCode">کد بازیابی</span>
+        <input id="recCode" type="text" maxlength="20" dir="ltr" autocomplete="one-time-code" spellcheck="false" data-i18n-ph="auth.recoverCodePh" placeholder="XXXX-XXXX-XXXX">
+        <p class="hint" data-i18n="auth.recoverCodeHint">همان کدی که هنگام ساخت حساب گرفتی.</p>
+      </label>
+      <label class="field">
+        <span data-i18n="auth.recoverNameLabel">اسم واقعی (فقط حساب‌های قدیمی)</span>
         <input id="recName" type="text" maxlength="24" autocomplete="name" data-i18n-ph="auth.namePh" placeholder="مثلاً علی رضایی">
       </label>
       <label class="field">
@@ -162,6 +167,16 @@
       <p class="auth-error" id="recError" role="alert"></p>
       <button class="link-btn" id="recoverBack" type="button" data-i18n="auth.back">بازگشت به ورود</button>
     </form>
+
+    <div class="recovery-reveal hidden" id="recoveryReveal">
+      <span class="recovery-label" data-i18n="auth.recoveryLabel">کد بازیابی تو</span>
+      <div class="recovery-code" id="rcCode" dir="ltr">XXXX-XXXX-XXXX</div>
+      <p class="hint" data-i18n="auth.recoveryNote">این کد فقط یک بار نشان داده می‌شود؛ همین حالا جایی امن ذخیره‌اش کن.</p>
+      <div class="recovery-actions">
+        <button class="btn btn-secondary btn-sm" id="rcCopy" type="button" data-i18n="auth.recoveryCopy">کپی کد</button>
+        <button class="btn btn-primary btn-sm" id="rcDone" type="button" data-i18n="auth.recoveryContinue">ذخیره کردم، ادامه</button>
+      </div>
+    </div>
   </section>
 </main>
 

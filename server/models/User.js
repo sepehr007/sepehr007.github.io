@@ -30,6 +30,34 @@ const userSchema = new mongoose.Schema(
       required: true,
       select: false
     },
+    recoveryHash: {
+      type: String,
+      default: "",
+      select: false
+    },
+    nick: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 24
+    },
+    birthdate: {
+      type: String,
+      default: "",
+      maxlength: 10
+    },
+    city: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 40
+    },
+    bio: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 200
+    },
     role: {
       type: String,
       enum: ["user", "owner", "super_owner"],
@@ -39,7 +67,7 @@ const userSchema = new mongoose.Schema(
     avatar: {
       type: String,
       default: "",
-      maxlength: 120
+      maxlength: 400000
     },
     lastLoginAt: {
       type: Date,

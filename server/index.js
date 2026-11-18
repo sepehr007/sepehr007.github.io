@@ -5,6 +5,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import { connectDB, dbReady, dbState, disconnectDB } from "./db.js";
+import { storeState } from "./userStore.js";
 import { connectRedis, redisReady, redisState, createRateLimiter } from "./redis.js";
 import { loadFeatureState, isEnabled, summarizeFeatures } from "./features.js";
 import authRoutes from "./routes/auth.js";
@@ -279,7 +280,7 @@ export async function buildServer() {
     logger: { level: process.env.LOG_LEVEL || "info" },
     trustProxy: true,
     ignoreTrailingSlash: true,
-    bodyLimit: 512 * 1024
+    bodyLimit: 1024 * 1024
   });
 
   const corsEnv = String(process.env.CORS_ORIGIN || "").trim();
@@ -311,6 +312,7 @@ export async function buildServer() {
     uptime: Math.round(process.uptime()),
     now: new Date().toISOString(),
     db: dbState(),
+    userStore: storeState(),
     redis: redisState()
   }));
 

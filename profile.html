@@ -109,6 +109,8 @@
           </label>
           <p class="form-msg" id="pwMsg" role="alert"></p>
           <button class="btn btn-primary" type="submit" data-i18n="profile.changePassword">تغییر رمز</button>
+          <button class="link-btn recovery-btn" id="recoveryGen" type="button" data-i18n="profile.recoveryNew">ساخت کد بازیابی جدید</button>
+          <p class="form-msg recovery-msg" id="recoveryMsg" role="status"></p>
         </form>
       </section>
 
@@ -136,7 +138,6 @@
 
       <section class="card profile-card" id="planCard">
         <h2 data-i18n="profile.planTitle">اشتراک من</h2>
-        <p class="hint" data-i18n="profile.planNote">وضعیت اشتراک و پلن فعلی‌ات اینجاست.</p>
         <div class="plan-status">
           <span class="plan-status-dot" id="planStatusDot" aria-hidden="true"></span>
           <div>

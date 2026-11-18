@@ -64,3 +64,12 @@ html[data-theme="light"] .perk-ico{background:rgba(15,23,42,.04)}
 html[data-theme="light"] .auth-side-badge{background:rgba(15,23,42,.04)}
 html[data-theme="light"] .mp{border-color:#fff}
 html[data-theme="light"] .v8-auth-card .auth-notice{color:#92400e}
+
+/* recovery code reveal */
+.recovery-reveal{margin-top:8px;padding:18px;border-radius:16px;border:1px solid rgba(var(--brand-rgb),.32);background:linear-gradient(160deg,rgba(var(--brand-rgb),.14),rgba(var(--brand-2-rgb),.08));text-align:center}
+.recovery-label{display:block;font-size:12px;font-weight:700;color:var(--text-dim);margin-bottom:8px}
+.recovery-code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:clamp(20px,4vw,26px);font-weight:800;letter-spacing:2px;color:#fff;padding:14px 10px;border-radius:12px;background:rgba(4,6,12,.55);border:1px dashed rgba(255,255,255,.22);user-select:all}
+.recovery-reveal .hint{font-size:11.5px;line-height:1.9;margin:12px 0 0;color:var(--text-faint)}
+.recovery-actions{display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+.recovery-actions .btn{margin-top:0}
+html[data-theme="light"] .recovery-code{color:#0f172a;background:rgba(255,255,255,.8);border-color:rgba(15,23,42,.18)}
