@@ -1,6 +1,14 @@
 import { initI18n, t, getLang } from "./i18n.js";
-import { $, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt, createLimiter } from "./core.js";
+import {
+  $, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt,
+  createLimiter, confirmDialog, copyText
+} from "./core.js";
 import { currentUser, mountUserChip, isRealName } from "./auth.js";
+import { seedAccountsFromLocal } from "./db.js";
+import {
+  createLobby, getActiveLobby, closeLobby, touchLobby, lobbyStats,
+  lobbyQuery, lobbyInviteUrl, pruneExpiredLobbies
+} from "./lobbies.js";
 import { loadSiteConfig, applySiteConfig, isConfigPreview, accessOn, listenLiveConfig } from "./site-config.js";
 import { resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, readFeatureCenter } from "./feature-flags.js";
 
@@ -50,7 +58,13 @@ async function bootSite() {
     applyAccessState();
     applyAuthLinks();
   });
-  if (user) resumePendingRoom();
+  await seedAccountsFromLocal();
+  if (user) {
+    await initLobbyUI();
+    if (!(await resumePendingLobby())) resumePendingRoom();
+  } else {
+    $("#lobbyCard")?.classList.add("hidden");
+  }
   if (isConfigPreview()) {
     const badge = document.createElement("div");
     badge.className = "wt-preview-badge";
@@ -62,9 +76,166 @@ async function bootSite() {
     applyAccessState();
     applyAuthLinks();
     applyPrivacyOptions();
+    if (activeLobby) renderLobbyCard(activeLobby);
   });
 }
 bootSite();
+
+/* ---------- personal lobby (one active per account) ---------- */
+let activeLobby = null;
+let lobbyWired = false;
+let lobbyStatsCache = { total: 0 };
+
+function agoLabel(ts) {
+  const fa = getLang() === "fa";
+  const diff = Math.max(0, Date.now() - Number(ts || 0));
+  const mins = Math.round(diff / 60000);
+  if (mins < 1) return fa ? "همین حالا" : "just now";
+  if (mins < 60) return fa ? `${mins} دقیقه پیش` : `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return fa ? `${hours} ساعت پیش` : `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return fa ? `${days} روز پیش` : `${days} d ago`;
+}
+
+function renderLobbyCard(lobby, stats) {
+  activeLobby = lobby || null;
+  if (stats) lobbyStatsCache = stats;
+  const card = $("#lobbyCard");
+  if (!card) return;
+  card.classList.toggle("hidden", !lobby);
+  const note = $("#lobbyReplaceNote");
+  if (note) note.classList.toggle("hidden", !lobby);
+  if (!lobby) return;
+  $("#lobbyCode").textContent = lobby.code;
+  $("#lobbyName").textContent = lobby.name || "لابی من";
+  $("#lobbyMeta").textContent = t("lobby.meta", {
+    cap: String(lobby.capacity || 6),
+    ago: agoLabel(lobby.createdAt)
+  });
+  const total = $("#lobbyTotal");
+  if (total) total.textContent = t("lobby.total", { n: String(lobbyStatsCache?.total ?? 0) });
+}
+
+function wireLobbyCard() {
+  if (lobbyWired) return;
+  lobbyWired = true;
+  $("#lobbyOpenBtn")?.addEventListener("click", async () => {
+    const account = currentUser();
+    if (!account || !activeLobby) return;
+    try { await touchLobby(account, activeLobby.code); } catch {}
+    location.href = `room.html?${lobbyQuery(activeLobby, { nick: account.nick })}`;
+  });
+  $("#lobbyCopyBtn")?.addEventListener("click", async () => {
+    if (!activeLobby) return;
+    const ok = await copyText(lobbyInviteUrl(activeLobby));
+    toast(ok ? t("toast.copied") : t("lobby.copyFail"), ok ? "success" : "error");
+  });
+  $("#lobbyCloseBtn")?.addEventListener("click", async () => {
+    const account = currentUser();
+    if (!account || !activeLobby) return;
+    const ok = await confirmDialog({
+      title: t("lobby.closeTitle"),
+      text: t("lobby.closeText"),
+      okLabel: t("lobby.close")
+    });
+    if (!ok) return;
+    await closeLobby(account, activeLobby.code, "manual");
+    const stats = await lobbyStats(account);
+    renderLobbyCard(null, stats);
+    toast(t("lobby.closedToast"), "info");
+  });
+}
+
+async function initLobbyUI() {
+  wireLobbyCard();
+  const account = currentUser();
+  if (!account) return;
+  try {
+    await pruneExpiredLobbies(account);
+    const [lobby, stats] = await Promise.all([getActiveLobby(account), lobbyStats(account)]);
+    renderLobbyCard(lobby, stats);
+  } catch {
+    renderLobbyCard(null, { total: 0 });
+  }
+}
+
+async function persistLobby(account, { code, name, nick, capacity, privacy }) {
+  try {
+    const res = await createLobby(account, { code, name, capacity, privacy });
+    if (!res.ok) return;
+    renderLobbyCard(res.lobby, await lobbyStats(account));
+  } catch {}
+}
+
+async function resumePendingLobby() {
+  let raw = "";
+  try { raw = sessionStorage.getItem("wt.pendingLobby") || ""; } catch {}
+  if (!raw) return false;
+  try { sessionStorage.removeItem("wt.pendingLobby"); } catch {}
+  const account = currentUser();
+  if (!account) return false;
+  let pending = null;
+  try { pending = JSON.parse(raw); } catch { return false; }
+  if (!pending || Date.now() - Number(pending.at || 0) > 30 * 60 * 1000) return false;
+  if (!roomCreateOpen || !flagOn(flagStates, "rooms.create")) return false;
+  const code = makeCode(6);
+  const capacity = String(Math.max(2, Math.min(24, Number(pending.capacity) || 6)));
+  const privacy = pending.privacy === "password" ? "password" : "public";
+  const nick = String(pending.nick || account.nick || "").slice(0, 20);
+  if (privacy === "password" && pending.password) {
+    try { sessionStorage.setItem(`pwd:${code}`, String(pending.password)); } catch {}
+  }
+  await persistLobby(account, {
+    code,
+    name: String(pending.name || "").slice(0, 40),
+    nick,
+    capacity,
+    privacy
+  });
+  const q = new URLSearchParams({
+    room: code,
+    host: "1",
+    nick,
+    name: String(pending.name || "").slice(0, 40),
+    cap: capacity,
+    privacy
+  });
+  location.replace(`room.html?${q}`);
+  return true;
+}
+
+/* ---------- motion & hero shortcuts ---------- */
+function initReveal() {
+  const nodes = document.querySelectorAll("[data-reveal]");
+  if (!nodes.length) return;
+  if (!("IntersectionObserver" in window)) {
+    nodes.forEach((node) => node.classList.add("in"));
+    return;
+  }
+  const io = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add("in");
+      io.unobserve(entry.target);
+    }
+  }, { threshold: 0.12, rootMargin: "0px 0px -36px" });
+  nodes.forEach((node) => io.observe(node));
+  setTimeout(() => nodes.forEach((node) => node.classList.add("in")), 1600);
+}
+
+function wireHeroShortcuts() {
+  $("#heroCreateBtn")?.addEventListener("click", () => {
+    $("#create")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => $("#createName")?.focus({ preventScroll: true }), 460);
+  });
+  $("#heroTourBtn")?.addEventListener("click", () => {
+    $("#why")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+document.documentElement.classList.add("v8-ready");
+initReveal();
+wireHeroShortcuts();
 
 function applyPrivacyOptions() {
   const sel = $("#createPrivacy");
@@ -195,7 +366,7 @@ privacyInput.addEventListener("change", () => {
   pwdWrap.classList.toggle("hidden", privacyInput.value !== "password");
 });
 
-$("#createBtn").addEventListener("click", () => {
+$("#createBtn").addEventListener("click", async () => {
   if (!roomCreateOpen) return toast(getLangIsFa() ? "ساخت اتاق موقتاً بسته است." : "Room creation is temporarily closed.", "error");
   if (!flagOn(flagStates, "rooms.create")) return toast(getLangIsFa() ? "ساخت اتاق غیرفعال شده است." : "Room creation is disabled.", "error");
   const nick = createNick.value.trim().slice(0, 20);
@@ -212,9 +383,32 @@ $("#createBtn").addEventListener("click", () => {
   if (privacy === "password" && pwd.length < 3) {
     return toast(getLangIsFa() ? "رمز حداقل ۳ حرف باشد" : "Password must be at least 3 characters", "error");
   }
+  const account = currentUser();
+  if (!account) {
+    try {
+      sessionStorage.setItem("wt.pendingLobby", JSON.stringify({
+        name: nameInput.value.trim().slice(0, 40),
+        nick,
+        capacity: capacityInput.value,
+        privacy,
+        password: pwd,
+        at: Date.now()
+      }));
+    } catch {}
+    location.href = `auth.html?next=${encodeURIComponent("index.html")}`;
+    return;
+  }
   const code = makeCode(6);
   store.set("wt.nick", nick);
   if (privacy === "password") sessionStorage.setItem(`pwd:${code}`, pwd);
+  if (!createGuard()) { guardWarn(); return; }
+  await persistLobby(account, {
+    code,
+    name: nameInput.value.trim().slice(0, 40),
+    nick,
+    capacity: capacityInput.value,
+    privacy
+  });
   const q = new URLSearchParams({
     room: code,
     host: "1",
@@ -223,7 +417,6 @@ $("#createBtn").addEventListener("click", () => {
     cap: capacityInput.value,
     privacy
   });
-  if (!createGuard()) { guardWarn(); return; }
   startRoom(q);
 });
 

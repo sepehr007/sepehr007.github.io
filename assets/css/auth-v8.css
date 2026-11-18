@@ -1,0 +1,66 @@
+/* Piece 8 auth v8 — loaded only by auth.html */
+.btn-lg{padding:15px 22px;font-size:15px;border-radius:16px}
+.v8-auth-header .auth-back{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--text-dim);padding:8px 12px;border-radius:99px;transition:background .2s,color .2s}
+.v8-auth-header .auth-back:hover{background:var(--panel);color:var(--text)}
+.v8-auth-header .auth-back svg{width:15px;height:15px}
+.v8-auth-wrap{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,452px);gap:clamp(22px,3vw,40px);align-items:center;padding:34px 40px 64px;min-height:calc(100vh - 76px)}
+.auth-side{position:relative;overflow:hidden;padding:32px 30px 26px;border-radius:30px;border:1px solid rgba(124,92,255,.26);background:linear-gradient(155deg,rgba(124,92,255,.14),rgba(34,211,238,.05) 45%,rgba(255,255,255,.02));box-shadow:0 40px 90px -50px rgba(124,92,255,.8)}
+.auth-side-orb{position:absolute;top:-30%;inset-inline-start:-18%;width:70%;aspect-ratio:1;border-radius:50%;background:radial-gradient(closest-side,rgba(124,92,255,.45),transparent 72%);filter:blur(28px);pointer-events:none;animation:float 16s ease-in-out infinite}
+.auth-side-badge{position:relative;display:inline-flex;align-items:center;gap:7px;font-size:11px;padding:6px 12px;border-radius:99px;background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--text-dim)}
+.auth-side-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--success);box-shadow:0 0 10px var(--success)}
+.auth-side h2{position:relative;font-size:clamp(23px,2.7vw,31px);font-weight:800;letter-spacing:-.4px;line-height:1.4;margin:16px 0 8px}
+.auth-side-sub{position:relative;font-size:13.4px;line-height:1.95;color:var(--text-dim);max-width:46ch}
+.auth-perks{position:relative;list-style:none;display:flex;flex-direction:column;gap:11px;margin-top:22px;padding:0}
+.auth-perks li{display:flex;align-items:flex-start;gap:11px}
+.perk-ico{flex:none;width:36px;height:36px;border-radius:12px;display:grid;place-items:center;font-size:17px;background:rgba(255,255,255,.055);border:1px solid var(--border)}
+.auth-perks strong{display:block;font-size:12.8px;font-weight:700}
+.auth-perks small{display:block;font-size:11.3px;color:var(--text-faint);margin-top:1px;line-height:1.7}
+.auth-mini{position:relative;margin-top:24px;padding:11px 12px 10px;border-radius:18px;border:1px solid rgba(255,255,255,.12);background:rgba(6,8,14,.55);box-shadow:0 24px 50px -30px rgba(0,0,0,.9)}
+.auth-mini-top{display:flex;align-items:center;gap:7px;font-size:9.8px;color:var(--text-faint);margin-bottom:8px}
+.auth-mini-dots{display:inline-flex;gap:3px}
+.auth-mini-dots i{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.18)}
+.auth-mini-screen{position:relative;height:118px;border-radius:12px;overflow:hidden;background:
+  radial-gradient(60px 60px at 68% 38%,rgba(251,146,60,.85),rgba(244,63,94,.3) 60%,transparent 74%),
+  radial-gradient(120px 90px at 30% 100%,rgba(124,92,255,.5),transparent 70%),
+  linear-gradient(180deg,#221431,#0d0a16 72%,#07080d)}
+.auth-mini-screen::after{content:"";position:absolute;inset:auto 0 0;height:52%;background:linear-gradient(180deg,transparent,rgba(3,4,8,.9));clip-path:polygon(0 76%,16% 48%,32% 64%,48% 34%,64% 60%,82% 40%,100% 62%,100% 100%,0 100%)}
+.auth-mini-play{position:absolute;z-index:1;top:50%;left:50%;transform:translate(-50%,-50%);width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:11px;color:#fff;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.4);backdrop-filter:blur(6px)}
+.auth-mini-bubble{position:absolute;z-index:2;bottom:9px;inset-inline-start:9px;font-size:9.2px;padding:4px 8px;border-radius:8px;background:rgba(8,10,17,.68);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(6px);animation:bubbleCycle 9s ease-in-out infinite}
+.auth-mini-bubble b{color:#d9d2ff}
+.auth-mini-bubble.b2{bottom:32px;animation-delay:2.4s;inset-inline-start:22px;background:rgba(52,211,153,.18);border-color:rgba(52,211,153,.34)}
+.auth-mini-people{display:flex;align-items:center;gap:4px;margin-top:9px}
+.mp{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:9px;font-weight:800;color:#fff;border:2px solid #0a0c14}
+.mp.p1{background:#7c5cff}
+.mp.p2{background:#22d3ee;margin-inline-start:-7px}
+.mp.p3{background:#f472b6;margin-inline-start:-7px}
+.auth-mini-live{margin-inline-start:auto;display:inline-flex;align-items:center;gap:4px;font-size:9.4px;font-weight:700;color:#6ee7b7}
+.auth-mini-live i{width:5px;height:5px;border-radius:50%;background:#34d399;box-shadow:0 0 7px #34d399}
+.auth-side-foot{position:relative;margin-top:16px;font-size:10.5px;color:var(--text-faint);text-align:center}
+
+.v8-auth-card{width:100%;padding:clamp(22px,3vw,32px);border-color:rgba(255,255,255,.12);box-shadow:0 40px 90px -50px rgba(0,0,0,.95)}
+.v8-auth-card h1{font-size:23px;letter-spacing:-.3px}
+.v8-auth-card .auth-tabs{margin-bottom:18px}
+.v8-auth-card .btn-lg{margin-top:22px}
+.v8-auth-card .auth-notice{font-size:12px;line-height:1.8;padding:10px 12px;border-radius:12px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.24);color:#fcd34d;margin-top:12px}
+.v8-auth-card .auth-error{min-height:18px}
+.v8-auth-card .auth-foot{font-size:11px;line-height:1.8;color:var(--text-faint);margin-top:14px;text-align:center}
+.v8-auth-card input{padding:13px 14px;border-radius:13px}
+.v8-auth-card .field{margin-top:14px}
+.v8-auth-card .link-btn{display:block;margin-inline:auto;text-align:center;background:none}
+
+@media (max-width:980px){
+  .v8-auth-wrap{grid-template-columns:1fr;max-width:520px;padding:22px 18px 48px;gap:18px}
+  .auth-side{display:none}
+  .v8-auth-card{padding:24px 20px}
+}
+@media (max-width:520px){
+  .v8-auth-header{padding:12px 14px}
+  .v8-auth-header .auth-back span{display:none}
+  .v8-auth-card h1{font-size:21px}
+}
+html[data-theme="light"] .auth-side{background:linear-gradient(155deg,rgba(124,92,255,.1),rgba(34,211,238,.05) 45%,rgba(255,255,255,.6));border-color:rgba(124,92,255,.2)}
+html[data-theme="light"] .auth-mini{background:rgba(255,255,255,.7);border-color:rgba(15,23,42,.1)}
+html[data-theme="light"] .perk-ico{background:rgba(15,23,42,.04)}
+html[data-theme="light"] .auth-side-badge{background:rgba(15,23,42,.04)}
+html[data-theme="light"] .mp{border-color:#fff}
+html[data-theme="light"] .v8-auth-card .auth-notice{color:#92400e}

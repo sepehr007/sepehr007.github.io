@@ -8,6 +8,7 @@ import { connectDB, dbReady, dbState, disconnectDB } from "./db.js";
 import { connectRedis, redisReady, redisState, createRateLimiter } from "./redis.js";
 import { loadFeatureState, isEnabled, summarizeFeatures } from "./features.js";
 import authRoutes from "./routes/auth.js";
+import lobbyRoutes from "./routes/lobbies.js";
 import { Room } from "./models/Room.js";
 import { Message } from "./models/Message.js";
 
@@ -276,6 +277,7 @@ export async function buildServer() {
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL || "info" },
     trustProxy: true,
+    ignoreTrailingSlash: true,
     bodyLimit: 512 * 1024
   });
 
@@ -312,6 +314,7 @@ export async function buildServer() {
   }));
 
   await app.register(authRoutes, { prefix: "/api/auth" });
+  await app.register(lobbyRoutes, { prefix: "/api/lobbies" });
 
   app.get("/api/features", async () => {
     const state = await loadFeatureState();

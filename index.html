@@ -4,21 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#07080d">
-<title>هم‌تماشا — Watch Together</title>
-<meta name="description" content="تماشای هم‌زمان فیلم با دوستان؛ چت، صدا و پخش همگام در مرورگر.">
+<title>هم‌تماشا — شب فیلم، با هم</title>
+<meta name="description" content="لابی شخصی بساز، لینکش را بفرست و با دوستان هم‌زمان فیلم ببین؛ چت شناور روی فیلم، صدای زنده، لابی فعال دائمی و اتصال دوباره خودکار. بدون نصب.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="هم‌تماشا">
-<meta property="og:title" content="هم‌تماشا — تماشای هم‌زمان فیلم با دوستان">
-<meta property="og:description" content="یک لینک بفرست و با دوستان هم‌زمان فیلم ببینید؛ پخش همگام، چت زنده و صدای گروهی مستقیم در مرورگر، بدون نصب.">
+<meta property="og:title" content="هم‌تماشا — شب فیلم را با هم ببین">
+<meta property="og:description" content="یک لابی بساز، لینکش را بفرست؛ فیلم، صدا و خنده‌ها ثانیه‌به‌ثانیه هم‌گام. بدون نصب، مستقیم داخل مرورگر.">
 <meta property="og:url" content="https://sepehr007.github.io/">
 <meta property="og:image" content="https://sepehr007.github.io/assets/img/og-cover.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="هم‌تماشا — اتاق تماشای هم‌زمان با چت زنده">
+<meta property="og:image:alt" content="هم‌تماشا — اتاق تماشای هم‌زمان با چت شناور روی فیلم">
 <meta property="og:locale" content="fa_IR">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="هم‌تماشا — تماشای هم‌زمان فیلم با دوستان">
-<meta name="twitter:description" content="یک لینک بفرست و با دوستان هم‌زمان فیلم ببینید؛ پخش همگام، چت زنده و صدای گروهی در مرورگر.">
+<meta name="twitter:title" content="هم‌تماشا — شب فیلم را با هم ببین">
+<meta name="twitter:description" content="لابی شخصی، چت شناور روی فیلم و صدای زنده؛ همه داخل مرورگر.">
 <meta name="twitter:image" content="https://sepehr007.github.io/assets/img/og-cover.png">
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
@@ -26,9 +26,10 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/css/style.css">
+<link rel="stylesheet" href="assets/css/landing-v8.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%237c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
 </head>
-<body class="page-landing">
+<body class="page-landing landing-v8">
 
 <div class="bg-aurora" aria-hidden="true">
   <span class="aurora a1"></span>
@@ -37,13 +38,20 @@
   <div class="grid-overlay"></div>
 </div>
 
-<header class="site-header">
+<header class="site-header v8-header">
   <a class="brand" href="./">
     <span class="brand-mark" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg>
     </span>
     <span class="brand-text">هم‌تماشا</span>
+    <span class="brand-beta" data-i18n="v8.beta">بتای عمومی</span>
   </a>
+  <nav class="v8-nav" aria-label="Main">
+    <a href="#why" data-i18n="v8.navWhy">چرا هم‌تماشا؟</a>
+    <a href="#features" data-i18n="v8.navFeatures">قابلیت‌ها</a>
+    <a href="#how" data-i18n="v8.navHow">چطور کار می‌کند</a>
+    <a href="#faq" data-i18n="v8.navFaq">سوال‌ها</a>
+  </nav>
   <div class="header-actions">
     <div class="auth-actions" id="authActions">
       <a class="btn btn-ghost btn-sm" id="loginLink" href="auth.html?mode=login&amp;next=index.html" data-i18n="auth.login">ورود</a>
@@ -62,139 +70,339 @@
   </div>
 </header>
 
-<main class="landing">
-  <section class="hero">
-    <span class="pill"><span class="dot"></span><span data-i18n="hero.badge">حساب رایگان · بدون نصب</span></span>
-    <h1>
-      <span data-i18n="hero.title1">با دوستات هم‌زمان فیلم ببین</span>
-      <span class="grad-text" data-i18n="hero.title2">دقیق، ثانیه‌به‌ثانیه</span>
-    </h1>
-    <p class="hero-sub" data-i18n="hero.sub">یک حساب بساز، اتاق بساز، لینک بفرست و هم‌زمان با چت و صدای زنده تماشا کنید. هیچ نصبی لازم نیست.</p>
-    <div class="hero-stats">
-      <span class="stat-chip"><span class="stat-dot"></span><span data-i18n="stats.sync">همگام‌سازی زیر ۱ ثانیه</span></span>
-      <span class="stat-chip" data-i18n="stats.formats">MKV · AVI · MOV · HLS</span>
-      <span class="stat-chip" data-i18n="stats.voice">چت و صدای زنده</span>
-      <span class="stat-chip" data-i18n="stats.free">بدون محدودیت زمان</span>
-    </div>
-  </section>
-
-  <section class="entry-grid">
-    <article class="card entry-card" id="create">
-      <h2 data-i18n="create.title">ساخت اتاق</h2>
-      <p class="muted" data-i18n="create.sub">اتاق بساز و لینکش رو برای دوستات بفرست.</p>
-      <label class="field">
-        <span data-i18n="create.name">اسم اتاق</span>
-        <input id="createName" type="text" maxlength="40" data-i18n-ph="create.namePh" placeholder="شب فیلم جمعه">
-      </label>
-      <label class="field">
-        <span data-i18n="create.nick">اسم نمایشی تو</span>
-        <input id="createNick" type="text" maxlength="20" data-i18n-ph="create.nickPh" placeholder="مثلاً سارا">
-      </label>
-      <div class="field-row">
-        <label class="field">
-          <span data-i18n="create.capacity">ظرفیت</span>
-          <select id="createCapacity">
-            <option value="4">4</option>
-            <option value="6" selected>6</option>
-            <option value="8">8</option>
-            <option value="12">12</option>
-          </select>
-        </label>
-        <label class="field">
-          <span data-i18n="create.privacy">دسترسی</span>
-          <select id="createPrivacy">
-            <option value="public" data-i18n="privacy.public">عمومی</option>
-            <option value="password" data-i18n="privacy.password">با رمز</option>
-          </select>
-        </label>
+<main class="landing v8-landing">
+  <section class="v8-hero">
+    <div class="v8-hero-copy">
+      <span class="pill v8-pill"><span class="dot"></span><span data-i18n="v8.heroBadge">لابی شخصی · رایگان · بدون نصب</span></span>
+      <h1>
+        <span data-i18n="v8.heroTitle1">شب فیلم را</span>
+        <span class="grad-text" data-i18n="v8.heroTitle2">با هم ببین، نه تک‌تک.</span>
+      </h1>
+      <p class="hero-sub" data-i18n="v8.heroSub">یک لابی بساز، لینکش را بفرست؛ فیلم، صدا و خنده‌ها ثانیه‌به‌ثانیه هم‌گام می‌شوند. حتی وقتی اینترنت قطع شود، تماشا نمی‌ماند.</p>
+      <div class="v8-hero-cta">
+        <button class="btn btn-primary btn-lg" type="button" id="heroCreateBtn">
+          <span data-i18n="v8.heroCta1">ساخت لابی در ۳۰ ثانیه</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+        <button class="btn btn-secondary btn-lg" type="button" id="heroTourBtn" data-i18n="v8.heroCta2">چرا هم‌تماشا؟</button>
       </div>
-      <label class="field hidden" id="passwordFieldWrap">
-        <span data-i18n="create.password">رمز اتاق</span>
-        <input id="createPassword" type="password" maxlength="32" autocomplete="new-password">
-      </label>
-      <span class="card-gap" aria-hidden="true"></span>
-      <button class="btn btn-primary btn-block" id="createBtn" type="button">
-        <span data-i18n="create.cta">ساخت اتاق</span>
+      <ul class="v8-trust">
+        <li data-i18n="v8.trust1">بدون کارت بانکی</li>
+        <li data-i18n="v8.trust2">روی موبایل و لپ‌تاپ</li>
+        <li data-i18n="v8.trust3">حساب و داده روی دستگاه خودت</li>
+      </ul>
+      <div class="v8-stats" aria-label="Highlights">
+        <span class="stat-chip"><span class="stat-dot"></span><span data-i18n="v8.stat1">همگام‌سازی زیر ۱ ثانیه</span></span>
+        <span class="stat-chip" data-i18n="v8.stat2">MP4 · HLS · MKV · AVI</span>
+        <span class="stat-chip" data-i18n="v8.stat3">چت شناور روی فیلم</span>
+        <span class="stat-chip" data-i18n="v8.stat4">بازگشت خودکار بعد از قطعی</span>
+      </div>
+    </div>
+
+    <div class="v8-hero-visual" data-reveal aria-hidden="true">
+      <div class="hv-glow"></div>
+      <div class="hv-frame">
+        <div class="hv-topbar">
+          <span class="hv-dots"><i></i><i></i><i></i></span>
+          <span class="hv-room" data-i18n="v8.heroRoom">اتاق شب فیلم · ۴ نفر</span>
+          <span class="hv-live"><i></i><span data-i18n="v8.heroLive">زنده</span></span>
+        </div>
+        <div class="hv-screen">
+          <div class="hv-poster"></div>
+          <div class="hv-vignette"></div>
+          <button class="hv-play" type="button" tabindex="-1" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5L8 5.5z"/></svg>
+          </button>
+          <span class="hv-sync"><i></i><span data-i18n="v8.heroSync">همگام · ۰.۲ ثانیه</span></span>
+          <div class="hv-chat">
+            <div class="hv-bubble hv-b1"><b>سارا</b><span>:</span> این صحنه رو ببین! 😍</div>
+            <div class="hv-bubble hv-b2"><b>امیر</b><span>:</span> دقیقهٔ ۴۲ عالیه</div>
+            <div class="hv-bubble hv-b3"><b>سارا</b><span>:</span> پخش رو نگه دار 😂</div>
+          </div>
+          <div class="hv-reactions">
+            <span>❤️</span><span>😂</span><span>🔥</span>
+          </div>
+        </div>
+        <div class="hv-controls">
+          <span class="hv-bar"><i></i></span>
+          <span class="hv-time">01:24:09</span>
+          <span class="hv-icons">⏮ ⏸ ⏭</span>
+        </div>
+      </div>
+      <div class="hv-float hv-float-a" aria-hidden="true">
+        <span class="hv-float-ico">🎬</span>
+        <div><strong data-i18n="v8.floatATitle">پخش هم‌گام</strong><small data-i18n="v8.floatASub">برای همه دقیقاً یک‌جا</small></div>
+      </div>
+      <div class="hv-float hv-float-b" aria-hidden="true">
+        <span class="hv-float-ico">🔁</span>
+        <div><strong data-i18n="v8.floatBTitle">اتصال دوباره</strong><small data-i18n="v8.floatBSub">قطعی کوتاه، ادامهٔ خودکار</small></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="lobby-strip hidden" id="lobbyCard" data-reveal>
+    <div class="lobby-strip-main">
+      <span class="lobby-live-dot" aria-hidden="true"></span>
+      <div class="lobby-copy">
+        <p class="lobby-eyebrow" data-i18n="lobby.eyebrow">لابی فعال تو</p>
+        <h2 id="lobbyName">لابی من</h2>
+        <p class="lobby-meta" id="lobbyMeta"></p>
+      </div>
+      <button class="lobby-code" id="lobbyCopyBtn" type="button" title="Copy invite link" data-i18n-title="lobby.copy">
+        <span id="lobbyCode">------</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
       </button>
-    </article>
-
-    <article class="card entry-card">
-      <h2 data-i18n="join.title">ورود به اتاق</h2>
-      <p class="muted" data-i18n="join.sub">کد اتاق یا لینک دعوت رو وارد کن.</p>
-      <label class="field">
-        <span data-i18n="join.code">کد اتاق یا لینک</span>
-        <input id="joinCode" type="text" maxlength="80" placeholder="ABC123" dir="ltr" autocomplete="off" spellcheck="false">
-      </label>
-      <label class="field">
-        <span data-i18n="create.nick">اسم نمایشی تو</span>
-        <input id="joinNick" type="text" maxlength="20" data-i18n-ph="create.nickPh" placeholder="مثلاً سارا">
-      </label>
-      <span class="card-gap" aria-hidden="true"></span>
-      <button class="btn btn-secondary btn-block" id="joinBtn" type="button">
-        <span data-i18n="join.cta">ورود</span>
-      </button>
-      <p class="hint" id="joinHint"></p>
-    </article>
+      <div class="lobby-actions">
+        <span class="lobby-total" id="lobbyTotal"></span>
+        <button class="btn btn-ghost btn-sm" id="lobbyCloseBtn" type="button" data-i18n="lobby.close">بستن لابی</button>
+        <button class="btn btn-primary" id="lobbyOpenBtn" type="button" data-i18n="lobby.open">ادامه تماشا</button>
+      </div>
+    </div>
+    <p class="lobby-note" data-i18n="lobby.note">لابی تو تا ۲۴ ساعت فعال می‌ماند؛ لینکش را برای دوستانت بفرست.</p>
   </section>
 
-  <section class="steps-section">
-    <div class="section-head">
-      <h2 data-i18n="steps.title">در سه قدم شروع کن</h2>
-      <p data-i18n="steps.sub">بدون نصب، بدون پیچیدگی.</p>
+  <section class="entry-section" id="create">
+    <div class="section-head" data-reveal>
+      <span class="section-kicker" data-i18n="v8.entryKicker">شروع سریع</span>
+      <h2 data-i18n="v8.entryTitle">امشب را از دست نده؛ لابی‌ات آماده است</h2>
+      <p data-i18n="v8.entrySub">اسم لابی، ظرفیت و دسترسی را بگو؛ بقیه‌اش با ما.</p>
     </div>
-    <div class="steps">
-      <article class="step-card">
-        <span class="step-num">1</span>
-        <h3 data-i18n="steps.s1.t">حساب بساز</h3>
-        <p data-i18n="steps.s1.d">با کپچای ساده ثبت‌نام کن و اسم واقعی‌ات را بنویس.</p>
+    <div class="entry-grid">
+      <article class="card entry-card v8-create-card">
+        <div class="entry-head">
+          <span class="entry-ico">🎟️</span>
+          <div>
+            <h3 data-i18n="v8.createTitle">یک لابی تازه بساز</h3>
+            <p class="muted" data-i18n="v8.createSub">کد اختصاصی می‌گیری؛ لینک دعوت را هر جا می‌خواهی بفرست.</p>
+          </div>
+        </div>
+        <label class="field">
+          <span data-i18n="v8.createName">اسم لابی</span>
+          <input id="createName" type="text" maxlength="40" data-i18n-ph="v8.createNamePh" placeholder="مثلاً شب فیلم جمعه">
+        </label>
+        <label class="field">
+          <span data-i18n="create.nick">اسم نمایشی تو</span>
+          <input id="createNick" type="text" maxlength="20" data-i18n-ph="create.nickPh" placeholder="مثلاً سارا">
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span data-i18n="create.capacity">ظرفیت</span>
+            <select id="createCapacity">
+              <option value="4">4</option>
+              <option value="6" selected>6</option>
+              <option value="8">8</option>
+              <option value="12">12</option>
+            </select>
+          </label>
+          <label class="field">
+            <span data-i18n="create.privacy">دسترسی</span>
+            <select id="createPrivacy">
+              <option value="public" data-i18n="privacy.public">عمومی</option>
+              <option value="password" data-i18n="privacy.password">با رمز</option>
+            </select>
+          </label>
+        </div>
+        <label class="field hidden" id="passwordFieldWrap">
+          <span data-i18n="create.password">رمز لابی</span>
+          <input id="createPassword" type="password" maxlength="32" autocomplete="new-password">
+        </label>
+        <p class="v8-replace-note hidden" id="lobbyReplaceNote" data-i18n="v8.replaceNote">لابی فعال قبلی‌ات بسته می‌شود و کد تازه‌ای می‌گیری.</p>
+        <span class="card-gap" aria-hidden="true"></span>
+        <button class="btn btn-primary btn-block btn-lg" id="createBtn" type="button">
+          <span data-i18n="v8.createCta">ساخت لابی و شروع</span>
+        </button>
+        <p class="v8-mini-note" data-i18n="v8.createNote">بدون نصب · بدون کارت بانکی · هر وقت بخواهی قابل بستن است</p>
       </article>
-      <article class="step-card">
-        <span class="step-num">2</span>
-        <h3 data-i18n="steps.s2.t">اتاق بساز</h3>
-        <p data-i18n="steps.s2.d">ظرفیت و رمز دلخواه بگذار و لینک دعوت را بفرست.</p>
-      </article>
-      <article class="step-card">
-        <span class="step-num">3</span>
-        <h3 data-i18n="steps.s3.t">هم‌زمان تماشا کن</h3>
-        <p data-i18n="steps.s3.d">چت کن، صدا وصل کن و ثانیه‌به‌ثانیه هم‌گام بمان.</p>
+
+      <article class="card entry-card v8-join-card">
+        <div class="entry-head">
+          <span class="entry-ico entry-ico-cyan">💌</span>
+          <div>
+            <h3 data-i18n="v8.joinTitle">دعوت شدی؟ همین‌جا وارد شو</h3>
+            <p class="muted" data-i18n="v8.joinSub">کد لابی یا لینک دعوت را بچسبان و بپر داخل.</p>
+          </div>
+        </div>
+        <label class="field">
+          <span data-i18n="join.code">کد لابی یا لینک</span>
+          <input id="joinCode" type="text" maxlength="80" placeholder="ABC123" dir="ltr" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">
+          <span data-i18n="create.nick">اسم نمایشی تو</span>
+          <input id="joinNick" type="text" maxlength="20" data-i18n-ph="create.nickPh" placeholder="مثلاً سارا">
+        </label>
+        <span class="card-gap" aria-hidden="true"></span>
+        <button class="btn btn-secondary btn-block btn-lg" id="joinBtn" type="button">
+          <span data-i18n="v8.joinCta">ورود به لابی</span>
+        </button>
+        <p class="hint" id="joinHint"></p>
+        <p class="v8-mini-note" data-i18n="v8.joinNote">میزبان باید صفحه را باز نگه دارد تا پخش ادامه پیدا کند.</p>
       </article>
     </div>
   </section>
 
-  <section class="features">
-    <div class="feature">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></span>
-      <h3 data-i18n="feat.sync.t">همگام‌سازی دقیق</h3><p data-i18n="feat.sync.d">پخش، توقف و جابه‌جایی برای همه هم‌زمان.</p>
+  <section class="v8-why" id="why">
+    <div class="section-head" data-reveal>
+      <span class="section-kicker" data-i18n="v8.whyKicker">چرا هم‌تماشا؟</span>
+      <h2 data-i18n="v8.whyTitle">برای شب‌هایی که «بعداً» جواب نمی‌دهد</h2>
+      <p data-i18n="v8.whySub">فرق ما در لحظه‌های کوچکی است که تماشای گروهی را واقعی می‌کند.</p>
     </div>
-    <div class="feature">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/></svg></span>
-      <h3 data-i18n="feat.chat.t">چت زنده</h3><p data-i18n="feat.chat.d">ری‌اکشن، پاسخ، سنجاق و تایپینگ.</p>
-    </div>
-    <div class="feature">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
-      <h3 data-i18n="feat.voice.t">صدای زنده</h3><p data-i18n="feat.voice.d">میکروفون و کنترل صدا، داخل مرورگر.</p>
-    </div>
-    <div class="feature">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5L10 9.5z"/></svg></span>
-      <h3 data-i18n="feat.player.t">پلیر سینمایی</h3><p data-i18n="feat.player.d">MP4 و HLS، زیرنویس، سرعت و PiP.</p>
-    </div>
-    <div class="feature">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M7 13h4M7 15.5h7M14 13h3"/></svg></span>
-      <h3 data-i18n="feat.subs.t">زیرنویس و ظاهر شخصی</h3><p data-i18n="feat.subs.d">زیرنویس SRT/VTT، روشنایی تصویر و رنگ لهجهٔ دلخواه.</p>
-    </div>
-    <div class="feature">
-      <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v2"/></svg></span>
-      <h3 data-i18n="feat.local.t">حساب محلی و امن</h3><p data-i18n="feat.local.d">رمزها با PBKDF2 هش می‌شوند و روی همین دستگاه می‌مانند.</p>
+    <div class="v8-why-grid">
+      <article class="why-card" data-reveal>
+        <span class="why-ico">💬</span>
+        <h3 data-i18n="v8.why1t">چت وسط فیلم، نه روی فیلم</h3>
+        <p data-i18n="v8.why1d">پیام‌ها به شکل «نام : متن» بالای تصویر ظاهر و نرم محو می‌شوند؛ نه پلیر را می‌بندی، نه از لحظهٔ مهم جا می‌مانی.</p>
+        <span class="why-tag" data-i18n="v8.why1tag">روی موبایل و دسکتاپ</span>
+      </article>
+      <article class="why-card" data-reveal>
+        <span class="why-ico why-ico-cyan">🛡️</span>
+        <h3 data-i18n="v8.why2t">قطعی اینترنت؟ تماشا نمی‌ماند</h3>
+        <p data-i18n="v8.why2d">اگر نت بپرد، «قطع شدی» را می‌بینی و با برگشتن شبکه، خودکار وصل می‌شوی؛ فیلم از همان ثانیه ادامه می‌یابد.</p>
+        <span class="why-tag" data-i18n="v8.why2tag">بازگشت خودکار</span>
+      </article>
+      <article class="why-card" data-reveal>
+        <span class="why-ico why-ico-amber">🎯</span>
+        <h3 data-i18n="v8.why3t">ثانیه‌به‌ثانیه، همه با هم</h3>
+        <p data-i18n="v8.why3d">پخش، توقف و جابه‌جایی برای همه هم‌زمان است؛ دیگر کسی نمی‌گوید «چی شد؟ عقب بزن».</p>
+        <span class="why-tag" data-i18n="v8.why3tag">همگام‌سازی دقیق</span>
+      </article>
+      <article class="why-card" data-reveal>
+        <span class="why-ico why-ico-pink">👑</span>
+        <h3 data-i18n="v8.why4t">مدیر لابی، بدون دردسر</h3>
+        <p data-i18n="v8.why4d">کنترل پخش، مدیر و جانشین، خروج امن و بی‌صدا کردن تک‌تک افراد؛ همه با چند لمس ساده.</p>
+        <span class="why-tag" data-i18n="v8.why4tag">کنترل کامل</span>
+      </article>
     </div>
   </section>
 
-  <section class="pricing-section">
-    <div class="section-head">
-      <h2 data-i18n="pricing.title">پلن‌ها</h2>
-      <p data-i18n="pricing.sub">همهٔ قابلیت‌های امروز رایگان است؛ پریمیوم در راه است.</p>
+  <section class="v8-how" id="how">
+    <div class="section-head" data-reveal>
+      <span class="section-kicker" data-i18n="v8.howKicker">سه قدم، یک شب</span>
+      <h2 data-i18n="v8.howTitle">از صفر تا شب فیلم، کمتر از یک دقیقه</h2>
+      <p data-i18n="v8.howSub">نه نصب، نه آموزش؛ فقط سه کار کوچک.</p>
+    </div>
+    <div class="v8-steps">
+      <article class="how-step" data-reveal>
+        <span class="how-num">۰۱</span>
+        <div class="how-body">
+          <h3 data-i18n="v8.how1t">حساب بساز</h3>
+          <p data-i18n="v8.how1d">با یک اسم واقعی و رمز قوی؛ اطلاعات روی دستگاه خودت می‌ماند.</p>
+        </div>
+      </article>
+      <article class="how-step" data-reveal>
+        <span class="how-num">۰۲</span>
+        <div class="how-body">
+          <h3 data-i18n="v8.how2t">لابی‌ات را بساز</h3>
+          <p data-i18n="v8.how2d">کد اختصاصی، ظرفیت و رمز دلخواه را انتخاب کن و لینک دعوت را بفرست.</p>
+        </div>
+      </article>
+      <article class="how-step" data-reveal>
+        <span class="how-num">۰۳</span>
+        <div class="how-body">
+          <h3 data-i18n="v8.how3t">فیلم را بگذار، با هم ببینید</h3>
+          <p data-i18n="v8.how3d">لینک مستقیم یا فایل را بگذار؛ چت شناور و صدای زنده از همان اول فعال است.</p>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="features" id="features">
+    <div class="section-head" data-reveal>
+      <span class="section-kicker" data-i18n="v8.featKicker">قابلیت‌ها</span>
+      <h2 data-i18n="v8.featTitle">چیزهایی که یک شب فیلم را نجات می‌دهند</h2>
+      <p data-i18n="v8.featSub">هر قابلیت برای یک لحظهٔ واقعی طراحی شده است.</p>
+    </div>
+    <div class="v8-feat-grid">
+      <article class="feature v8-feature" data-reveal>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/></svg></span>
+        <h3 data-i18n="v8.feat1t">چت شناور روی فیلم</h3>
+        <p data-i18n="v8.feat1d">پیام‌ها با ظرافت روی تصویر می‌آیند و محو می‌شوند؛ روشنایی و اندازهٔ متن را خودت تنظیم کن.</p>
+      </article>
+      <article class="feature v8-feature" data-reveal>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 9v6M8 6v12M12 8v8M16 5v14M20 9v6"/></svg></span>
+        <h3 data-i18n="v8.feat2t">صدا با کنترل تک‌تک</h3>
+        <p data-i18n="v8.feat2d">صدای هر نفر را جدا کم و زیاد کن یا بی‌صدا کن؛ بدون اینکه مزاحم بقیه شوی.</p>
+      </article>
+      <article class="feature v8-feature" data-reveal>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 11h4M7 14h7"/></svg></span>
+        <h3 data-i18n="v8.feat3t">زیرنویس و ترک صوتی</h3>
+        <p data-i18n="v8.feat3d">زیرنویس چسبیده به فایل، رنگ سفارشی و انتخاب زبان صدا؛ همه داخل خود پلیر.</p>
+      </article>
+      <article class="feature v8-feature" data-reveal>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/></svg></span>
+        <h3 data-i18n="v8.feat4t">فایل‌های سنگین هم جا می‌شوند</h3>
+        <p data-i18n="v8.feat4d">MKV، AVI، MOV و… در مرورگر آماده می‌شوند؛ لازم نیست اول تبدیل کنی.</p>
+      </article>
+      <article class="feature v8-feature" data-reveal>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16v12H4z"/><path d="M8 10h8M8 14h5"/></svg></span>
+        <h3 data-i18n="v8.feat5t">یک لابی فعال، همیشه</h3>
+        <p data-i18n="v8.feat5d">حساب تو همیشه یک لابی فعال دارد؛ با یک کلیک لینک را بفرست یا شبی که خواستی ادامه بده.</p>
+      </article>
+      <article class="feature v8-feature" data-reveal>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v2"/></svg></span>
+        <h3 data-i18n="v8.feat6t">امن، ساده، روی دستگاه خودت</h3>
+        <p data-i18n="v8.feat6d">رمزها هش می‌شوند و داده‌های محلی در مرورگر خودت می‌مانند؛ ورود ساده و قابل‌اعتماد.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="v8-audience">
+    <div class="section-head" data-reveal>
+      <span class="section-kicker" data-i18n="v8.audKicker">برای هر شب</span>
+      <h2 data-i18n="v8.audTitle">هر کسی یک دلیل دارد</h2>
+      <p data-i18n="v8.audSub">هم‌تماشا را برای همان لحظه‌ای ساختیم که دوست داری کسی کنارت باشد.</p>
+    </div>
+    <div class="v8-aud-grid">
+      <article class="audience-card" data-reveal>
+        <span class="aud-emoji">🍿</span>
+        <h3 data-i18n="v8.aud1t">شب‌های دورهمی دوستان</h3>
+        <p data-i18n="v8.aud1d">یک لینک، چند نفر و خنده‌های هم‌زمان؛ حتی وقتی هر کسی شهر دیگری است.</p>
+      </article>
+      <article class="audience-card" data-reveal>
+        <span class="aud-emoji">💞</span>
+        <h3 data-i18n="v8.aud2t">تماشای دونفره از راه دور</h3>
+        <p data-i18n="v8.aud2d">فیلم مشترک، چت شناور و صدای زنده؛ فاصله را کوتاه‌تر از همیشه می‌کند.</p>
+      </article>
+      <article class="audience-card" data-reveal>
+        <span class="aud-emoji">🎮</span>
+        <h3 data-i18n="v8.aud3t">طرفدارهای سریال و انیمه</h3>
+        <p data-i18n="v8.aud3d">قسمت‌های پشت‌سرهم، صف پخش و واکنش لحظه‌ای؛ بدون از دست دادن یک صحنه.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="v8-faq" id="faq">
+    <div class="section-head" data-reveal>
+      <span class="section-kicker" data-i18n="v8.faqKicker">سوال‌های رایج</span>
+      <h2 data-i18n="v8.faqTitle">هر چیزی که شاید بپرسی</h2>
+    </div>
+    <div class="v8-faq-list">
+      <details class="faq-item" data-reveal>
+        <summary data-i18n="v8.faq1q">برای استفاده باید ثبت‌نام کنم؟</summary>
+        <p data-i18n="v8.faq1a">بله، برای ساختن یا ورود به لابی یک حساب لازم است؛ ثبت‌نام کمتر از ۳۰ ثانیه طول می‌کشد و روی همین دستگاه ذخیره می‌شود.</p>
+      </details>
+      <details class="faq-item" data-reveal>
+        <summary data-i18n="v8.faq2q">فیلم را از کجا بیاورم؟</summary>
+        <p data-i18n="v8.faq2a">هر لینک مستقیم MP4 یا HLS کافی است. فایل‌های MKV، AVI و MOV را هم می‌توانی مستقیم بارگذاری کنی تا در مرورگر آماده شوند.</p>
+      </details>
+      <details class="faq-item" data-reveal>
+        <summary data-i18n="v8.faq3q">روی گوشی هم کار می‌کند؟</summary>
+        <p data-i18n="v8.faq3a">بله. چت شناور، شیت لمس‌محور برای مدیریت افراد و چیدمان مخصوص حالت عمودی، همه برای موبایل طراحی شده‌اند.</p>
+      </details>
+      <details class="faq-item" data-reveal>
+        <summary data-i18n="v8.faq4q">رمز و اطلاعاتم کجا ذخیره می‌شود؟</summary>
+        <p data-i18n="v8.faq4a">رمز عبور به‌صورت هش‌شده و داده‌های لابی روی مرورگر خودت نگه‌داری می‌شوند؛ هیچ رمزی در متن یا آدرس صفحه قرار نمی‌گیرد.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="pricing-section v8-pricing">
+    <div class="section-head" data-reveal>
+      <span class="section-kicker" data-i18n="v8.priceKicker">شروع بدون ریسک</span>
+      <h2 data-i18n="v8.priceTitle">امشب رایگان شروع کن، بعداً ارتقا بده</h2>
+      <p data-i18n="v8.priceSub">همهٔ قابلیت‌های امروز رایگان است؛ پریمیوم برای وقتی است که بخواهی بیشتر.</p>
     </div>
     <div class="pricing-grid">
-      <article class="price-card">
+      <article class="price-card v8-price-card">
         <span class="price-tag" data-i18n="pricing.free">پلن رایگان</span>
         <div class="price-val"><strong>0</strong><span data-i18n="pricing.unit">تومان</span></div>
         <p class="hint" data-i18n="pricing.freeNote">همین حالا، بدون کارت بانکی.</p>
@@ -203,16 +411,17 @@
           <li data-i18n="pricing.f2">همگام‌سازی دقیق و چت زنده</li>
           <li data-i18n="pricing.f3">صدای زنده و اشتراک زیرنویس</li>
           <li data-i18n="pricing.f4">تبدیل MKV/AVI/MOV در مرورگر</li>
+          <li data-i18n="v8.priceExtra">یک لابی فعال دائمی برای هر حساب</li>
         </ul>
-        <a class="btn btn-primary btn-block" href="#create" data-i18n="create.cta">ساخت اتاق</a>
+        <a class="btn btn-primary btn-block btn-lg" href="#create" data-i18n="v8.priceCta">همین حالا لابی‌ات را بساز</a>
       </article>
-      <article class="price-card price-soon">
+      <article class="price-card price-soon v8-price-soon">
         <span class="price-tag" data-i18n="pricing.premium">پریمیوم</span>
         <div class="price-val"><strong data-i18n="pricing.soon">به‌زودی</strong></div>
-        <p class="hint" data-i18n="pricing.premiumNote">چند اتاق هم‌زمان، آپلود ابری و ظاهرهای بیشتر.</p>
+        <p class="hint" data-i18n="pricing.premiumNote">چند لابی هم‌زمان، آپلود ابری و ظاهرهای بیشتر.</p>
         <ul class="price-list muted-list">
           <li data-i18n="pricing.p1">همهٔ امکانات پلن رایگان</li>
-          <li data-i18n="pricing.p2">چند اتاق هم‌زمان</li>
+          <li data-i18n="pricing.p2">چند لابی هم‌زمان</li>
           <li data-i18n="pricing.p3">آپلود ابری فیلم</li>
         </ul>
         <button class="btn btn-secondary btn-block" type="button" disabled data-i18n="pricing.soon">به‌زودی</button>
@@ -220,17 +429,30 @@
     </div>
   </section>
 
-  <section class="cta-band">
-    <h2 data-i18n="cta.title">شب فیلم بعدی‌ات را با هم ببین</h2>
-    <p data-i18n="cta.sub">یک لینک، چند دوست، یک تجربهٔ سینمایی.</p>
-    <a class="btn btn-primary" href="#create" data-i18n="cta.btn">ساخت اتاق</a>
+  <section class="cta-band v8-cta" data-reveal>
+    <span class="v8-cta-glow" aria-hidden="true"></span>
+    <h2 data-i18n="v8.ctaTitle">امشب را به یک خاطره تبدیل کن</h2>
+    <p data-i18n="v8.ctaSub">یک لینک، چند دوست، یک تجربهٔ سینمایی؛ همین حالا شروع کن.</p>
+    <a class="btn btn-primary btn-lg" href="#create" data-i18n="v8.ctaBtn">ساخت لابی رایگان</a>
+    <span class="v8-cta-note" data-i18n="v8.ctaNote">۳۰ ثانیه تا اولین شب فیلم</span>
   </section>
 
-
   <footer class="site-footer">
-    <span data-i18n="footer.note">اتاق روی مرورگر میزبان اجرا می‌شود؛ برای تماشا، میزبان باید صفحه را باز نگه دارد.</span>
+    <span data-i18n="footer.note">لابی روی مرورگر میزبان اجرا می‌شود؛ برای تماشا، میزبان باید صفحه را باز نگه دارد.</span>
+    <span class="footer-heart" aria-hidden="true">ساخته‌شده برای شب‌های خوب</span>
   </footer>
 </main>
+
+<div class="modal-backdrop hidden" id="modalBackdrop">
+  <div class="modal card" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h2 id="modalTitle"></h2>
+    <p id="modalText"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="modalCancel" type="button" data-i18n="common.cancel">انصراف</button>
+      <button class="btn btn-primary" id="modalOk" type="button" data-i18n="common.ok">تأیید</button>
+    </div>
+  </div>
+</div>
 
 <div class="toast-wrap" id="toasts" aria-live="polite"></div>
 <script type="module" src="assets/js/landing.js"></script>

@@ -4,15 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#07080d">
-<title>ورود — هم‌تماشا</title>
+<title>ورود و ثبت‌نام — هم‌تماشا</title>
+<meta name="description" content="حساب هم‌تماشا بساز و در ۳۰ ثانیه اولین لابی شب فیلمت را راه بینداز.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/css/style.css">
+<link rel="stylesheet" href="assets/css/auth-v8.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%237c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
 </head>
-<body class="page-auth">
+<body class="page-auth v8-auth">
 
 <div class="bg-aurora" aria-hidden="true">
   <span class="aurora a1"></span>
@@ -21,7 +23,7 @@
   <div class="grid-overlay"></div>
 </div>
 
-<header class="site-header">
+<header class="site-header v8-auth-header">
   <a class="brand" href="./">
     <span class="brand-mark" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg>
@@ -29,12 +31,53 @@
     <span class="brand-text">هم‌تماشا</span>
   </a>
   <div class="header-actions">
+    <a class="auth-back" href="./">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
+      <span data-i18n="authv8.back">بازگشت به خانه</span>
+    </a>
     <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="Change language">EN</button>
   </div>
 </header>
 
-<main class="auth-wrap">
-  <section class="card auth-card">
+<main class="auth-wrap v8-auth-wrap">
+  <aside class="auth-side" aria-hidden="true">
+    <span class="auth-side-orb" aria-hidden="true"></span>
+    <span class="auth-side-badge"><span class="dot"></span><span data-i18n="authv8.sideBadge">۳۰ ثانیه تا اولین شب فیلم</span></span>
+    <h2 data-i18n="authv8.sideTitle">یک حساب، یک لابی، یک شب خوب</h2>
+    <p class="auth-side-sub" data-i18n="authv8.sideSub">داخل هم‌تماشا همه‌چیز برای تماشای هم‌زمان آماده است؛ فقط یک اسم و رمز کم داری.</p>
+    <ul class="auth-perks">
+      <li>
+        <span class="perk-ico">🎬</span>
+        <div><strong data-i18n="authv8.perk1t">لابی فعال دائمی</strong><small data-i18n="authv8.perk1d">همیشه یک اتاق آماده برای شب‌های فیلم</small></div>
+      </li>
+      <li>
+        <span class="perk-ico">💬</span>
+        <div><strong data-i18n="authv8.perk2t">چت شناور روی فیلم</strong><small data-i18n="authv8.perk2d">بدون بستن پلیر، وسط صحنه حرف بزنید</small></div>
+      </li>
+      <li>
+        <span class="perk-ico">🛡️</span>
+        <div><strong data-i18n="authv8.perk3t">اطلاعات روی دستگاه خودت</strong><small data-i18n="authv8.perk3d">رمز هش می‌شود و داده در مرورگر تو می‌ماند</small></div>
+      </li>
+    </ul>
+    <div class="auth-mini">
+      <div class="auth-mini-top">
+        <span class="auth-mini-dots"><i></i><i></i><i></i></span>
+        <span data-i18n="authv8.miniRoom">اتاق شب فیلم</span>
+      </div>
+      <div class="auth-mini-screen">
+        <span class="auth-mini-play">▶</span>
+        <span class="auth-mini-bubble"><b>سارا</b> : این صحنه رو ببین!</span>
+        <span class="auth-mini-bubble b2"><b>امیر</b> : عالی بود 😂</span>
+      </div>
+      <div class="auth-mini-people">
+        <span class="mp p1">س</span><span class="mp p2">ا</span><span class="mp p3">ن</span>
+        <span class="auth-mini-live"><i></i>4</span>
+      </div>
+    </div>
+    <p class="auth-side-foot" data-i18n="authv8.sideFoot">رایگان · بدون کارت بانکی · بدون نصب</p>
+  </aside>
+
+  <section class="card auth-card v8-auth-card">
     <div class="auth-tabs" role="tablist">
       <button id="tabRegister" class="active" type="button" data-i18n="auth.register">ثبت‌نام</button>
       <button id="tabLogin" type="button" data-i18n="auth.login">ورود</button>
@@ -81,10 +124,10 @@
         </div>
       </div>
 
-      <button class="btn btn-primary btn-block" id="submitBtn" type="submit" data-i18n="auth.register">ساخت حساب</button>
+      <button class="btn btn-primary btn-block btn-lg" id="submitBtn" type="submit" data-i18n="auth.register">ساخت حساب</button>
       <p class="auth-error" id="authError" role="alert"></p>
       <button class="link-btn hidden" id="forgotLink" type="button" data-i18n="auth.forgot">رمز را فراموش کردی؟</button>
-      <p class="hint" data-i18n="auth.note">حسابت فقط روی همین مرورگر ذخیره می‌شود؛ این نسخه سرور ندارد.</p>
+      <p class="hint auth-foot" data-i18n="auth.note">حسابت فقط روی همین مرورگر ذخیره می‌شود؛ این نسخه سرور ندارد.</p>
     </form>
 
     <form id="recoverForm" class="hidden" autocomplete="on">
@@ -115,13 +158,14 @@
           <input id="recCaptchaA" type="text" inputmode="numeric" maxlength="4" dir="ltr" placeholder="13" autocomplete="off">
         </div>
       </div>
-      <button class="btn btn-primary btn-block" id="recSubmit" type="submit" data-i18n="auth.recoverCta">تعیین رمز جدید</button>
+      <button class="btn btn-primary btn-block btn-lg" id="recSubmit" type="submit" data-i18n="auth.recoverCta">تعیین رمز جدید</button>
       <p class="auth-error" id="recError" role="alert"></p>
       <button class="link-btn" id="recoverBack" type="button" data-i18n="auth.back">بازگشت به ورود</button>
     </form>
   </section>
 </main>
 
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
 <script type="module">
 import { initI18n } from "./assets/js/i18n.js";
 import { initAuthPage } from "./assets/js/auth.js";

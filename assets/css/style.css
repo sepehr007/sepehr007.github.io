@@ -1276,3 +1276,22 @@ html[data-theme="light"] .feed-sep{color:rgba(15,23,42,.4)}
 .person-quick-mute.on{color:#f87171;background:rgba(248,113,113,.14)}
 html[data-theme="light"] .person-quick-mute:hover{background:rgba(15,23,42,.06)}
 html[data-theme="light"] .cine-style{background:rgba(15,23,42,.03);border-color:rgba(15,23,42,.08)}
+
+/* Piece 8: escape hatch when changing the video during playback */
+.empty-back{
+  position:absolute;top:14px;inset-inline-start:14px;z-index:4;
+  display:inline-flex;align-items:center;gap:7px;
+  padding:8px 13px;border-radius:99px;
+  background:rgba(12,14,22,.82);border:1px solid rgba(255,255,255,.16);
+  color:#e9edf7;font-size:12px;font-weight:700;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 10px 26px rgba(0,0,0,.35);
+  transition:background .18s,border-color .18s,transform .18s;
+}
+.empty-back svg{width:15px;height:15px}
+.empty-back:hover{background:rgba(124,92,255,.26);border-color:rgba(124,92,255,.55)}
+.empty-back:active{transform:scale(.97)}
+html[data-theme="light"] .empty-back{background:rgba(255,255,255,.92);border-color:rgba(15,23,42,.14);color:#0f172a;box-shadow:0 10px 26px rgba(15,23,42,.14)}
+@media (max-width:640px){
+  .empty-back{top:8px;inset-inline-start:8px;padding:7px 11px;font-size:11px}
+}

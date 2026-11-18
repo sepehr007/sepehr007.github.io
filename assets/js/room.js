@@ -9,6 +9,7 @@ import { LiveFeed } from "./livefeed.js";
 import { Player, parseSubtitles } from "./player.js";
 import { Voice } from "./voice.js";
 import { currentUser, isLocallyBanned } from "./auth.js";
+import { touchLobby, forceCloseLobby } from "./lobbies.js";
 import { avatarSrc } from "./avatars.js";
 import { loadSiteConfig, applySiteConfig, featureOn, accessOn, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
 import {
@@ -421,6 +422,7 @@ function wireNet() {
     syncStageEmpty();
     $("#netLabel").textContent = t("net.online");
     $("#connLostBar")?.classList.add("hidden");
+    if (isHost) touchLobby(currentUser(), code).catch(() => {});
     const ping = $("#netPing");
     if (ping && me.role === "owner") {
       ping.textContent = t("net.host");
@@ -918,6 +920,7 @@ function syncStageEmpty() {
   if (!stageEmpty) return;
   const has = !!player?.url;
   stageEmpty.classList.toggle("hidden", has);
+  $("#emptyBackBtn")?.classList.toggle("hidden", !has);
   $("#videoFrame").classList.toggle("has-media", has);
   if (has) maybeAutoOpenCine();
 }
@@ -1010,6 +1013,8 @@ function loadVideoFromInput() {
   const url = $("#videoUrlInput").value.trim();
   const v = validateMediaUrl(url);
   if (!v.ok) return toast(v.reason === "blocked" ? t("toast.blockedDomain") : t("toast.videoInvalid"), "error");
+  if (!canControl()) return toast(t("toast.cantControl"), "error");
+  if (!net || !net.ready) return toast(t("net.lostTitle"), "error");
   showMediaLoading();
   net.command("loadVideo", { url: v.url });
 }
@@ -1114,7 +1119,16 @@ function wireFileLoad() {
   });
   $("#changeSourceBtn").addEventListener("click", () => {
     $("#stageEmpty").classList.remove("hidden");
+    $("#emptyBackBtn")?.classList.toggle("hidden", !player?.url);
     $("#videoUrlInput").focus();
+  });
+  $("#emptyBackBtn")?.addEventListener("click", () => syncStageEmpty());
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const stage = $("#stageEmpty");
+    if (!stage || stage.classList.contains("hidden") || !player?.url) return;
+    if ($("#modalBackdrop") && !$("#modalBackdrop").classList.contains("hidden")) return;
+    syncStageEmpty();
   });
   $("#foGetBtn").addEventListener("click", () => {
     if (!fileOfferId) return;
@@ -3447,6 +3461,7 @@ function wireMisc() {
     });
     if (!ok) return;
     if (manager) {
+      forceCloseLobby(code, "leave").catch(() => {});
       net.command("closeLobby");
       setTimeout(() => { cleanup(); location.replace("./"); }, 260);
       return;

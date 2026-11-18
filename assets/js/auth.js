@@ -1,10 +1,11 @@
-import { $, colorFor, initials, applyUIPrefs } from "./core.js";
+import { $, colorFor, initials, applyUIPrefs, toast } from "./core.js";
 import { t } from "./i18n.js";
 import { avatarId, avatarSrc, isAvatarId, presetValue } from "./avatars.js";
 import { loadSiteConfig, applySiteConfig, accessOn, featureOn } from "./site-config.js";
 import { buildFlagContext, recordFeatureUse } from "./feature-flags.js";
 import { logModeration } from "./modlog.js";
 import { apiFetch, apiGetToken, apiSetToken, apiClearToken } from "./api.js";
+import { dbPut, dbDelete } from "./db.js";
 
 const USERS_KEY = "wt.users";
 const SESSION_KEY = "wt.session";
@@ -43,6 +44,30 @@ function readUsers() {
 }
 function writeUsers(users) {
   try { localStorage.setItem(USERS_KEY, JSON.stringify(users)); } catch {}
+  syncUsersToDb(users);
+}
+/* keep the accounts/profiles object stores in step with localStorage */
+function syncUsersToDb(users) {
+  for (const [username, rec] of Object.entries(users || {})) {
+    if (!rec?.u) continue;
+    dbPut("accounts", {
+      username,
+      nick: rec.nick || username,
+      email: rec.email || "",
+      createdAt: rec.createdAt || Date.now(),
+      salt: rec.salt || "",
+      hash: rec.hash || "",
+      updatedAt: Date.now()
+    }).catch(() => {});
+    dbPut("profiles", {
+      username,
+      avatar: rec.profile?.avatar || "",
+      city: rec.profile?.city || "",
+      birthdate: rec.profile?.birthdate || "",
+      bio: rec.profile?.bio || "",
+      friends: Array.isArray(rec.friends) ? rec.friends : []
+    }).catch(() => {});
+  }
 }
 function readApiUser() {
   try {
@@ -403,7 +428,9 @@ export function requireAuth(nextPath) {
 
 export function logout() {
   const token = apiGetToken();
+  const session = readLocalSession();
   try { localStorage.removeItem(SESSION_KEY); } catch {}
+  if (session?.u) dbDelete("sessions", session.u).catch(() => {});
   clearApiAuth();
   if (token) {
     apiFetch("/auth/logout", { method: "POST", token, auth: false, timeoutMs: 4000 }).catch(() => {});
@@ -413,6 +440,7 @@ export function logout() {
 function saveSession(username) {
   const exp = Date.now() + SESSION_DAYS * 864e5;
   try { localStorage.setItem(SESSION_KEY, JSON.stringify({ u: username, exp })); } catch {}
+  dbPut("sessions", { username, exp, at: Date.now() }).catch(() => {});
 }
 
 /* ---------- auth actions ---------- */
