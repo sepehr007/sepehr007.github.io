@@ -189,6 +189,13 @@
           <button class="ctl hidden" id="castBtn" type="button" data-i18n-title="cast.title" title="Cast">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 18v3h3a3 3 0 0 0-3-3zM3 13v3a2 2 0 0 1 2 2h3a5 5 0 0 0-5-5M3 8v3a7 7 0 0 1 7 7h3A10 10 0 0 0 3 8M3 7V6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-5"/></svg>
           </button>
+          <button class="ctl react-ctl" id="reactCtlBtn" type="button" data-i18n-title="react.title" title="واکنش زنده" aria-label="Live reactions" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/></svg>
+          </button>
+          <button class="ctl cine-ctl" id="cineCtlBtn" type="button" data-i18n-title="cine.open" title="چت شناور" aria-label="Floating chat" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/><path d="M8 11h8M8 15h5"/></svg>
+            <span class="cine-ctl-dot hidden" id="cineCtlDot"></span>
+          </button>
           <button class="ctl" id="fullBtn" type="button" title="Fullscreen">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
           </button>
@@ -198,9 +205,35 @@
           <div class="react-tray" id="reactTray" role="menu" aria-label="Live reactions"></div>
           <button class="react-fab" id="reactToggle" type="button" data-i18n-title="react.title" title="واکنش زنده" aria-label="Live reactions" aria-expanded="false">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20.5s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.9c0 5.4-7.5 10-7.5 10z"/></svg>
+            <span class="react-label" data-i18n="react.label">واکنش</span>
           </button>
         </div>
+
+        <div class="cine-chat" id="cineChat" aria-label="چت شناور">
+          <div class="cine-head">
+            <button class="cine-title-btn" id="cineExpandBtn" type="button" aria-expanded="false">
+              <span class="cine-live" aria-hidden="true"></span>
+              <span class="cine-title" data-i18n="cine.title">چت شناور</span>
+              <span class="cine-unread hidden" id="cineUnread">0</span>
+            </button>
+            <button class="cine-min" id="cineMinBtn" type="button" data-i18n-title="cine.min" title="جمع کردن" aria-label="Minimize">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 12h12"/></svg>
+            </button>
+          </div>
+          <div class="cine-list" id="cineList"></div>
+          <form class="cine-form" id="cineForm" autocomplete="off">
+            <input id="cineInput" type="text" maxlength="500" data-i18n-ph="cine.placeholder" placeholder="پیام سریع…">
+            <button type="submit" aria-label="Send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12l16-8-6 16-3-6-7-2z"/></svg>
+            </button>
+          </form>
+        </div>
       </div>
+
+      <button class="chat-fab" id="chatFab" type="button" data-i18n-title="chat.showPanel" title="نمایش چت" aria-label="Show chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/><path d="M8 11h8M8 15h5"/></svg>
+        <span class="chat-fab-badge hidden" id="chatFabBadge">0</span>
+      </button>
 
       <div class="voice-strip" id="voiceStrip"></div>
     </section>
@@ -265,6 +298,10 @@
     <section class="panel" data-panel="people">
       <div class="panel-head">
         <h2 data-i18n="people.title">افراد اتاق</h2>
+        <div class="people-tools">
+          <button class="mini-btn" id="muteAllBtn" type="button" data-i18n-title="settings.muteAll" title="بی‌صدا کردن همه برای من" aria-label="Mute everyone for me">🔇</button>
+          <button class="mini-btn" id="unmuteAllBtn" type="button" data-i18n-title="settings.unmuteAll" title="بازگرداندن صدای همه برای من" aria-label="Unmute everyone for me">🔊</button>
+        </div>
         <span class="count" id="peopleCount">0</span>
       </div>
       <div class="people-list" id="peopleList"></div>
@@ -398,6 +435,24 @@
           <span class="switch"></span>
         </label>
         <p class="hint" data-i18n="settings.hideChatHint">برای برگرداندن چت از دکمهٔ گفتگو در نوار بالا استفاده کن.</p>
+        <label class="switch-row">
+          <span data-i18n="settings.reactions">واکنش‌های زنده روی فیلم</span>
+          <input type="checkbox" id="optReactions" checked>
+          <span class="switch"></span>
+        </label>
+        <p class="hint" data-i18n="settings.reactionsHint">با خاموش کردن، دکمه و ایموجی‌های شناور روی ویدیو پنهان می‌شوند.</p>
+        <label class="switch-row">
+          <span data-i18n="settings.cineChat">چت شناور روی فیلم</span>
+          <input type="checkbox" id="optCineChat" checked>
+          <span class="switch"></span>
+        </label>
+        <p class="hint" data-i18n="settings.cineChatHint">حتی در تمام‌صفحه هم می‌توانی وسط فیلم چت کنی.</p>
+        <label class="switch-row">
+          <span data-i18n="settings.sheetDock">کشوی چت پایین (موبایل)</span>
+          <input type="checkbox" id="optSheetDock" checked>
+          <span class="switch"></span>
+        </label>
+        <p class="hint" data-i18n="settings.sheetDockHint">برای پنهان کردن کشو آن را پایین بکش؛ دکمهٔ چت شناور برمی‌گرداند.</p>
         <div class="setting hidden" id="qualityRow">
           <label for="optQuality" data-i18n="settings.quality">کیفیت پخش</label>
           <select id="optQuality">

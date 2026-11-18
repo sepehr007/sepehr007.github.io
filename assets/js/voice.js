@@ -14,6 +14,7 @@ export class Voice {
     this.audios = new Map();     // peerId -> HTMLAudioElement
     this.analysers = new Map();  // peerId -> {analyser, data, timer}
     this.volumes = new Map();
+    this.localMutes = new Map();
     this.ctx = null;
     this.loop = null;
     this.speaking = new Map();
@@ -74,7 +75,23 @@ export class Voice {
 
   setDeafened(deaf) {
     this.deafened = !!deaf;
-    for (const [, audio] of this.audios) audio.muted = this.deafened;
+    for (const [peerId, audio] of this.audios) audio.muted = this.#mutedFor(peerId);
+  }
+
+  #mutedFor(peerId) {
+    return this.deafened || !!this.localMutes.get(peerId);
+  }
+
+  setLocalMuted(peerId, muted) {
+    if (!peerId || peerId === this.selfId) return false;
+    this.localMutes.set(peerId, !!muted);
+    const audio = this.audios.get(peerId);
+    if (audio) audio.muted = this.#mutedFor(peerId);
+    return !!muted;
+  }
+
+  isLocalMuted(peerId) {
+    return !!this.localMutes.get(peerId);
   }
 
   setVolume(peerId, value) {
@@ -138,7 +155,7 @@ export class Voice {
       this.audios.set(peerId, audio);
     }
     audio.srcObject = stream;
-    audio.muted = this.deafened;
+    audio.muted = this.#mutedFor(peerId);
     audio.volume = this.volumes.get(peerId) ?? 1;
     audio.play?.().catch(() => {});
     this.#attachAnalyser(peerId, stream);

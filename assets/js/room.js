@@ -51,6 +51,19 @@ let wakeSentinel = null;
 let wakePending = false;
 const QUEUE_AUTO_KEY = "wt.queueAuto";
 let queueAuto = store.get(QUEUE_AUTO_KEY, true) !== false;
+const REACT_DOCK_KEY = "wt.reactDock";
+let reactionsOn = store.get(REACT_DOCK_KEY, true) !== false;
+const CINE_CHAT_KEY = "wt.cineChat";
+let cineOn = store.get(CINE_CHAT_KEY, true) !== false;
+const SHEET_DOCK_KEY = "wt.sheetDock";
+let sheetDockOn = store.get(SHEET_DOCK_KEY, true) !== false;
+const USER_AUDIO_KEY = "wt.userAudio";
+let userAudio = store.get(USER_AUDIO_KEY, {}) || {};
+let cineExpanded = false;
+let cineUnread = 0;
+let cineMsgs = [];
+const MAX_CINE = 40;
+let lastReactAt = 0;
 const PTT_KEY = "wt.ptt";
 let pttOn = store.get(PTT_KEY, false) === true;
 let pttHeld = false;
@@ -241,6 +254,7 @@ async function boot() {
   wireSleepTimer();
   wireQueueAuto();
   wireReactions();
+  wireCineChat();
   wirePrefs();
   wireVoice();
   wireScreen();
@@ -268,6 +282,14 @@ function applyFeatureFlags() {
   if (!flagOn(flagStates, "watch.subtitles")) {
     $("#subsPickBtn")?.closest(".setting")?.classList.add("feature-off");
   }
+  applyReactionVis();
+  applyCineChat();
+  const userAudioOn = flagOn(flagStates, "voice.volume");
+  $$(".people-tools").forEach((n) => n.classList.toggle("hidden", !userAudioOn));
+  if (!userAudioOn && voice) {
+    for (const m of members) voice.setLocalMuted(m.id, false);
+  }
+  syncChatFab();
 }
 
 function createNet() {
@@ -515,6 +537,7 @@ function wireNet() {
   net.on("voice", ({ id, on }) => {
     if (!selfVoice || id === me.id) return;
     voice.peerVoice(id, on);
+    if (on) applyUserAudio(id, nickFor(id));
     renderVoiceTiles();
   });
 
@@ -1099,6 +1122,25 @@ function wireChatTimer() {
   saveChatTimer();
 }
 
+function sendChatText(text) {
+  if (!chatEnabled) {
+    toast(getLang() === "fa" ? "چت توسط مدیر سایت موقتاً غیرفعال شده است." : "Chat is temporarily disabled by the site owner.", "error");
+    return false;
+  }
+  const clean = String(text || "").trim();
+  if (!clean) return false;
+  if (!canSend()) { toast(getLang() === "fa" ? "کمی صبر کن" : "Slow down", "error"); return false; }
+  const slow = Number(roomInfo?.slow) || 0;
+  const wait = slow ? Math.ceil((slow * 1000 - (Date.now() - lastChatMsgAt)) / 1000) : 0;
+  if (wait > 0) { toast(t("toast.slowWait", { s: String(wait) }), "info"); return false; }
+  net.command("chat", { text: clean, replyTo });
+  recordFeatureUse("chat.text", { plan: flagContext.plan, role: flagContext.role, room: code });
+  lastChatMsgAt = Date.now();
+  replyTo = null;
+  $("#replyBar")?.classList.add("hidden");
+  return true;
+}
+
 function wireChat() {
   const chatInput = $("#chatInput");
   const chatForm = $("#chatForm");
@@ -1128,22 +1170,15 @@ function wireChat() {
     }
     const text = chatInput.value.trim();
     if (!text) return;
-    if (!canSend()) { toast(getLang() === "fa" ? "کمی صبر کن" : "Slow down", "error"); return; }
     if (editingId) {
+      if (!canSend()) { toast(getLang() === "fa" ? "کمی صبر کن" : "Slow down", "error"); return; }
       if (!allow("chat.edit", "ویرایش پیام غیرفعال شده است.")) return;
       net.command("chatEdit", { id: editingId, text });
       editingId = null;
       chatInput.placeholder = t("chat.placeholder");
       $("#replyBar").classList.add("hidden");
-    } else {
-      const slow = Number(roomInfo?.slow) || 0;
-      const wait = slow ? Math.ceil((slow * 1000 - (Date.now() - lastChatMsgAt)) / 1000) : 0;
-      if (wait > 0) { toast(t("toast.slowWait", { s: String(wait) }), "info"); return; }
-      net.command("chat", { text, replyTo });
-      recordFeatureUse("chat.text", { plan: flagContext.plan, role: flagContext.role, room: code });
-      lastChatMsgAt = Date.now();
-      replyTo = null;
-      $("#replyBar").classList.add("hidden");
+    } else if (!sendChatText(text)) {
+      return;
     }
     chatInput.value = "";
     if (document.activeElement === chatInput) chatInput.focus({ preventScroll: true });
@@ -1337,6 +1372,7 @@ function startEdit(msg) {
 function appendMessage(msg, animate) {
   if (!msg) return;
   if (chatList.querySelector(`[data-id="${cssEscape(msg.id)}"]`)) return;
+  pushCine(msg);
   const node = buildMessage(msg);
   chatList.append(node);
   while (chatList.children.length > MAX_CHAT_NODES) chatList.firstElementChild?.remove();
@@ -1356,6 +1392,10 @@ function syncChatEmpty() {
 function clearChatHistory() {
   const wasEditing = !!editingId;
   chatList.innerHTML = "";
+  cineMsgs = [];
+  cineUnread = 0;
+  renderCine();
+  paintCineUnread();
   replyTo = null;
   editingId = null;
   $("#replyBar")?.classList.add("hidden");
@@ -1498,6 +1538,7 @@ function updateMessage(msg) {
   }
   renderReactions(node, msg);
   refreshPinned();
+  pushCine(msg, { quiet: true });
 }
 
 function refreshPinned() {
@@ -1575,6 +1616,19 @@ function setChatHidden(hidden, persist = true) {
   if (chatHidden) $("#sidebar")?.classList.remove("open");
   if (persist) store.set("wt.chatHidden", chatHidden);
   if (!chatHidden) scrollChatSoon(true);
+  syncChatFab();
+}
+
+function syncChatFab() {
+  const fab = $("#chatFab");
+  if (!fab) return;
+  const mobile = window.matchMedia("(max-width: 640px)").matches;
+  fab.classList.toggle("fab-show", chatHidden && mobile);
+  const badge = $("#chatFabBadge");
+  if (badge) {
+    badge.textContent = unreadChat > 9 ? "9+" : String(unreadChat);
+    badge.classList.toggle("hidden", unreadChat === 0);
+  }
 }
 
 function paintChatJump() {
@@ -1603,8 +1657,54 @@ function renderTyping() {
 typingTimer = setInterval(renderTyping, 1200);
 
 /* ================= people ================= */
+function audioKey(nickName) {
+  return String(nickName || "").trim().toLowerCase();
+}
+
+function userAudioFor(nickName) {
+  return userAudio[audioKey(nickName)] || {};
+}
+
+function saveUserAudio(nickName, patch) {
+  const key = audioKey(nickName);
+  if (!key) return;
+  const next = { ...(userAudio[key] || {}), ...patch };
+  if (!next.mute) delete next.mute;
+  if (next.vol != null && Math.round(next.vol * 100) === 100) delete next.vol;
+  if (!next.mute && next.vol == null) delete userAudio[key];
+  else userAudio[key] = next;
+  store.set(USER_AUDIO_KEY, userAudio);
+}
+
+function applyUserAudio(peerId, nickName) {
+  if (!voice || !peerId || peerId === me.id) return;
+  const pref = userAudioFor(nickName);
+  voice.setLocalMuted(peerId, !!pref.mute);
+  if (pref.vol != null) voice.setVolume(peerId, pref.vol);
+}
+
 function wirePeople() {
   peopleList.addEventListener("click", async (e) => {
+    const local = e.target.closest("[data-lmute]");
+    if (local) {
+      if (!allow("voice.volume", "کنترل صدای اعضا غیرفعال شده است.")) return;
+      const person = local.closest(".person");
+      const id = person?.dataset.id;
+      const name = person?.dataset.nick || "";
+      if (!id) return;
+      const next = !userAudioFor(name).mute;
+      voice.setLocalMuted(id, next);
+      saveUserAudio(name, { mute: next });
+      person.classList.toggle("muted-local", next);
+      local.classList.toggle("on", next);
+      local.textContent = next ? "🔇" : "🔊";
+      const label = t(next ? "people.localUnmute" : "people.localMute");
+      local.title = label;
+      local.setAttribute("aria-label", label);
+      local.setAttribute("aria-pressed", String(next));
+      toast(t(next ? "toast.mutedForMe" : "toast.unmutedForMe", { name }), "info", 2600);
+      return;
+    }
     const btn = e.target.closest("[data-pmod]");
     if (!btn) return;
     const id = btn.closest(".person").dataset.id;
@@ -1619,6 +1719,41 @@ function wirePeople() {
     }
     net.command("mod", { action, target: id });
   });
+
+  peopleList.addEventListener("input", (e) => {
+    const range = e.target.closest(".person-vol");
+    if (!range) return;
+    if (!allow("voice.volume", "کنترل صدای اعضا غیرفعال شده است.")) { e.target.value = String(Math.round((userAudioFor(range.closest(".person")?.dataset.nick).vol ?? 1) * 100)); return; }
+    const person = range.closest(".person");
+    const v = Math.max(0, Math.min(100, Number(range.value) || 0)) / 100;
+    voice.setVolume(person.dataset.id, v);
+    saveUserAudio(person.dataset.nick, { vol: v });
+    const tile = document.querySelector(`.voice-tile[data-id="${cssEscape(person.dataset.id)}"] .tile-vol`);
+    if (tile) tile.value = String(Math.round(v * 100));
+  });
+
+  const muteAll = () => {
+    if (!allow("voice.volume", "کنترل صدای اعضا غیرفعال شده است.")) return;
+    for (const m of members) {
+      if (m.id === me.id) continue;
+      saveUserAudio(m.nick, { mute: true });
+      voice.setLocalMuted(m.id, true);
+    }
+    renderMembers();
+    toast(t("settings.muteAll"), "info", 2600);
+  };
+  const unmuteAll = () => {
+    if (!allow("voice.volume", "کنترل صدای اعضا غیرفعال شده است.")) return;
+    for (const m of members) {
+      if (m.id === me.id) continue;
+      saveUserAudio(m.nick, { mute: false });
+      voice.setLocalMuted(m.id, false);
+    }
+    renderMembers();
+    toast(t("settings.unmuteAll"), "info", 2600);
+  };
+  $("#muteAllBtn")?.addEventListener("click", muteAll);
+  $("#unmuteAllBtn")?.addEventListener("click", unmuteAll);
 }
 
 function avatarFor(id) {
@@ -1660,6 +1795,27 @@ function renderMembers() {
     if (m.role !== "member") nameRow.append(el("span", { class: `role-badge ${m.role}`, text: t(`role.${m.role}`) }));
     const sub = el("div", { class: "person-sub", text: m.voice ? (getLang() === "fa" ? "در صدا" : "In voice") : "" });
     info.append(nameRow, sub);
+
+    if (m.id !== me.id && flagOn(flagStates, "voice.volume")) {
+      const pref = userAudioFor(m.nick);
+      const audioRow = el("div", { class: "person-audio" });
+      const muteBtn = el("button", {
+        type: "button", class: pref.mute ? "on" : "", "data-lmute": "1",
+        title: t(pref.mute ? "people.localUnmute" : "people.localMute"),
+        "aria-label": t(pref.mute ? "people.localUnmute" : "people.localMute"),
+        "aria-pressed": String(!!pref.mute),
+        text: pref.mute ? "🔇" : "🔊"
+      });
+      const vol = el("input", {
+        type: "range", min: "0", max: "100", step: "1", class: "person-vol",
+        value: String(Math.round((pref.vol ?? 1) * 100)),
+        "aria-label": t("people.volume")
+      });
+      audioRow.append(muteBtn, vol);
+      info.append(audioRow);
+      node.classList.toggle("muted-local", !!pref.mute);
+      applyUserAudio(m.id, m.nick);
+    }
 
     const actions = el("div", { class: "person-actions" });
     if (isModSelf() && m.id !== me.id && m.role !== "owner") {
@@ -2125,13 +2281,15 @@ function wirePrefs() {
 /* ================= tabs ================= */
 function paintUnreadChat() {
   const badge = $("#chatBadge");
-  if (!badge) return;
-  badge.textContent = unreadChat > 9 ? "9+" : String(unreadChat);
-  badge.classList.toggle("hidden", unreadChat === 0);
+  if (badge) {
+    badge.textContent = unreadChat > 9 ? "9+" : String(unreadChat);
+    badge.classList.toggle("hidden", unreadChat === 0);
+  }
+  syncChatFab();
 }
 
 function noteIncomingChat() {
-  if (activeTabName === "chat" && document.visibilityState === "visible") return;
+  if (!chatHidden && activeTabName === "chat" && document.visibilityState === "visible") return;
   unreadChat = Math.min(99, unreadChat + 1);
   paintUnreadChat();
 }
@@ -2195,6 +2353,7 @@ async function toggleVoice() {
   if (!ok) return;
   selfVoice = true;
   if (pttOn) voice.setMuted(true);
+  for (const m of members) if (m.voice && m.id !== me.id) applyUserAudio(m.id, m.nick);
   net.command("voice", { on: true });
   recordFeatureUse("voice.chat", { plan: flagContext.plan, role: flagContext.role, room: code });
   $("#voiceBtn").classList.add("active");
@@ -2451,22 +2610,168 @@ function renderVoiceTiles() {
   const inVoice = members.filter((m) => m.voice);
   if (!inVoice.some((m) => m.id === me.id)) inVoice.push({ id: me.id, nick: me.nick, muted: voice.muted });
   for (const m of inVoice) {
-    const tile = el("div", { class: `voice-tile${m.muted ? " muted" : ""}`, "data-id": m.id });
+    const mutedLocal = m.id !== me.id && voice.isLocalMuted(m.id);
+    const tile = el("div", { class: `voice-tile${m.muted ? " muted" : ""}${mutedLocal ? " muted-local" : ""}`, "data-id": m.id });
     const av = el("div", { class: "avatar-sm" });
     paintAvatar(av, m.avatar || avatarFor(m.id), m.nick, m.id);
     const name = el("span", { text: m.id === me.id ? (getLang() === "fa" ? "تو" : "You") : m.nick });
     tile.append(av, name);
     if (m.id !== me.id) {
       const vol = el("input", { type: "range", min: "0", max: "100", class: "tile-vol", value: String(Math.round((voice.volumes.get(m.id) ?? 1) * 100)) });
-      vol.addEventListener("input", (e) => voice.setVolume(m.id, Number(e.target.value) / 100));
+      vol.addEventListener("input", (e) => {
+        const v = Number(e.target.value) / 100;
+        voice.setVolume(m.id, v);
+        saveUserAudio(m.nick, { vol: v });
+        const person = peopleList.querySelector(`.person[data-id="${cssEscape(m.id)}"] .person-vol`);
+        if (person) person.value = e.target.value;
+      });
       tile.append(vol);
     }
     strip.append(tile);
   }
 }
 
+/* ================= floating cinema chat ================= */
+function pushCine(msg, { quiet = false } = {}) {
+  if (!msg?.id) return;
+  const i = cineMsgs.findIndex((m) => m.id === msg.id);
+  const entry = {
+    id: msg.id, by: msg.by, nick: msg.nick || "?",
+    text: msg.text || "", deleted: !!msg.deleted
+  };
+  if (i >= 0) cineMsgs[i] = { ...cineMsgs[i], ...entry };
+  else cineMsgs.push(entry);
+  if (cineMsgs.length > MAX_CINE) cineMsgs = cineMsgs.slice(-MAX_CINE);
+  renderCine();
+  const fresh = !msg.at || Date.now() - msg.at < 60000;
+  if (!quiet && fresh && !cineExpanded && msg.by !== me.id) {
+    cineUnread = Math.min(99, cineUnread + 1);
+    paintCineUnread();
+  }
+}
+
+function renderCine() {
+  const list = $("#cineList");
+  if (!list) return;
+  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 46;
+  list.innerHTML = "";
+  if (!cineMsgs.length) {
+    list.append(el("div", { class: "cine-empty", text: t("cine.empty") }));
+    return;
+  }
+  for (const m of cineMsgs) {
+    const row = el("div", {
+      class: `cine-msg${m.by === me.id ? " own" : ""}${m.deleted ? " deleted" : ""}`
+    });
+    row.append(
+      el("b", { text: m.nick || "?" }),
+      el("span", { text: m.deleted ? t("chat.deleted") : m.text })
+    );
+    list.append(row);
+  }
+  if (nearBottom || cineExpanded) list.scrollTop = list.scrollHeight;
+}
+
+function paintCineUnread() {
+  const badge = $("#cineUnread");
+  if (badge) {
+    badge.textContent = cineUnread > 9 ? "9+" : String(cineUnread);
+    badge.classList.toggle("hidden", cineUnread === 0);
+  }
+  $("#cineCtlDot")?.classList.toggle("hidden", cineUnread === 0 || cineExpanded);
+}
+
+function setCineExpanded(on) {
+  cineExpanded = !!on && cineOn && chatEnabled && flagOn(flagStates, "watch.floatingChat");
+  const box = $("#cineChat");
+  if (!box) return;
+  box.classList.toggle("min", !cineExpanded);
+  $("#cineExpandBtn")?.setAttribute("aria-expanded", String(cineExpanded));
+  const ctl = $("#cineCtlBtn");
+  ctl?.classList.toggle("active", cineExpanded);
+  ctl?.setAttribute("aria-expanded", String(cineExpanded));
+  if (cineExpanded) {
+    cineUnread = 0;
+    paintCineUnread();
+    renderCine();
+    requestAnimationFrame(() => { const l = $("#cineList"); if (l) l.scrollTop = l.scrollHeight; });
+  } else {
+    const input = $("#cineInput");
+    if (input && document.activeElement === input) input.blur();
+    paintCineUnread();
+  }
+}
+
+function applyCineChat() {
+  const box = $("#cineChat");
+  if (!box) return;
+  const enabled = cineOn && chatEnabled && flagOn(flagStates, "watch.floatingChat");
+  if (!enabled && cineExpanded) setCineExpanded(false);
+  box.classList.toggle("hidden", !enabled);
+  box.classList.toggle("min", !cineExpanded);
+  $("#cineCtlBtn")?.classList.toggle("hidden", !enabled);
+  if (enabled) {
+    renderCine();
+    paintCineUnread();
+  }
+}
+
+function wireCineChat() {
+  const box = $("#cineChat");
+  if (!box) return;
+  $("#cineExpandBtn")?.addEventListener("click", () => setCineExpanded(!cineExpanded));
+  $("#cineMinBtn")?.addEventListener("click", () => setCineExpanded(false));
+  $("#cineCtlBtn")?.addEventListener("click", () => {
+    if (!allow("watch.floatingChat", "چت شناور غیرفعال شده است.")) return;
+    setCineExpanded(!cineExpanded);
+  });
+  $("#cineForm")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = $("#cineInput");
+    const text = input.value.trim();
+    if (!sendChatText(text)) return;
+    input.value = "";
+    scrollChat(true);
+  });
+  const opt = $("#optCineChat");
+  if (opt) {
+    opt.checked = cineOn;
+    opt.addEventListener("change", () => {
+      cineOn = opt.checked;
+      store.set(CINE_CHAT_KEY, cineOn);
+      applyCineChat();
+    });
+  }
+  applyCineChat();
+}
+
 /* ================= live reactions ================= */
+function closeReactTray() {
+  $("#reactTray")?.classList.remove("open");
+  $("#reactToggle")?.setAttribute("aria-expanded", "false");
+  const ctl = $("#reactCtlBtn");
+  ctl?.classList.remove("active");
+  ctl?.setAttribute("aria-expanded", "false");
+}
+
+function openReactTray() {
+  if (!reactionsOn || !flagOn(flagStates, "chat.reactions")) return;
+  $("#reactTray")?.classList.add("open");
+  $("#reactToggle")?.setAttribute("aria-expanded", "true");
+  const ctl = $("#reactCtlBtn");
+  ctl?.classList.add("active");
+  ctl?.setAttribute("aria-expanded", "true");
+}
+
+function applyReactionVis() {
+  const ok = reactionsOn && flagOn(flagStates, "chat.reactions");
+  $("#reactDock")?.classList.toggle("is-off", !ok);
+  $("#reactCtlBtn")?.classList.toggle("hidden", !ok);
+  if (!ok) closeReactTray();
+}
+
 function floatReaction(emoji) {
+  if (!reactionsOn || !flagOn(flagStates, "chat.reactions")) return;
   const frame = $("#videoFrame");
   if (!frame || !frame.classList.contains("has-media")) return;
   const node = el("span", { class: "live-reaction", text: emoji });
@@ -2481,28 +2786,60 @@ function wireReactions() {
   const tray = $("#reactTray");
   const toggle = $("#reactToggle");
   if (!dock || !tray || !toggle) return;
-  const close = () => {
-    tray.classList.remove("open");
-    toggle.setAttribute("aria-expanded", "false");
-  };
+  let hoverTimer = 0;
+  let closeTimer = 0;
+
   for (const emoji of LIVE_EMOJIS) {
     tray.append(el("button", {
       type: "button", role: "menuitem", text: emoji, "aria-label": emoji,
       onclick: () => {
         if (!allow("chat.reactions", "واکنش‌ها غیرفعال شده است.")) return;
-        close();
+        if (Date.now() - lastReactAt < 900) { closeReactTray(); return; }
+        lastReactAt = Date.now();
+        closeReactTray();
         recordFeatureUse("chat.reactions", { plan: flagContext.plan, role: flagContext.role, room: code });
         net.command("reaction", { emoji });
       }
     }));
   }
   toggle.addEventListener("click", () => {
-    const open = tray.classList.toggle("open");
-    toggle.setAttribute("aria-expanded", String(open));
+    if (tray.classList.contains("open")) closeReactTray();
+    else openReactTray();
+  });
+  $("#reactCtlBtn")?.addEventListener("click", () => {
+    if (!allow("chat.reactions", "واکنش‌ها غیرفعال شده است.")) return;
+    if (tray.classList.contains("open")) closeReactTray();
+    else openReactTray();
+  });
+  dock.addEventListener("pointerenter", (e) => {
+    if (e.pointerType === "touch") return;
+    clearTimeout(closeTimer);
+    hoverTimer = setTimeout(openReactTray, 140);
+  });
+  dock.addEventListener("pointerleave", (e) => {
+    if (e.pointerType === "touch") return;
+    clearTimeout(hoverTimer);
+    closeTimer = setTimeout(closeReactTray, 260);
   });
   document.addEventListener("pointerdown", (e) => {
-    if (tray.classList.contains("open") && !dock.contains(e.target)) close();
+    if (!tray.classList.contains("open")) return;
+    if (dock.contains(e.target) || e.target.closest("#reactCtlBtn")) return;
+    closeReactTray();
   });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && tray.classList.contains("open")) closeReactTray();
+  });
+  const opt = $("#optReactions");
+  if (opt) {
+    opt.checked = reactionsOn;
+    opt.addEventListener("change", () => {
+      reactionsOn = opt.checked;
+      store.set(REACT_DOCK_KEY, reactionsOn);
+      applyReactionVis();
+      if (!reactionsOn) toast(t("react.off"), "info", 2400);
+    });
+  }
+  applyReactionVis();
 }
 
 /* ================= misc ================= */
@@ -2553,10 +2890,25 @@ function wireMisc() {
   });
   setChatHidden(chatHidden, false);
 
+  $("#chatFab")?.addEventListener("click", () => {
+    if (window.matchMedia("(max-width: 640px)").matches) {
+      sheetDockOn = true;
+      store.set(SHEET_DOCK_KEY, sheetDockOn);
+      const opt = $("#optSheetDock");
+      if (opt) opt.checked = true;
+      $("#sidebar")?.classList.add("open");
+    }
+    setChatHidden(false);
+    clearUnreadChat();
+    activateTab("chat");
+  });
+  window.addEventListener("resize", () => syncChatFab());
+
   document.addEventListener("langchange", () => {
     if (siteCfg) applySiteConfig(siteCfg);
     renderMembers();
     renderQueue(queueItems);
+    renderCine();
     applyRoomSettings(roomInfo);
     updatePlayUI(!$("#video").paused);
     paintScreenState();
@@ -2632,15 +2984,30 @@ function wireSheet() {
     if (!drag || e.pointerId !== drag.id) return;
     const dy = drag.y - e.clientY;
     drag.moved = Math.max(drag.moved, Math.abs(dy));
-    setH(drag.h + dy);
+    drag.raw = drag.h + dy;
+    setH(drag.raw);
+    const drop = PEEK - 30 - drag.raw;
+    sidebar.style.opacity = drop > 0 ? String(Math.max(0.12, 1 - drop / 110)) : "";
   });
   const stop = (e) => {
     if (!drag || (e && e.pointerId !== drag.id)) return;
     document.body.classList.remove("sheet-drag");
+    sidebar.style.opacity = "";
     try { grip.releasePointerCapture(drag.id); } catch {}
-    if (drag.moved < 7) snapTo(current > (midH() + maxH()) / 2 ? midH() : maxH());
-    else snap();
+    const dismissed = drag.raw != null && drag.raw < PEEK - 70;
+    const moved = drag.moved;
     drag = null;
+    if (dismissed) {
+      sheetDockOn = false;
+      store.set(SHEET_DOCK_KEY, false);
+      const opt = $("#optSheetDock");
+      if (opt) opt.checked = false;
+      setChatHidden(true);
+      toast(t("toast.sheetHidden"), "info", 4200);
+      return;
+    }
+    if (moved < 7) snapTo(current > (midH() + maxH()) / 2 ? midH() : maxH());
+    else snap();
   };
   grip.addEventListener("pointerup", stop);
   grip.addEventListener("pointercancel", stop);
@@ -2649,6 +3016,18 @@ function wireSheet() {
     e.preventDefault();
     snapTo(current > midH() + 40 ? midH() : maxH());
   });
+
+  const dockOpt = $("#optSheetDock");
+  if (dockOpt) {
+    dockOpt.checked = sheetDockOn;
+    dockOpt.addEventListener("change", () => {
+      sheetDockOn = dockOpt.checked;
+      store.set(SHEET_DOCK_KEY, sheetDockOn);
+      if (!mq.matches) return;
+      setChatHidden(!sheetDockOn);
+      if (sheetDockOn) setTimeout(() => init(), 140);
+    });
+  }
 
   mq.addEventListener?.("change", init);
   window.addEventListener("resize", () => {
