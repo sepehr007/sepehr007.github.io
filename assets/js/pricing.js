@@ -66,7 +66,7 @@ export function planCard(plan, { currency = "IRT", now = Date.now(), onSelect = 
   for (const f of features) list.append(el("li", { text: f.text }));
   if (!features.length) list.append(el("li", { text: "جزئیات دسترسی در پلن تعریف نشده است." }));
   card.append(list);
-  const cta = el("button", { class: "btn btn-block", type: "button", text: isFree(plan) ? "شروع رایگان" : "انتخاب پلن" });
+  const cta = el("button", { class: "btn btn-block", type: "button", text: "انتخاب این پلن" });
   cta.classList.add(isFree(plan) ? "btn-primary" : "btn-secondary");
   if (!payments && !isFree(plan)) {
     cta.disabled = true;

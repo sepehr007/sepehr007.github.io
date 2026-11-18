@@ -42,7 +42,7 @@
 <main class="profile-wrap">
   <div class="profile-head">
     <h1 data-i18n="profile.title">پروفایل من</h1>
-    <p class="muted" data-i18n="profile.sub">اطلاعات حسابت را کامل کن — همه‌چیز امن و فقط روی همین مرورگر ذخیره می‌شود.</p>
+    <p class="muted" data-i18n="profile.sub">اطلاعات حسابت را کامل کن؛ همه‌چیز روی همین مرورگر ذخیره می‌شود.</p>
   </div>
 
   <div class="profile-grid">
@@ -134,9 +134,22 @@
         </form>
       </section>
 
+      <section class="card profile-card" id="planCard">
+        <h2 data-i18n="profile.planTitle">اشتراک من</h2>
+        <p class="hint" data-i18n="profile.planNote">وضعیت اشتراک و پلن فعلی‌ات اینجاست.</p>
+        <div class="plan-status">
+          <span class="plan-status-dot" id="planStatusDot" aria-hidden="true"></span>
+          <div>
+            <strong id="planStatusTitle">—</strong>
+            <p class="muted" id="planStatusMeta"></p>
+          </div>
+        </div>
+        <a class="btn btn-secondary btn-sm plan-card-link" href="index.html#pricing" id="planCta" data-i18n="profile.planCta">دیدن پلن‌ها</a>
+      </section>
+
       <section class="card profile-card" id="friendsCard">
         <h2 data-i18n="profile.friends">دوستان</h2>
-        <p class="hint" data-i18n="profile.friendsNote">این نسخه سرور ندارد؛ فهرست دوستان فقط روی همین مرورگر ذخیره می‌شود و بین دستگاه‌ها هم‌گام نمی‌شود.</p>
+        <p class="hint" data-i18n="profile.friendsNote">فهرست دوستان فعلاً روی همین مرورگر ذخیره می‌شود و بین دستگاه‌ها هم‌گام نمی‌شود.</p>
         <form class="friend-form" id="friendForm" autocomplete="off">
           <input id="friendInput" type="text" maxlength="20" dir="ltr" spellcheck="false" data-i18n-ph="profile.friendPh" placeholder="نام کاربری دوست">
           <button class="btn btn-primary btn-sm" type="submit" data-i18n="profile.addFriend">افزودن</button>

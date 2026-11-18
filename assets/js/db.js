@@ -5,7 +5,7 @@
    site usable in private modes where IndexedDB is blocked. */
 
 const DB_NAME = "hambamasha";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const FALLBACK_PREFIX = "wt.db.";
 
 const STORES = {
@@ -27,7 +27,16 @@ const STORES = {
     autoIncrement: true,
     indexes: [["user", "user"], ["at", "at"]]
   },
-  prefs: { keyPath: "key", indexes: [] }
+  prefs: { keyPath: "key", indexes: [] },
+  plans: { keyPath: "id", indexes: [["cycle", "cycle"]] },
+  orders: {
+    keyPath: "id",
+    indexes: [["user", "user"], ["status", "status"], ["createdAt", "createdAt"]]
+  },
+  subscriptions: {
+    keyPath: "id",
+    indexes: [["user", "user"], ["status", "status"], ["updatedAt", "updatedAt"]]
+  }
 };
 
 let dbPromise = null;

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#07080d">
 <title>ورود و ثبت‌نام — هم‌تماشا</title>
-<meta name="description" content="حساب هم‌تماشا بساز و در ۳۰ ثانیه اولین لابی شب فیلمت را راه بینداز.">
+<meta name="description" content="حساب هم‌تماشا بساز؛ چند ثانیه وقت می‌گیرد و بعدش اولین لابی شب فیلمت را راه می‌اندازی.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -42,27 +42,27 @@
 <main class="auth-wrap v8-auth-wrap">
   <aside class="auth-side" aria-hidden="true">
     <span class="auth-side-orb" aria-hidden="true"></span>
-    <span class="auth-side-badge"><span class="dot"></span><span data-i18n="authv8.sideBadge">۳۰ ثانیه تا اولین شب فیلم</span></span>
+    <span class="auth-side-badge"><span class="dot"></span><span data-i18n="authv8.sideBadge">کمتر از یک دقیقه تا اولین لابی</span></span>
     <h2 data-i18n="authv8.sideTitle">یک حساب، یک لابی، یک شب خوب</h2>
-    <p class="auth-side-sub" data-i18n="authv8.sideSub">داخل هم‌تماشا همه‌چیز برای تماشای هم‌زمان آماده است؛ فقط یک اسم و رمز کم داری.</p>
+    <p class="auth-side-sub" data-i18n="authv8.sideSub">همهٔ چیزی که برای تماشای هم‌زمان لازم داری یک اسم و یک رمز است؛ بقیه‌اش را هم‌تماشا انجام می‌دهد.</p>
     <ul class="auth-perks">
       <li>
         <span class="perk-ico">🎬</span>
-        <div><strong data-i18n="authv8.perk1t">لابی فعال دائمی</strong><small data-i18n="authv8.perk1d">همیشه یک اتاق آماده برای شب‌های فیلم</small></div>
+        <div><strong data-i18n="authv8.perk1t">لابی فعال همیشگی</strong><small data-i18n="authv8.perk1d">همیشه یک اتاق آماده برای شب‌های فیلم</small></div>
       </li>
       <li>
         <span class="perk-ico">💬</span>
-        <div><strong data-i18n="authv8.perk2t">چت شناور روی فیلم</strong><small data-i18n="authv8.perk2d">بدون بستن پلیر، وسط صحنه حرف بزنید</small></div>
+        <div><strong data-i18n="authv8.perk2t">چت روی خود فیلم</strong><small data-i18n="authv8.perk2d">وسط صحنه حرف بزن، بدون این‌که پلیر را ببندی</small></div>
       </li>
       <li>
         <span class="perk-ico">🛡️</span>
-        <div><strong data-i18n="authv8.perk3t">اطلاعات روی دستگاه خودت</strong><small data-i18n="authv8.perk3d">رمز هش می‌شود و داده در مرورگر تو می‌ماند</small></div>
+        <div><strong data-i18n="authv8.perk3t">امنیت ساده</strong><small data-i18n="authv8.perk3d">رمز فقط به‌صورت هش نگه‌داری می‌شود</small></div>
       </li>
     </ul>
     <div class="auth-mini">
       <div class="auth-mini-top">
         <span class="auth-mini-dots"><i></i><i></i><i></i></span>
-        <span data-i18n="authv8.miniRoom">اتاق شب فیلم</span>
+        <span data-i18n="authv8.miniRoom">اتاق فیلم</span>
       </div>
       <div class="auth-mini-screen">
         <span class="auth-mini-play">▶</span>
@@ -74,7 +74,7 @@
         <span class="auth-mini-live"><i></i>4</span>
       </div>
     </div>
-    <p class="auth-side-foot" data-i18n="authv8.sideFoot">رایگان · بدون کارت بانکی · بدون نصب</p>
+    <p class="auth-side-foot" data-i18n="authv8.sideFoot">بدون نصب · روی همهٔ دستگاه‌ها</p>
   </aside>
 
   <section class="card auth-card v8-auth-card">
@@ -83,7 +83,7 @@
       <button id="tabLogin" type="button" data-i18n="auth.login">ورود</button>
     </div>
     <h1 id="authTitle">ساخت حساب</h1>
-    <p class="muted" id="authSub">برای ساخت و ورود به اتاق‌ها، اول حساب بساز.</p>
+    <p class="muted" id="authSub">چند ثانیه وقت می‌گیرد؛ بعدش مستقیم می‌روی سراغ لابی.</p>
     <p class="auth-notice hidden" id="authNotice" role="status"></p>
 
     <form id="authForm" autocomplete="on">
@@ -127,7 +127,7 @@
       <button class="btn btn-primary btn-block btn-lg" id="submitBtn" type="submit" data-i18n="auth.register">ساخت حساب</button>
       <p class="auth-error" id="authError" role="alert"></p>
       <button class="link-btn hidden" id="forgotLink" type="button" data-i18n="auth.forgot">رمز را فراموش کردی؟</button>
-      <p class="hint auth-foot" data-i18n="auth.note">حسابت فقط روی همین مرورگر ذخیره می‌شود؛ این نسخه سرور ندارد.</p>
+      <p class="hint auth-foot" data-i18n="auth.note">اطلاعات حسابت روی همین مرورگر نگه‌داری می‌شود؛ دفعهٔ بعد خودکار وارد می‌شوی.</p>
     </form>
 
     <form id="recoverForm" class="hidden" autocomplete="on">

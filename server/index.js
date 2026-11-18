@@ -9,6 +9,7 @@ import { connectRedis, redisReady, redisState, createRateLimiter } from "./redis
 import { loadFeatureState, isEnabled, summarizeFeatures } from "./features.js";
 import authRoutes from "./routes/auth.js";
 import lobbyRoutes from "./routes/lobbies.js";
+import billingRoutes from "./routes/billing.js";
 import { Room } from "./models/Room.js";
 import { Message } from "./models/Message.js";
 
@@ -315,6 +316,7 @@ export async function buildServer() {
 
   await app.register(authRoutes, { prefix: "/api/auth" });
   await app.register(lobbyRoutes, { prefix: "/api/lobbies" });
+  await app.register(billingRoutes, { prefix: "/api/billing" });
 
   app.get("/api/features", async () => {
     const state = await loadFeatureState();

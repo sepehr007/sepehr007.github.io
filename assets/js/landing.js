@@ -11,6 +11,7 @@ import {
 } from "./lobbies.js";
 import { loadSiteConfig, applySiteConfig, isConfigPreview, accessOn, listenLiveConfig } from "./site-config.js";
 import { resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, readFeatureCenter } from "./feature-flags.js";
+import { seedPlans, requestPlan } from "./plans.js";
 
 applyUIPrefs();
 initI18n();
@@ -59,9 +60,12 @@ async function bootSite() {
     applyAuthLinks();
   });
   await seedAccountsFromLocal();
+  await seedPlans();
+  wirePlanButtons();
   if (user) {
     await initLobbyUI();
     if (!(await resumePendingLobby())) resumePendingRoom();
+    await resumePendingPlan();
   } else {
     $("#lobbyCard")?.classList.add("hidden");
   }
@@ -80,6 +84,41 @@ async function bootSite() {
   });
 }
 bootSite();
+
+/* ---------- subscription plans ---------- */
+function wirePlanButtons() {
+  document.querySelectorAll("[data-plan]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (btn.disabled) return;
+      const planId = btn.dataset.plan;
+      const account = currentUser();
+      if (!account) {
+        try { sessionStorage.setItem("wt.pendingPlan", planId); } catch {}
+        toast(t("v8.planNeedAccount"), "info");
+        location.href = `auth.html?next=${encodeURIComponent("index.html#pricing")}`;
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const res = await requestPlan(account, planId);
+        toast(res.ok ? t("v8.planPendingToast") : t("v8.planNeedAccount"), res.ok ? "success" : "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+async function resumePendingPlan() {
+  const account = currentUser();
+  if (!account) return;
+  let planId = "";
+  try { planId = sessionStorage.getItem("wt.pendingPlan") || ""; } catch {}
+  if (!planId) return;
+  try { sessionStorage.removeItem("wt.pendingPlan"); } catch {}
+  const res = await requestPlan(account, planId);
+  if (res.ok) toast(t("v8.planPendingToast"), "success");
+}
 
 /* ---------- personal lobby (one active per account) ---------- */
 let activeLobby = null;

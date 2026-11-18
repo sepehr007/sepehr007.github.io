@@ -195,3 +195,14 @@ html[data-theme="light"] .profile-side .btn-secondary:hover{background:rgba(248,
 html[data-theme="light"] .activity-item{background:rgba(15,23,42,.03);border-color:rgba(15,23,42,.08)}
 html[data-theme="light"] .activity-item:hover{background:rgba(var(--brand-rgb),.07);border-color:rgba(var(--brand-rgb),.3)}
 html[data-theme="light"] .activity-room{color:#9a3412;background:rgba(var(--brand-2-rgb),.14)}
+
+/* subscription status */
+.plan-status{display:flex;align-items:flex-start;gap:11px;padding:13px 14px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid var(--border);margin:12px 0 14px}
+.plan-status-dot{flex:none;width:9px;height:9px;border-radius:50%;margin-top:5px;background:var(--text-faint);box-shadow:0 0 10px rgba(255,255,255,.18)}
+.plan-status-dot[data-state="active"]{background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.14),0 0 12px rgba(52,211,153,.8)}
+.plan-status-dot[data-state="pending"]{background:#fcd34d;box-shadow:0 0 0 4px rgba(251,191,36,.13),0 0 12px rgba(251,191,36,.7)}
+.plan-status-dot[data-state="expired"]{background:#f87171;box-shadow:0 0 0 4px rgba(248,113,113,.13)}
+.plan-status strong{display:block;font-size:14px}
+.plan-status p{margin-top:2px;font-size:12px}
+.plan-card-link{align-self:flex-start}
+html[data-theme="light"] .plan-status{background:rgba(15,23,42,.03)}

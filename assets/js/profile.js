@@ -10,6 +10,7 @@ import {
 } from "./auth.js";
 import { AVATAR_PRESETS, avatarId, avatarSrc, presetValue } from "./avatars.js";
 import { dbGetByIndex } from "./db.js";
+import { subscriptionStatus } from "./plans.js";
 import { loadSiteConfig, applySiteConfig, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
 import { resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, recordFeatureUse, readFeatureCenter } from "./feature-flags.js";
 
@@ -84,6 +85,7 @@ async function boot(me) {
   renderAvatarGallery();
   renderFriends();
   renderActivity();
+  renderPlan();
   wireAccount();
   wirePassword();
   wireDetails();
@@ -98,6 +100,7 @@ async function boot(me) {
     renderAvatarGallery();
     renderFriends();
     renderActivity();
+    renderPlan();
     paintMemberSince();
   });
 }
@@ -128,8 +131,38 @@ const ACTIVITY_LABEL_KEYS = {
   "room.host": "activity.roomHost",
   "room.join": "activity.roomJoin",
   "lobby.create": "activity.lobbyCreate",
-  "lobby.close": "activity.lobbyClose"
+  "lobby.close": "activity.lobbyClose",
+  "plan.request": "activity.planRequest"
 };
+
+const PLAN_LABEL_KEYS = { monthly: "v8.planMonthly", yearly: "v8.planYearly" };
+
+async function renderPlan() {
+  const title = $("#planStatusTitle");
+  const meta = $("#planStatusMeta");
+  const dot = $("#planStatusDot");
+  if (!title || !meta || !dot || !profile) return;
+  const status = await subscriptionStatus(profile.username);
+  const fa = document.documentElement.lang === "fa";
+  const planName = status.plan ? t(PLAN_LABEL_KEYS[status.plan.id] || "profile.planTitle") : "";
+  dot.dataset.state = status.state;
+  if (status.state === "active") {
+    const date = new Date(Number(status.subscription.expiresAt)).toLocaleDateString(fa ? "fa-IR" : "en-US", {
+      year: "numeric", month: "long", day: "numeric"
+    });
+    title.textContent = planName;
+    meta.textContent = t("profile.planActive", { date });
+  } else if (status.state === "pending") {
+    title.textContent = planName;
+    meta.textContent = t("profile.planPending");
+  } else if (status.state === "expired") {
+    title.textContent = planName;
+    meta.textContent = t("profile.planExpired");
+  } else {
+    title.textContent = t("profile.planNone");
+    meta.textContent = t("profile.planNote");
+  }
+}
 
 async function renderActivity() {
   const list = $("#activityList");
