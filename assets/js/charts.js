@@ -16,7 +16,7 @@ function chartSvg(width, height) {
   return svg;
 }
 
-export function lineChart({ labels = [], values = [], color = "#7c5cff", height = 170, width = 520, area = true } = {}) {
+export function lineChart({ labels = [], values = [], color = "#3d6bff", height = 170, width = 520, area = true } = {}) {
   const svg = chartSvg(width, height);
   const pad = { top: 14, right: 10, bottom: 26, left: 44 };
   const innerW = width - pad.left - pad.right;
@@ -56,7 +56,7 @@ export function lineChart({ labels = [], values = [], color = "#7c5cff", height 
   return svg;
 }
 
-export function barChart({ labels = [], values = [], color = "#22d3ee", height = 170, width = 520 } = {}) {
+export function barChart({ labels = [], values = [], color = "#f5b23e", height = 170, width = 520 } = {}) {
   const svg = chartSvg(width, height);
   const pad = { top: 14, right: 10, bottom: 26, left: 44 };
   const innerW = width - pad.left - pad.right;
@@ -101,7 +101,7 @@ export function donut({ items = [], size = 150, thickness = 17 } = {}) {
     const share = total ? (Number(it.value) || 0) / total : 0;
     if (!share) return;
     const arc = svgEl("circle", {
-      cx, cy, r, fill: "none", stroke: it.color || "#7c5cff", "stroke-width": thickness,
+      cx, cy, r, fill: "none", stroke: it.color || "#3d6bff", "stroke-width": thickness,
       "stroke-dasharray": `${circ * share} ${circ}`,
       "stroke-dashoffset": `${-circ * offset}`,
       transform: `rotate(-90 ${cx} ${cy})`,
@@ -125,7 +125,7 @@ export function donut({ items = [], size = 150, thickness = 17 } = {}) {
     const row = document.createElement("span");
     row.className = "ow-donut-key";
     const dot = document.createElement("i");
-    dot.style.background = it.color || "#7c5cff";
+    dot.style.background = it.color || "#3d6bff";
     row.append(dot, `${it.label} · ${fmt(it.value)}`);
     legend.append(row);
   }
@@ -133,7 +133,7 @@ export function donut({ items = [], size = 150, thickness = 17 } = {}) {
   return wrap;
 }
 
-export function sparkline(values = [], color = "#7c5cff", width = 120, height = 34) {
+export function sparkline(values = [], color = "#3d6bff", width = 120, height = 34) {
   const svg = chartSvg(width, height);
   const max = Math.max(1, ...values);
   const step = values.length > 1 ? width / (values.length - 1) : 0;

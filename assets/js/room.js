@@ -1785,7 +1785,7 @@ function scrollToMessage(id) {
   const node = chatList.querySelector(`[data-id="${cssEscape(id)}"]`);
   if (!node) return;
   node.scrollIntoView({ behavior: "smooth", block: "center" });
-  node.animate?.([{ background: "rgba(124,92,255,.35)" }, { background: "transparent" }], { duration: 1200 });
+  node.animate?.([{ background: "rgba(61,107,255,.35)" }, { background: "transparent" }], { duration: 1200 });
 }
 
 function chatBottomGap() {

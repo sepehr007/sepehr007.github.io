@@ -806,7 +806,7 @@ export function createCenter(ctx) {
     const iconIn = el("input", { type: "text" });
     iconIn.value = base.icon;
     const colorIn = el("input", { type: "color" });
-    colorIn.value = /^#[0-9a-f]{6}$/i.test(base.color) ? base.color : "#7c5cff";
+    colorIn.value = /^#[0-9a-f]{6}$/i.test(base.color) ? base.color : "#3d6bff";
     const badgeIn = el("input", { type: "text" });
     badgeIn.value = base.badge;
     body.append(block("هویت پلن", grid([
@@ -1379,7 +1379,7 @@ export function createCenter(ctx) {
     const charts = el("div", { class: "fin-charts" });
     const rev = el("article", { class: "ocard" });
     rev.append(el("h2", { text: "روند درآمد ۶ ماه" }));
-    rev.append(lineChart({ labels: m.revenueSeries.map((r) => r.label), values: m.revenueSeries.map((r) => r.value), color: "#7c5cff" }));
+    rev.append(lineChart({ labels: m.revenueSeries.map((r) => r.label), values: m.revenueSeries.map((r) => r.value), color: "#3d6bff" }));
     charts.append(rev);
     const dist = el("article", { class: "ocard" });
     dist.append(el("h2", { text: "توزیع اشتراک بین پلن‌ها" }));
@@ -1389,7 +1389,7 @@ export function createCenter(ctx) {
 
     const flow = el("article", { class: "ocard" });
     flow.append(el("h2", { text: "ارتقا و تنزل (۳۰ روز)" }));
-    flow.append(barChart({ labels: ["ارتقا", "تنزل"], values: [m.upgrades, m.downgrades], color: "#22d3ee" }));
+    flow.append(barChart({ labels: ["ارتقا", "تنزل"], values: [m.upgrades, m.downgrades], color: "#f5b23e" }));
     section.append(flow);
 
     const recent = el("article", { class: "ocard" });
@@ -1679,7 +1679,7 @@ export function createCenter(ctx) {
     custom.append(accentWrap, accent2Wrap);
     wrap.append(custom);
     const preview = el("div", { class: "ow-theme-preview" });
-    preview.style.background = `linear-gradient(135deg,${current.accent || "#7c5cff"},${current.accent2 || "#22d3ee"})`;
+    preview.style.background = `linear-gradient(135deg,${current.accent || "#3d6bff"},${current.accent2 || "#f5b23e"})`;
     preview.append(el("span", { text: "پیش‌نمایش گرادیان سایت" }));
     wrap.append(preview);
     section.append(wrap);
@@ -2374,10 +2374,10 @@ export function createCenter(ctx) {
     cardEl.append(stats);
     const charts = el("div", { class: "fc-charts" });
     const trend = el("div", { class: "fc-chart" });
-    trend.append(el("h3", { class: "ow-h3", text: "روند ۱۴ روز اخیر" }), lineChart({ labels: series.map((d) => d.label), values: series.map((d) => d.value), color: "#7c5cff" }));
+    trend.append(el("h3", { class: "ow-h3", text: "روند ۱۴ روز اخیر" }), lineChart({ labels: series.map((d) => d.label), values: series.map((d) => d.value), color: "#3d6bff" }));
     const topBox = el("div", { class: "fc-chart" });
     topBox.append(el("h3", { class: "ow-h3", text: "پرقصدمصرف‌ترین قابلیت‌ها" }));
-    if (top.length) topBox.append(barChart({ labels: top.map((t) => t.label.slice(0, 10)), values: top.map((t) => t.count), color: "#22d3ee" }));
+    if (top.length) topBox.append(barChart({ labels: top.map((t) => t.label.slice(0, 10)), values: top.map((t) => t.count), color: "#f5b23e" }));
     else topBox.append(el("p", { class: "log-empty", text: "استفاده‌ای ثبت نشده است." }));
     charts.append(trend, topBox);
     cardEl.append(charts);
@@ -2649,7 +2649,7 @@ export function createCenter(ctx) {
       control.append(input);
     } else if (item.type === "color") {
       const input = el("input", { type: "color" });
-      input.value = String(value || "#7c5cff");
+      input.value = String(value || "#3d6bff");
       input.dataset.cfg = item.id;
       control.append(input);
     } else {

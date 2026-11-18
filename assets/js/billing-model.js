@@ -126,7 +126,7 @@ export function emptyPlan(overrides = {}) {
     slug: "",
     description: "",
     icon: "✦",
-    color: "#7c5cff",
+    color: "#3d6bff",
     order: 0,
     visibility: "hidden",
     status: "draft",

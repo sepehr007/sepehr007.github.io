@@ -37,7 +37,7 @@ export function escapeHtml(str = "") {
     .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 
-const PALETTE = ["#7c5cff", "#22d3ee", "#f472b6", "#34d399", "#fbbf24", "#60a5fa", "#a78bfa", "#fb7185"];
+const PALETTE = ["#3d6bff", "#f5b23e", "#f472b6", "#34d399", "#fbbf24", "#60a5fa", "#a78bfa", "#fb7185"];
 export function colorFor(seed = "") {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
@@ -165,8 +165,8 @@ export function validateMediaUrl(raw) {
 /* ---------- personal appearance ---------- */
 export const PREF_DEFAULTS = {
   theme: "dark",
-  accent: "#7c5cff",
-  accent2: "#22d3ee",
+  accent: "#3d6bff",
+  accent2: "#f5b23e",
   brightness: 100,
   chatSize: 13.4,
   chatAlpha: 72,
@@ -176,13 +176,29 @@ export const PREF_DEFAULTS = {
   cineSize: 14
 };
 
+/* Users who never picked a color still carry the old violet defaults — move
+   them to the new brand palette once, without touching custom choices. */
+const LEGACY_ACCENTS = { "#7c5cff": "#3d6bff", "#22d3ee": "#f5b23e" };
+
+function hexToRgbTriplet(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+  if (!m) return "";
+  const n = parseInt(m[1], 16);
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+}
+
 export function getPrefs() {
   const saved = store.get("wt.prefs", null);
-  return { ...PREF_DEFAULTS, ...(saved && typeof saved === "object" ? saved : {}) };
+  const merged = { ...PREF_DEFAULTS, ...(saved && typeof saved === "object" ? saved : {}) };
+  if (saved && saved.palette !== 2) {
+    if (LEGACY_ACCENTS[merged.accent]) merged.accent = LEGACY_ACCENTS[merged.accent];
+    if (LEGACY_ACCENTS[merged.accent2]) merged.accent2 = LEGACY_ACCENTS[merged.accent2];
+  }
+  return merged;
 }
 
 export function savePrefs(patch) {
-  const next = { ...getPrefs(), ...patch };
+  const next = { ...getPrefs(), ...patch, palette: 2 };
   store.set("wt.prefs", next);
   applyUIPrefs(next);
   return next;
@@ -202,7 +218,11 @@ export function applyUIPrefs(prefs = getPrefs()) {
   const root = document.documentElement.style;
   root.setProperty("--accent", prefs.accent);
   root.setProperty("--accent-2", prefs.accent2);
-  root.setProperty("--grad", `linear-gradient(135deg,${prefs.accent} 0%,${prefs.accent2} 100%)`);
+  const rgb1 = hexToRgbTriplet(prefs.accent);
+  const rgb2 = hexToRgbTriplet(prefs.accent2);
+  if (rgb1) root.setProperty("--brand-rgb", rgb1);
+  if (rgb2) root.setProperty("--brand-2-rgb", rgb2);
+  root.setProperty("--grad", `linear-gradient(135deg,${prefs.accent} 0%,#38bdf8 58%,${prefs.accent2} 100%)`);
   root.setProperty("--chat-size", `${prefs.chatSize}px`);
   root.setProperty("--chat-font-size", `${prefs.chatSize}px`);
   root.setProperty("--side-alpha", String(prefs.chatAlpha / 100));
@@ -230,9 +250,9 @@ export function lightenHex(hex, amount = 0.35) {
 }
 
 export const ACCENTS = [
-  { a: "#7c5cff", b: "#22d3ee" },
+  { a: "#3d6bff", b: "#f5b23e" },
   { a: "#f472b6", b: "#f59e0b" },
-  { a: "#34d399", b: "#22d3ee" },
+  { a: "#34d399", b: "#f5b23e" },
   { a: "#fb7185", b: "#a855f7" },
   { a: "#60a5fa", b: "#818cf8" },
   { a: "#f5b64a", b: "#f97316" }

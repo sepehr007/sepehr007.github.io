@@ -99,7 +99,7 @@ export function validateConfigValue(meta, value) {
   }
   const s = String(value ?? "");
   if (meta.type === "enum" && !v.enum.includes(s)) return { ok: false, error: "مقدار مجاز نیست." };
-  if (meta.type === "color" && s && !new RegExp(v.pattern).test(s)) return { ok: false, error: "کد رنگ باید مثل #7c5cff باشد." };
+  if (meta.type === "color" && s && !new RegExp(v.pattern).test(s)) return { ok: false, error: "کد رنگ باید مثل #3d6bff باشد." };
   if (meta.type === "url" && s) {
     try { const u = new URL(s); if (!/^https?:$/.test(u.protocol)) throw 0; } catch { return { ok: false, error: "لینک باید با http یا https شروع شود." }; }
   }
