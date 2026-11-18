@@ -3523,7 +3523,9 @@ function wireMisc() {
 
   $("#sideBtn")?.addEventListener("click", () => {
     if (chatHidden) return setChatHidden(false);
-    if (window.matchMedia("(max-width:1080px)").matches) {
+    const mq = window.matchMedia;
+    const drawer = mq("(min-width:641px) and (max-width:819px)").matches;
+    if (drawer) {
       $("#sidebar").classList.toggle("open");
       return;
     }
@@ -3657,7 +3659,7 @@ function cleanup() {
 
 /* keep sidebar accessible on mobile */
 document.addEventListener("click", (e) => {
-  if (window.innerWidth > 1080) return;
+  if (window.innerWidth >= 820) return;
   if (e.target.closest("#sideBtn")) return;
   const side = $("#sidebar");
   if (!side.classList.contains("open")) return;
@@ -3684,6 +3686,7 @@ function wireSheet() {
   const setH = (v) => {
     current = clamp(v);
     shell.style.setProperty("--sheet-h", `${Math.round(current)}px`);
+    document.body.style.setProperty("--sheet-h", `${Math.round(current)}px`);
     grip.setAttribute("aria-expanded", String(current > midH() + 40));
   };
   const save = () => {
@@ -3695,7 +3698,11 @@ function wireSheet() {
     snapTo(pts.reduce((a, b) => (Math.abs(b - current) < Math.abs(a - current) ? b : a)));
   };
   const init = () => {
-    if (!mq.matches) { shell.style.removeProperty("--sheet-h"); return; }
+    if (!mq.matches) {
+      shell.style.removeProperty("--sheet-h");
+      document.body.style.removeProperty("--sheet-h");
+      return;
+    }
     let saved = 0;
     try { saved = Number(sessionStorage.getItem(KEY)) || 0; } catch {}
     setH(saved || midH());

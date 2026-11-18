@@ -1,0 +1,348 @@
+/* Part 7.5 — cross-device compatibility layer.
+   Loaded last on every page. Only adds safe-area, input-modality,
+   viewport and overflow rules; page skins keep their own identity. */
+
+:root{
+  --safe-top:env(safe-area-inset-top,0px);
+  --safe-bottom:env(safe-area-inset-bottom,0px);
+  --safe-left:env(safe-area-inset-left,0px);
+  --safe-right:env(safe-area-inset-right,0px);
+  --safe-x:max(var(--safe-left),var(--safe-right));
+}
+
+html{
+  -webkit-text-size-adjust:100%;
+  text-size-adjust:100%;
+}
+body{
+  -webkit-tap-highlight-color:transparent;
+}
+button,a,summary,label,[role="button"],input,select,textarea{
+  touch-action:manipulation;
+}
+img,video{
+  max-width:100%;
+}
+::selection{background:rgba(var(--brand-rgb),.4)}
+
+/* ---------- safe areas: page chrome ---------- */
+.site-header{
+  padding-top:calc(20px + var(--safe-top));
+  padding-inline:max(40px,var(--safe-x));
+}
+.v8-header{
+  padding-top:calc(13px + var(--safe-top));
+  padding-inline:max(clamp(16px,3.4vw,40px),var(--safe-x));
+}
+.landing{
+  padding-inline:max(40px,var(--safe-x));
+  padding-bottom:calc(80px + var(--safe-bottom));
+}
+.profile-wrap{
+  padding-inline:max(24px,var(--safe-x));
+  padding-bottom:calc(80px + var(--safe-bottom));
+}
+.auth-wrap{
+  min-height:calc(100vh - 84px);
+  min-height:calc(100dvh - 84px - var(--safe-top));
+  padding-inline:max(20px,var(--safe-x));
+  padding-bottom:calc(60px + var(--safe-bottom));
+}
+.v8-auth-wrap{
+  min-height:calc(100vh - 76px);
+  min-height:calc(100dvh - 76px - var(--safe-top));
+  padding-inline:max(40px,var(--safe-x));
+  padding-bottom:calc(64px + var(--safe-bottom));
+}
+.site-footer{padding-bottom:var(--safe-bottom)}
+.toast-wrap{top:calc(18px + var(--safe-top))}
+.install-chip{
+  bottom:calc(18px + var(--safe-bottom));
+  inset-inline-start:calc(18px + var(--safe-x));
+}
+.modal-backdrop{
+  padding-top:calc(20px + var(--safe-top));
+  padding-bottom:calc(20px + var(--safe-bottom));
+  padding-inline:max(20px,var(--safe-x));
+}
+.modal{
+  max-height:calc(100dvh - 40px - var(--safe-top) - var(--safe-bottom));
+  overflow-y:auto;
+}
+
+/* ---------- room shell: dynamic viewport + notch ---------- */
+.page-room{height:100vh;height:100dvh}
+.room-shell{
+  height:100vh;
+  height:100dvh;
+  grid-template-rows:minmax(calc(var(--topbar-h) + var(--safe-top)),auto) minmax(0,1fr);
+}
+.topbar{
+  padding-top:var(--safe-top);
+  padding-inline:max(18px,var(--safe-x));
+}
+.stage{
+  padding-left:max(14px,var(--safe-left));
+  padding-right:max(14px,var(--safe-right));
+}
+.voice-dock{bottom:calc(18px + var(--safe-bottom))}
+html[dir="ltr"] .voice-dock,[dir="ltr"] .voice-dock{transform:translateX(-50%)}
+
+@media (max-width:640px){
+  .site-header{
+    padding-top:calc(16px + var(--safe-top));
+    padding-inline:max(18px,var(--safe-x));
+  }
+  .v8-header{padding-inline:max(18px,var(--safe-x))}
+  .landing{
+    padding-inline:max(18px,var(--safe-x));
+    padding-bottom:calc(60px + var(--safe-bottom));
+  }
+  .profile-wrap{
+    padding-inline:max(14px,var(--safe-x));
+    padding-bottom:calc(60px + var(--safe-bottom));
+  }
+  .v8-auth-wrap{
+    padding-inline:max(18px,var(--safe-x));
+    padding-bottom:calc(48px + var(--safe-bottom));
+  }
+  .room-shell{
+    height:var(--vvh,100vh);
+    height:var(--vvh,100dvh);
+    grid-template-rows:minmax(calc(var(--topbar-h) + var(--safe-top)),auto) minmax(0,1fr) var(--sheet-h);
+  }
+  .page-room{--sheet-h:46dvh}
+  .room-shell.chat-hidden{
+    grid-template-rows:minmax(calc(var(--topbar-h) + var(--safe-top)),auto) minmax(0,1fr);
+  }
+  .page-room.chat-focus .room-shell{
+    grid-template-rows:minmax(calc(var(--topbar-h) + var(--safe-top)),auto) minmax(0,1fr);
+  }
+  .topbar{padding:var(--safe-top) max(10px,var(--safe-x)) 0}
+  .stage{
+    padding-left:max(8px,var(--safe-left));
+    padding-right:max(8px,var(--safe-right));
+  }
+  .sidebar{
+    padding-left:max(0px,var(--safe-left));
+    padding-right:max(0px,var(--safe-right));
+  }
+  .chat-form{padding-bottom:calc(2px + var(--safe-bottom))}
+  .chat-fab{bottom:calc(10px + var(--safe-bottom))}
+  .voice-dock{bottom:calc(12px + var(--safe-bottom))}
+
+  /* the chat sheet owns the lower half: keep floating chrome above it */
+  .page-room:has(.room-shell:not(.chat-hidden)) .voice-dock{
+    bottom:calc(var(--sheet-h,46dvh) + 8px + var(--safe-bottom));
+  }
+  .page-room:has(.room-shell:not(.chat-hidden)) .install-chip{
+    bottom:calc(var(--sheet-h,46dvh) + 12px + var(--safe-bottom));
+  }
+  .page-room.chat-focus .voice-dock{
+    top:calc(var(--topbar-h) + var(--safe-top) + 8px);
+    bottom:auto;
+    z-index:45;
+  }
+  .page-room.chat-focus:has(.voice-dock:not(.hidden)) .sidebar{padding-top:60px}
+  .page-room.chat-focus .install-chip{display:none}
+}
+
+@media (min-width:980px) and (max-width:1080px){
+  .v8-auth-wrap{padding-inline:max(18px,var(--safe-x))}
+}
+
+@media (min-width:820px) and (max-width:1080px){
+  .room-shell{
+    grid-template-columns:minmax(0,1fr) clamp(260px,30vw,330px);
+    grid-template-rows:minmax(calc(var(--topbar-h) + var(--safe-top)),auto) minmax(0,1fr);
+  }
+  .room-shell.chat-hidden{grid-template-columns:minmax(0,1fr) 0}
+  .sidebar{
+    position:static;
+    inset:auto;
+    width:auto;
+    height:auto;
+    transform:none;
+    z-index:auto;
+    border-inline-end:0;
+    border-inline-start:1px solid var(--border);
+    box-shadow:none;
+    padding-top:0;
+    grid-row:2;
+    grid-column:2;
+    overflow:hidden;
+  }
+  html[dir="ltr"] .sidebar{transform:none}
+  .sidebar.open{transform:none}
+  .side-toggle{display:grid}
+  .stage-wrap{padding-bottom:0}
+}
+
+/* narrow two-pane sidebar: settings labels get their own row */
+@media (min-width:820px) and (max-width:1000px){
+  .pref-row{grid-template-columns:1fr 36px}
+  .pref-row label{grid-column:1/-1}
+}
+
+/* off-canvas drawer: keep it clear of the notch in landscape */
+@media (max-width:819px){
+  .sidebar{
+    padding-left:max(0px,var(--safe-left));
+    padding-right:max(0px,var(--safe-right));
+  }
+}
+
+/* ---------- touch: targets, hover alternatives, no accidental zoom ---------- */
+@media (any-pointer:coarse){
+  .icon-btn{width:42px;height:42px}
+  .friend-remove,.mini-btn{width:34px;height:34px}
+  .person-actions button{width:34px;height:34px}
+  .msg-actions button{width:34px;height:34px}
+  .chat-timer-btn{min-height:36px;min-width:34px}
+  .chat-timer-reset{width:32px;height:32px}
+  .link-btn{display:inline-block;min-height:32px;padding-block:6px}
+  .accent-swatch{width:32px;height:32px}
+  .chip{min-height:32px;padding-block:4px}
+  .invite-btn{height:32px}
+  .sheet-grip{height:28px}
+  .emoji-btn,.send-btn{width:42px;height:42px}
+  .react-tray button{width:40px;height:40px}
+  .emoji-pop button{min-height:40px}
+  .screen-ctl{width:32px;height:32px}
+  .top-menu-item{min-height:44px}
+  .tab{min-height:40px}
+  .faq-item summary{min-height:44px;display:flex;align-items:center}
+
+  /* touch devices (including hybrids) always get visible message/person actions */
+  .person-actions{opacity:1}
+  .msg-actions{
+    display:flex;
+    position:static;
+    background:none;
+    border:none;
+    box-shadow:none;
+    padding:0;
+    margin-top:4px;
+    opacity:.72;
+  }
+}
+
+@media (any-pointer:coarse) and (max-width:640px){
+  .icon-btn{width:40px;height:40px}
+  .stage-controls .ctl{height:40px;min-width:34px}
+  .invite-btn{height:32px}
+  .chat-fab{height:44px}
+}
+
+@media (hover:hover) and (pointer:fine){
+  .msg-actions{
+    display:flex;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .12s ease;
+  }
+  .msg:hover .msg-actions,
+  .msg:focus-within .msg-actions{
+    opacity:1;
+    pointer-events:auto;
+  }
+  .person:focus-within .person-actions{opacity:1}
+}
+
+/* hybrids report both fine hover and coarse touch: touch must still win */
+@media (any-pointer:coarse){
+  .person-actions{opacity:1}
+  .msg-actions{
+    display:flex;
+    position:static;
+    opacity:.72;
+    pointer-events:auto;
+    background:none;
+    border:none;
+    box-shadow:none;
+    padding:0;
+    margin-top:4px;
+  }
+}
+
+/* iOS zooms any focused field below 16px, which leaves the layout off-screen */
+@media (pointer:coarse) and (max-width:1024px){
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]),
+  select,
+  textarea{
+    font-size:16px !important;
+  }
+  .chat-input-row input{font-size:16px !important}
+}
+
+/* ---------- long names, titles and messages ---------- */
+.topbar-left,.room-code-row,.msg-head,.person-name,.friend-info,.entry-head,
+.lobby-strip-main,.auth-perks li,.ofield,.ot-titles{min-width:0}
+.chat-list,.people-list{overflow-x:hidden}
+.nick,.person-name,.friend-info strong,.friend-user,.u-name,.lobby-copy h2,
+.profile-identity h2,.profile-identity .muted,.recovery-code,.recovery-label,
+.owner-top h1,.os-brand b,.os-brand span,.ocard h2{
+  overflow-wrap:anywhere;
+}
+.recovery-code{word-break:break-all}
+.top-menu{max-width:calc(100vw - 16px)}
+.emoji-pop{max-height:min(60vh,360px)}
+
+/* ---------- ultrawide: readable chat, centred content ---------- */
+@media (min-width:1800px){
+  .room-shell{grid-template-columns:minmax(0,1fr) clamp(340px,20vw,440px)}
+  .stage{padding:20px}
+}
+
+/* ---------- short landscape phones: keep the actions above the fold ---------- */
+@media (max-height:520px) and (orientation:landscape){
+  .v8-hero{padding-top:18px;gap:20px}
+  .v8-hero-visual{display:none}
+  .v8-auth-wrap,.auth-wrap{padding-top:12px;min-height:auto}
+  .owner-gate{place-items:start center;padding-top:calc(16px + var(--safe-top))}
+  .modal-backdrop{place-items:start center;overflow-y:auto}
+  .modal{max-height:none}
+}
+
+/* ---------- owner console safe areas ---------- */
+.owner-body,.owner-gate,.owner-app{min-height:100vh;min-height:100dvh}
+.owner-side{
+  height:100vh;
+  height:100dvh;
+  padding-top:calc(22px + var(--safe-top));
+  padding-bottom:calc(22px + var(--safe-bottom));
+  padding-inline:max(16px,var(--safe-x));
+}
+.owner-top{
+  padding-top:calc(16px + var(--safe-top));
+  padding-inline:max(26px,var(--safe-x));
+}
+.owner-content{
+  padding-inline:max(26px,var(--safe-x));
+  padding-bottom:calc(60px + var(--safe-bottom));
+}
+@media (max-width:900px){
+  .owner-top{
+    padding-top:calc(13px + var(--safe-top));
+    padding-inline:max(16px,var(--safe-x));
+  }
+  .owner-content{
+    padding-inline:max(14px,var(--safe-x));
+    padding-bottom:calc(48px + var(--safe-bottom));
+  }
+  .owner-side{max-height:100dvh}
+}
+@media (max-width:620px){
+  .owner-side{padding-inline:max(16px,var(--safe-x))}
+  .gate-card{max-height:none}
+}
+
+/* ---------- small phones: keep the room topbar on one line ---------- */
+@media (max-width:380px){
+  .topbar .invite-btn{width:34px;padding:0;justify-content:center}
+  .topbar .invite-short{display:none}
+  .topbar-left{gap:6px}
+  .topbar-right{gap:0}
+  .room-code-row{gap:4px}
+  .room-meta h1{max-width:32vw}
+}
