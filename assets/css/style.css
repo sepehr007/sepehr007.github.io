@@ -886,6 +886,8 @@ html[data-theme="light"] .feature .ico{color:var(--accent)}
 .room-shell.no-chat .sheet-grip,
 .room-shell.no-chat .side-toggle{display:none!important}
 .feature-off{display:none!important}
+html.flag-no-speaking .voice-tile.speaking{border-color:rgba(148,163,184,.35);box-shadow:none}
+html.flag-no-speaking .person.speaking .avatar{box-shadow:none}
 html[data-theme="light"] .wt-maint{background:radial-gradient(900px 500px at 50% 0%,rgba(124,92,255,.14),transparent 70%),#f3f5fa}
 html[data-theme="light"] .wt-maint-box{background:#fff;border-color:rgba(15,23,42,.12)}
 html[data-theme="light"] .wt-maint-box p{color:#5b647a}

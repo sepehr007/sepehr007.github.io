@@ -47,8 +47,8 @@
   <div class="profile-grid">
     <aside class="card profile-side">
       <div class="avatar-xl" id="avatarBox"><span id="avatarInitials">–</span></div>
-      <p class="hint avatar-hint" data-i18n="profile.avatarHint">یکی از آواتارهای کارتونی سیستم را انتخاب کن.</p>
-      <div class="avatar-picker">
+      <p class="hint avatar-hint" id="avatarHint" data-i18n="profile.avatarHint">یکی از آواتارهای کارتونی سیستم را انتخاب کن.</p>
+      <div class="avatar-picker" id="avatarPicker">
         <div class="avatar-filters" role="tablist">
           <button class="avatar-filter active" type="button" data-avatar-gender="girl" data-i18n="profile.avatarGirls">دخترانه</button>
           <button class="avatar-filter" type="button" data-avatar-gender="boy" data-i18n="profile.avatarBoys">پسرانه</button>
@@ -133,7 +133,7 @@
         </form>
       </section>
 
-      <section class="card profile-card">
+      <section class="card profile-card" id="friendsCard">
         <h2 data-i18n="profile.friends">دوستان</h2>
         <p class="hint" data-i18n="profile.friendsNote">این نسخه سرور ندارد؛ فهرست دوستان فقط روی همین مرورگر ذخیره می‌شود و بین دستگاه‌ها هم‌گام نمی‌شود.</p>
         <form class="friend-form" id="friendForm" autocomplete="off">
@@ -144,7 +144,7 @@
         <p class="form-msg" id="friendMsg" role="alert"></p>
       </section>
 
-      <section class="card profile-card">
+      <section class="card profile-card" id="appearanceCard">
         <h2 data-i18n="profile.appearance">ظاهر</h2>
         <div class="field">
           <span data-i18n="profile.accent">رنگ لهجه</span>

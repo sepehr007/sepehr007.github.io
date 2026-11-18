@@ -1,7 +1,8 @@
 import { initI18n, t, getLang } from "./i18n.js";
 import { $, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt, createLimiter } from "./core.js";
 import { currentUser, mountUserChip, isRealName } from "./auth.js";
-import { loadSiteConfig, applySiteConfig, isConfigPreview, accessOn } from "./site-config.js";
+import { loadSiteConfig, applySiteConfig, isConfigPreview, accessOn, listenLiveConfig } from "./site-config.js";
+import { resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, readFeatureCenter } from "./feature-flags.js";
 
 applyUIPrefs();
 initI18n();
@@ -13,8 +14,19 @@ mountUserChip();
 let siteCfg = null;
 let roomCreateOpen = true;
 let roomJoinOpen = true;
+let flagStates = {};
+let flagCenter = null;
+let flagContext = buildFlagContext({ user: currentUser() });
 
 const user = currentUser();
+
+function refreshFlags() {
+  flagContext = buildFlagContext({ user: currentUser() });
+  flagCenter = readFeatureCenter();
+  flagStates = resolveFlags(siteCfg, flagCenter.scopes, flagContext);
+  applyFlagsToDom(siteCfg, flagCenter, flagContext, document, flagStates);
+  applyPrivacyOptions();
+}
 
 async function bootSite() {
   siteCfg = await loadSiteConfig();
@@ -25,9 +37,19 @@ async function bootSite() {
   const roomWindow = Math.max(300, Number(siteCfg.limits.roomWindowMs) || 1800);
   createGuard = createLimiter(roomMax, roomWindow);
   joinGuard = createLimiter(roomMax * 2, roomWindow);
+  refreshFlags();
   applyAccessState();
   applyAuthLinks();
   applyCapacityOptions();
+  listenLiveConfig((cfg) => {
+    siteCfg = cfg;
+    applySiteConfig(cfg);
+    roomCreateOpen = accessOn("roomCreate", cfg);
+    roomJoinOpen = accessOn("roomJoin", cfg);
+    refreshFlags();
+    applyAccessState();
+    applyAuthLinks();
+  });
   if (user) resumePendingRoom();
   if (isConfigPreview()) {
     const badge = document.createElement("div");
@@ -39,9 +61,45 @@ async function bootSite() {
     applySiteConfig(siteCfg);
     applyAccessState();
     applyAuthLinks();
+    applyPrivacyOptions();
   });
 }
 bootSite();
+
+function applyPrivacyOptions() {
+  const sel = $("#createPrivacy");
+  if (!sel) return;
+  const canPublic = flagOn(flagStates, "rooms.public");
+  const canPrivate = flagOn(flagStates, "rooms.private") && flagOn(flagStates, "rooms.password");
+  let changed = false;
+  for (const opt of [...sel.options]) {
+    const allowed = opt.value === "password" ? canPrivate : canPublic;
+    opt.disabled = !allowed;
+    opt.hidden = !allowed;
+    if (!allowed && opt.selected) changed = true;
+  }
+  if (changed || (sel.selectedOptions[0]?.disabled ?? true)) {
+    const target = canPublic ? "public" : canPrivate ? "password" : "";
+    if (target) sel.value = target;
+  }
+  $("#passwordFieldWrap")?.classList.toggle("hidden", sel.value !== "password");
+  const none = !canPublic && !canPrivate;
+  let hint = $("#privacyClosedHint");
+  const createBtn = $("#createBtn");
+  if (none) {
+    if (createBtn) createBtn.disabled = true;
+    if (!hint) {
+      hint = document.createElement("p");
+      hint.className = "hint";
+      hint.id = "privacyClosedHint";
+      hint.textContent = getLang() === "fa" ? "ساخت اتاق توسط مالک سایت موقتاً غیرفعال است." : "Room creation is temporarily disabled by the site owner.";
+      createBtn?.insertAdjacentElement("afterend", hint);
+    }
+  } else {
+    hint?.remove();
+    if (createBtn) createBtn.disabled = !roomCreateOpen;
+  }
+}
 
 function applyAccessState() {
   const createBtn = $("#createBtn");
@@ -63,6 +121,7 @@ function applyAccessState() {
     const hint = $("#joinHint");
     if (hint && !roomJoinOpen) hint.textContent = getLang() === "fa" ? "ورود به اتاق موقتاً بسته است." : "Joining rooms is temporarily closed.";
   }
+  if (createBtn) applyPrivacyOptions();
 }
 
 function applyAuthLinks() {
@@ -138,10 +197,17 @@ privacyInput.addEventListener("change", () => {
 
 $("#createBtn").addEventListener("click", () => {
   if (!roomCreateOpen) return toast(getLangIsFa() ? "ساخت اتاق موقتاً بسته است." : "Room creation is temporarily closed.", "error");
+  if (!flagOn(flagStates, "rooms.create")) return toast(getLangIsFa() ? "ساخت اتاق غیرفعال شده است." : "Room creation is disabled.", "error");
   const nick = createNick.value.trim().slice(0, 20);
   if (!nick) return toast(t("toast.nameRequired"), "error");
   if (!isRealName(nick)) return toast(t("toast.realName"), "error");
   const privacy = privacyInput.value;
+  if (privacy === "password" && !(flagOn(flagStates, "rooms.private") && flagOn(flagStates, "rooms.password"))) {
+    return toast(getLangIsFa() ? "اتاق رمزدار غیرفعال شده است." : "Password rooms are disabled.", "error");
+  }
+  if (privacy === "public" && !flagOn(flagStates, "rooms.public")) {
+    return toast(getLangIsFa() ? "اتاق عمومی غیرفعال شده است." : "Public rooms are disabled.", "error");
+  }
   const pwd = pwdInput.value.trim();
   if (privacy === "password" && pwd.length < 3) {
     return toast(getLangIsFa() ? "رمز حداقل ۳ حرف باشد" : "Password must be at least 3 characters", "error");
@@ -167,6 +233,7 @@ joinNick.addEventListener("keydown", (e) => { if (e.key === "Enter") joinRoom();
 
 function joinRoom() {
   if (!roomJoinOpen) return toast(getLangIsFa() ? "ورود به اتاق موقتاً بسته است." : "Joining rooms is temporarily closed.", "error");
+  if (!flagOn(flagStates, "rooms.join")) return toast(getLangIsFa() ? "ورود به اتاق غیرفعال شده است." : "Joining rooms is disabled.", "error");
   const nick = joinNick.value.trim().slice(0, 20);
   if (!nick) return toast(t("toast.nameRequired"), "error");
   if (!isRealName(nick)) return toast(t("toast.realName"), "error");

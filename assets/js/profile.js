@@ -9,7 +9,8 @@ import {
   isLocallyBanned, syncRemoteSession
 } from "./auth.js";
 import { AVATAR_PRESETS, avatarId, avatarSrc, presetValue } from "./avatars.js";
-import { loadSiteConfig, applySiteConfig, isMaintenanceBlocked } from "./site-config.js";
+import { loadSiteConfig, applySiteConfig, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
+import { resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, recordFeatureUse, readFeatureCenter } from "./feature-flags.js";
 
 applyUIPrefs();
 initI18n();
@@ -20,6 +21,20 @@ let remoteProfile = null;
 let saving = false;
 let avatarGender = "girl";
 let siteCfg = null;
+let flagStates = {};
+let flagContext = { role: "member", user: "", plan: "", room: "", server: "local" };
+
+function allow(flagId) {
+  return flagOn(flagStates, flagId);
+}
+
+function refreshFlags(me) {
+  flagContext = buildFlagContext({ user: me });
+  const center = readFeatureCenter();
+  flagStates = resolveFlags(siteCfg, center.scopes, flagContext);
+  applyFlagsToDom(siteCfg, center, flagContext, document, flagStates);
+  return flagStates;
+}
 
 (async () => {
   remoteProfile = await syncRemoteSession();
@@ -35,6 +50,17 @@ async function boot(me) {
   siteCfg = await loadSiteConfig();
   applySiteConfig(siteCfg);
   if (isMaintenanceBlocked(siteCfg)) return;
+  refreshFlags(me);
+  if (!allow("account.profiles")) {
+    location.replace("index.html");
+    return;
+  }
+  listenLiveConfig((cfg) => {
+    siteCfg = cfg;
+    applySiteConfig(cfg);
+    refreshFlags(me);
+  });
+  window.addEventListener("wt:config", () => { applySiteConfig(siteCfg); refreshFlags(me); });
   if (isLocallyBanned(me.username)) {
     logout();
     location.replace("auth.html?mode=login");
@@ -287,11 +313,12 @@ function wireAvatar() {
 
   gallery.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-avatar]");
-    if (!btn || !allowAvatar()) return;
+    if (!btn || !allow("account.avatarUploads") || !allowAvatar()) return;
     try {
       const res = setAvatar(presetValue(btn.dataset.avatar));
       if (!res.ok) throw new Error(res.error);
       profile.avatar = res.avatar;
+      recordFeatureUse("account.avatarUploads", { plan: flagContext.plan, role: flagContext.role });
       paintAvatar();
       renderAvatarGallery();
       toast(t("profile.saved"), "success");
@@ -304,7 +331,7 @@ function wireAvatar() {
     renderAvatarGallery();
   }));
   $("#avatarRemove").addEventListener("click", () => {
-    if (!allowAvatar()) return;
+    if (!allow("account.avatarUploads") || !allowAvatar()) return;
     try {
       setAvatar("");
       profile.avatar = "";
@@ -319,6 +346,7 @@ function wireAvatar() {
 function wireFriends() {
   $("#friendForm").addEventListener("submit", (e) => {
     e.preventDefault();
+    if (!allow("account.friends")) return;
     const out = $("#friendMsg");
     clearMsg(out);
     const val = $("#friendInput").value.trim();
@@ -373,6 +401,7 @@ function renderFriends() {
     });
     rm.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>';
     rm.addEventListener("click", () => {
+      if (!allow("account.friends")) return;
       try {
         removeFriend(name);
         toast(t("profile.friendRemoved"), "success");
@@ -404,6 +433,7 @@ function wireAppearance() {
     const b = el("button", { class: "accent-swatch", type: "button", "data-a": acc.a, title: acc.a });
     b.style.background = `linear-gradient(135deg,${acc.a},${acc.b})`;
     b.addEventListener("click", () => {
+      if (!allow("account.customThemes")) return;
       savePrefs({ accent: acc.a, accent2: acc.b });
       paint();
     });
@@ -412,12 +442,14 @@ function wireAppearance() {
   const custom = $("#accentCustom");
   if (custom) {
     custom.addEventListener("input", () => {
+      if (!allow("account.customThemes")) return;
       savePrefs({ accent: custom.value, accent2: lightenHex(custom.value) });
       paint();
     });
   }
   paint();
   $("#lookReset").addEventListener("click", () => {
+    if (!allow("account.customThemes")) return;
     resetPrefs();
     paint();
     toast(t("profile.lookResetDone"), "success");

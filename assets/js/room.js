@@ -9,7 +9,10 @@ import { Player, parseSubtitles } from "./player.js";
 import { Voice } from "./voice.js";
 import { currentUser, isLocallyBanned } from "./auth.js";
 import { avatarSrc } from "./avatars.js";
-import { loadSiteConfig, applySiteConfig, featureOn, accessOn, isMaintenanceBlocked } from "./site-config.js";
+import { loadSiteConfig, applySiteConfig, featureOn, accessOn, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
+import {
+  resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, recordFeatureUse, readFeatureCenter
+} from "./feature-flags.js";
 
 initI18n();
 applyUIPrefs();
@@ -28,7 +31,7 @@ if (!code) {
 
 const roomNameParam = params.get("name") || "";
 const capacityParam = Number(params.get("cap")) || 6;
-const privacyParam = params.get("privacy") === "password" ? "password" : "public";
+let privacyParam = params.get("privacy") === "password" ? "password" : "public";
 let roomPassword = sessionStorage.getItem(`pwd:${code}`) || "";
 
 let nick = (authUser?.nick || params.get("nick") || store.get("wt.nick") || "").trim();
@@ -74,6 +77,31 @@ let pendingLocalState = null;
 let fileOfferId = "";
 let siteCfg = null;
 let chatEnabled = true;
+let flagStates = {};
+let flagContext = { role: "member", user: "", plan: "", room: code, server: "local" };
+
+function allow(flagId, message) {
+  if (flagOn(flagStates, flagId)) return true;
+  if (message) toast(message, "error");
+  return false;
+}
+
+function refreshRuntimeFlags() {
+  flagContext = buildFlagContext({ user: authUser, room: code, server: "local" });
+  const center = readFeatureCenter();
+  flagStates = resolveFlags(siteCfg, center.scopes, flagContext);
+  applyFlagsToDom(siteCfg, center, flagContext, document, flagStates);
+  applyFeatureFlags();
+  return flagStates;
+}
+
+function applyPrivacyFlags() {
+  if (!isHost) return;
+  const open = flagOn(flagStates, "rooms.public");
+  const priv = flagOn(flagStates, "rooms.private") && flagOn(flagStates, "rooms.password");
+  if (privacyParam === "password" && !priv && open) privacyParam = "public";
+  else if (privacyParam === "public" && !open && priv && roomPassword) privacyParam = "password";
+}
 
 const chatList = $("#chatList");
 const peopleList = $("#peopleList");
@@ -114,21 +142,38 @@ if (code && authUser) boot();
 async function boot() {
   siteCfg = await loadSiteConfig();
   applySiteConfig(siteCfg);
+  refreshRuntimeFlags();
+  applyPrivacyFlags();
+  listenLiveConfig((cfg) => {
+    siteCfg = cfg;
+    applySiteConfig(cfg);
+    refreshRuntimeFlags();
+    applyPrivacyFlags();
+  });
+  window.addEventListener("wt:config", () => { applySiteConfig(siteCfg); refreshRuntimeFlags(); applyPrivacyFlags(); });
   if (isMaintenanceBlocked(siteCfg)) return;
   if (isLocallyBanned(authUser.username)) {
     location.replace("index.html");
     return;
   }
-  if (isHost && !accessOn("roomCreate", siteCfg)) {
+  if (!flagOn(flagStates, "system.realtime")) {
+    toast(getLang() === "fa" ? "موتور اتصال زنده توسط مالک سایت غیرفعال شده است." : "Live connectivity has been disabled by the site owner.", "error");
+    setTimeout(() => location.replace("./"), 1600);
+    return;
+  }
+  if (isHost && !flagOn(flagStates, "rooms.create")) {
     toast(getLang() === "fa" ? "ساخت اتاق موقتاً بسته شده است." : "Room creation is temporarily closed.", "error");
     setTimeout(() => location.replace("./"), 1400);
     return;
   }
-  if (!isHost && !accessOn("roomJoin", siteCfg)) {
+  if (!isHost && !flagOn(flagStates, "rooms.join")) {
     toast(getLang() === "fa" ? "ورود به اتاق‌ها موقتاً بسته شده است." : "Joining rooms is temporarily closed.", "error");
     setTimeout(() => location.replace("./"), 1400);
     return;
   }
+  recordFeatureUse(isHost ? "rooms.create" : "rooms.join", {
+    plan: flagContext.plan, role: flagContext.role, room: ""
+  });
   const chatMax = Math.max(1, Number(siteCfg.limits.chatPerWindow) || 6);
   const chatWindow = Math.max(500, Number(siteCfg.limits.chatWindowMs) || 3000);
   canSend = createLimiter(chatMax * 2, chatWindow * 2);
@@ -184,6 +229,7 @@ async function boot() {
     }
   });
 
+  guardPlaybackFlags();
   wirePlayer();
   wireChat();
   wireChatTimer();
@@ -210,33 +256,17 @@ async function boot() {
 }
 
 function applyFeatureFlags() {
-  chatEnabled = featureOn("chat", siteCfg);
+  chatEnabled = flagOn(flagStates, "chat.text");
+  document.querySelector(".room-shell")?.classList.toggle("no-chat", !chatEnabled);
   if (!chatEnabled) {
-    document.querySelector(".room-shell")?.classList.add("no-chat");
-    $("#chatForm")?.classList.add("feature-off");
     $("#chatBadge")?.classList.add("hidden");
   }
-  if (!featureOn("voice", siteCfg)) {
-    $("#voiceBtn")?.classList.add("feature-off");
-    $("#voiceStrip")?.classList.add("feature-off");
-    $("#voiceDock")?.classList.add("feature-off");
-  }
-  if (!featureOn("liveReactions", siteCfg)) $("#reactDock")?.classList.add("feature-off");
-  if (!featureOn("screenShare", siteCfg)) {
-    $("#shareBtn")?.classList.add("feature-off");
-    $("#screenLayer")?.classList.add("feature-off");
-  }
-  if (!featureOn("queue", siteCfg)) {
+  if (!flagOn(flagStates, "watch.queue")) {
     $$('.tab[data-tab="queue"]').forEach((n) => n.classList.add("feature-off"));
     $("#queueForm")?.classList.add("feature-off");
   }
-  if (!featureOn("subtitles", siteCfg)) {
-    $("#subsBtn")?.classList.add("feature-off");
+  if (!flagOn(flagStates, "watch.subtitles")) {
     $("#subsPickBtn")?.closest(".setting")?.classList.add("feature-off");
-  }
-  if (!featureOn("localFile", siteCfg)) {
-    $("#pickFileBtn")?.classList.add("feature-off");
-    $("#fileInput")?.classList.add("feature-off");
   }
 }
 
@@ -516,6 +546,44 @@ function wireNet() {
 }
 
 /* ================= player ui ================= */
+function guardPlaybackFlags() {
+  const originalTogglePlay = player.togglePlay.bind(player);
+  player.togglePlay = (...args) => {
+    const idle = player.video?.paused;
+    if (idle && !allow("watch.play", "پخش توسط مالک سایت محدود شده است.")) return false;
+    if (!idle && !allow("watch.pause", "توقف پخش توسط مالک سایت محدود شده است.")) return false;
+    recordFeatureUse(idle ? "watch.play" : "watch.pause", { plan: flagContext.plan, role: flagContext.role, room: code });
+    return originalTogglePlay(...args);
+  };
+  const originalSeekTo = player.seekTo.bind(player);
+  player.seekTo = (time) => {
+    if (!allow("watch.seek", "جابه‌جایی زمان توسط مالک سایت محدود شده است.")) return false;
+    recordFeatureUse("watch.seek", { plan: flagContext.plan, role: flagContext.role, room: code });
+    return originalSeekTo(time);
+  };
+  const originalSeekBy = player.seekBy.bind(player);
+  player.seekBy = (delta) => {
+    if (!allow("watch.seek", "جابه‌جایی زمان توسط مالک سایت محدود شده است.")) return false;
+    return originalSeekBy(delta);
+  };
+  const originalRate = player.cycleRate.bind(player);
+  player.cycleRate = () => {
+    if (!allow("watch.rate", "تغییر سرعت توسط مالک سایت محدود شده است.")) return player.video?.playbackRate || 1;
+    recordFeatureUse("watch.rate", { plan: flagContext.plan, role: flagContext.role, room: code });
+    return originalRate();
+  };
+  const originalPiP = player.togglePiP.bind(player);
+  player.togglePiP = () => {
+    if (!allow("watch.pip", "تصویر در تصویر توسط مالک سایت محدود شده است.")) return;
+    return originalPiP();
+  };
+  const originalTheater = player.toggleTheater.bind(player);
+  player.toggleTheater = () => {
+    if (!allow("watch.theater", "حالت سینما توسط مالک سایت محدود شده است.")) return false;
+    return originalTheater();
+  };
+}
+
 function wirePlayer() {
   const video = $("#video");
   $("#playBtn").addEventListener("click", () => player.togglePlay());
@@ -1062,6 +1130,7 @@ function wireChat() {
     if (!text) return;
     if (!canSend()) { toast(getLang() === "fa" ? "کمی صبر کن" : "Slow down", "error"); return; }
     if (editingId) {
+      if (!allow("chat.edit", "ویرایش پیام غیرفعال شده است.")) return;
       net.command("chatEdit", { id: editingId, text });
       editingId = null;
       chatInput.placeholder = t("chat.placeholder");
@@ -1071,6 +1140,7 @@ function wireChat() {
       const wait = slow ? Math.ceil((slow * 1000 - (Date.now() - lastChatMsgAt)) / 1000) : 0;
       if (wait > 0) { toast(t("toast.slowWait", { s: String(wait) }), "info"); return; }
       net.command("chat", { text, replyTo });
+      recordFeatureUse("chat.text", { plan: flagContext.plan, role: flagContext.role, room: code });
       lastChatMsgAt = Date.now();
       replyTo = null;
       $("#replyBar").classList.add("hidden");
@@ -1087,7 +1157,10 @@ function wireChat() {
 
   $("#chatExportBtn")?.addEventListener("click", exportChat);
 
-  const sendTyping = debounce(() => net.command("typing", {}), 1200);
+  const sendTyping = debounce(() => {
+    if (!chatEnabled || !flagOn(flagStates, "chat.typing")) return;
+    net.command("typing", {});
+  }, 1200);
   chatInput.addEventListener("input", () => {
     if (chatInput.value.trim()) sendTyping();
   });
@@ -1172,6 +1245,7 @@ function wireChat() {
   window.visualViewport?.addEventListener("scroll", refollow);
 
   $("#chatSearch").addEventListener("input", (e) => {
+    if (!allow("chat.search")) { e.target.value = ""; return; }
     searchTerm = e.target.value.trim().toLowerCase();
     $$(".msg", chatList).forEach((node) => {
       const text = (node.dataset.text || "").toLowerCase();
@@ -1224,12 +1298,25 @@ function onChatAction(e) {
   const act = btn.dataset.act;
   const data = JSON.parse(msgNode.dataset.msg || "{}");
 
-  if (act === "react") net.command("react", { id, emoji: "👍" });
-  else if (act === "reply") startReply(data);
-  else if (act === "pin") net.command("pin", { id });
-  else if (act === "edit") startEdit(data);
-  else if (act === "delete") net.command("chatDelete", { id });
-  else if (act === "reaction") net.command("react", { id, emoji: btn.dataset.emoji });
+  if (act === "react") {
+    if (!allow("chat.reactions", "واکنش‌ها غیرفعال شده است.")) return;
+    net.command("react", { id, emoji: "👍" });
+  } else if (act === "reply") {
+    if (!allow("chat.replies", "پاسخ به پیام غیرفعال شده است.")) return;
+    startReply(data);
+  } else if (act === "pin") {
+    if (!allow("chat.pins", "سنجاق پیام غیرفعال شده است.")) return;
+    net.command("pin", { id });
+  } else if (act === "edit") {
+    if (!allow("chat.edit", "ویرایش پیام غیرفعال شده است.")) return;
+    startEdit(data);
+  } else if (act === "delete") {
+    if (!allow("chat.delete", "حذف پیام غیرفعال شده است.")) return;
+    net.command("chatDelete", { id });
+  } else if (act === "reaction") {
+    if (!allow("chat.reactions", "واکنش‌ها غیرفعال شده است.")) return;
+    net.command("react", { id, emoji: btn.dataset.emoji });
+  }
 }
 
 function startReply(msg) {
@@ -1608,18 +1695,27 @@ function markSpeaking(id, active) {
 function wireQueue() {
   $("#queueForm").addEventListener("submit", (e) => {
     e.preventDefault();
+    if (!allow("watch.queue", "صف پخش غیرفعال شده است.")) return;
     const input = $("#queueInput");
     const v = validateMediaUrl(input.value.trim());
     if (!v.ok) return toast(v.reason === "blocked" ? t("toast.blockedDomain") : t("toast.videoInvalid"), "error");
     net.command("queueAdd", { url: v.url });
+    recordFeatureUse("watch.queue", { plan: flagContext.plan, role: flagContext.role, room: code });
     input.value = "";
   });
 
   queueList.addEventListener("click", (e) => {
     const vote = e.target.closest("[data-vote]");
-    if (vote) return net.command("queueVote", { id: vote.dataset.vote });
+    if (vote) {
+      if (!allow("watch.voting", "رأی‌گیری صف غیرفعال شده است.")) return;
+      recordFeatureUse("watch.voting", { plan: flagContext.plan, role: flagContext.role, room: code });
+      return net.command("queueVote", { id: vote.dataset.vote });
+    }
     const play = e.target.closest("[data-qplay]");
-    if (play) return net.command("queuePlay", { id: play.dataset.qplay });
+    if (play) {
+      if (!allow("watch.queue", "صف پخش غیرفعال شده است.")) return;
+      return net.command("queuePlay", { id: play.dataset.qplay });
+    }
   });
 }
 
@@ -1631,7 +1727,8 @@ function renderQueue(items) {
     queueList.append(el("p", { class: "hint", text: t("queue.empty") }));
     return;
   }
-  const sorted = [...queueItems].sort((a, b) => b.votes.length - a.votes.length);
+  const voting = flagOn(flagStates, "watch.voting");
+  const sorted = voting ? [...queueItems].sort((a, b) => b.votes.length - a.votes.length) : [...queueItems];
   for (const item of sorted) {
     const node = el("div", { class: "queue-item" });
     const main = el("div", { class: "q-main" });
@@ -1640,10 +1737,13 @@ function renderQueue(items) {
       el("div", { class: "q-title", text: title || item.url }),
       el("div", { class: "q-sub", text: `${item.by} · ${fmtTime(0)}` })
     );
-    const voted = item.votes.includes(me.id);
-    const vote = el("button", { type: "button", class: `vote-btn${voted ? " voted" : ""}`, "data-vote": item.id });
-    vote.append(el("span", { text: "▲" }), el("span", { text: String(item.votes.length) }));
-    node.append(main, vote);
+    node.append(main);
+    if (voting) {
+      const voted = item.votes.includes(me.id);
+      const vote = el("button", { type: "button", class: `vote-btn${voted ? " voted" : ""}`, "data-vote": item.id });
+      vote.append(el("span", { text: "▲" }), el("span", { text: String(item.votes.length) }));
+      node.append(vote);
+    }
     if (canControl()) {
       node.append(el("button", { type: "button", class: "vote-btn", "data-qplay": item.id, title: t("queue.play"), text: "▶" }));
     }
@@ -1775,13 +1875,26 @@ function wireSettings() {
   const push = (patch) => net.command("settings", { patch });
   $("#optControl").addEventListener("change", (e) => push({ control: e.target.value }));
   $("#optLock").addEventListener("change", (e) => push({ locked: e.target.checked }));
-  $("#optApproval").addEventListener("change", (e) => push({ approval: e.target.checked }));
+  $("#optApproval").addEventListener("change", (e) => {
+    if (!allow("rooms.approval", "اتاق با تأیید غیرفعال شده است.")) { e.target.checked = false; return; }
+    push({ approval: e.target.checked });
+  });
   $("#optSlow").addEventListener("change", (e) => push({ slow: Number(e.target.value) }));
-  $("#optQuality").addEventListener("change", (e) => player.setLevel(e.target.value));
-  $("#optAudio").addEventListener("change", (e) => player.setAudio(e.target.value));
+  $("#optQuality").addEventListener("change", (e) => {
+    if (!allow("watch.quality", "انتخاب کیفیت غیرفعال شده است.")) return;
+    player.setLevel(e.target.value);
+  });
+  $("#optAudio").addEventListener("change", (e) => {
+    if (!allow("watch.audioTracks", "انتخاب ترک صوتی غیرفعال شده است.")) return;
+    player.setAudio(e.target.value);
+  });
 
-  $("#subsPickBtn")?.addEventListener("click", () => $("#subsFile").click());
+  $("#subsPickBtn")?.addEventListener("click", () => {
+    if (!allow("watch.subtitles", "زیرنویس غیرفعال شده است.")) return;
+    $("#subsFile").click();
+  });
   $("#subsFile").addEventListener("change", async (e) => {
+    if (!allow("watch.subtitles", "زیرنویس غیرفعال شده است.")) { e.target.value = ""; return; }
     const file = e.target.files?.[0];
     if (!file) return;
     const raw = await file.text();
@@ -1793,6 +1906,7 @@ function wireSettings() {
     player.setCues(cues, name);
     renderSubsSets();
     if (isHost) net.shareSubtitles(cues);
+    recordFeatureUse("watch.subtitles", { plan: flagContext.plan, role: flagContext.role, room: code });
     toast(getLang() === "fa" ? `${cues.length} خط زیرنویس بارگذاری شد` : `${cues.length} cues loaded`, "success");
     e.target.value = "";
   });
@@ -2046,22 +2160,28 @@ function activateTab(name) {
 
 /* ================= voice ================= */
 function wireVoice() {
-  $("#voiceBtn").addEventListener("click", toggleVoice);
+  $("#voiceBtn").addEventListener("click", () => {
+    if (!selfVoice && !allow("voice.chat", "صدای زنده غیرفعال شده است.")) return;
+    toggleVoice();
+  });
   $("#voiceLeaveBtn").addEventListener("click", leaveVoice);
   $("#micBtn").addEventListener("click", () => {
     if (!selfVoice) return toast(t("toast.notInVoice"));
     if (pttOn) return;
+    if (!allow("voice.mic", "میکروفن غیرفعال شده است.")) return;
     voice.setMuted(!voice.muted);
     syncMicUI();
   });
   $("#deafenBtn").addEventListener("click", () => {
     if (!selfVoice) return toast(t("toast.notInVoice"));
+    if (!allow("voice.deafen", "ناشنوایی غیرفعال شده است.")) return;
     voice.setDeafened(!voice.deafened);
     syncDeafenUI();
     renderVoiceTiles();
     toast(t(voice.deafened ? "toast.deafened" : "toast.undeafened"), "info");
   });
   $("#cameraBtn")?.addEventListener("click", () => {
+    if (!allow("voice.camera", "دوربین غیرفعال شده است.")) return;
     syncCameraUI();
     toast(t("toast.cameraSoon"), "info");
   });
@@ -2070,11 +2190,13 @@ function wireVoice() {
 
 async function toggleVoice() {
   if (selfVoice) return leaveVoice();
+  if (!allow("voice.chat", "صدای زنده غیرفعال شده است.")) return;
   const ok = await voice.join();
   if (!ok) return;
   selfVoice = true;
   if (pttOn) voice.setMuted(true);
   net.command("voice", { on: true });
+  recordFeatureUse("voice.chat", { plan: flagContext.plan, role: flagContext.role, room: code });
   $("#voiceBtn").classList.add("active");
   $("#voiceDock").classList.remove("hidden");
   syncMicUI();
@@ -2167,6 +2289,7 @@ function syncScreenSharePeers() {
 
 async function startScreenShare() {
   if (screenSharing) return;
+  if (!allow("screen.share", "اشتراک صفحه غیرفعال شده است.")) return;
   if (!navigator.mediaDevices?.getDisplayMedia) return toast(t("toast.screenUnsupported"), "error");
   let stream;
   try {
@@ -2181,6 +2304,7 @@ async function startScreenShare() {
   screenStream = stream;
   screenSharing = true;
   screenSentTo = new Set();
+  recordFeatureUse("screen.share", { plan: flagContext.plan, role: flagContext.role, room: code });
   stream.getVideoTracks().forEach((track) => track.addEventListener("ended", stopScreenShare));
   for (const m of members) sendScreenTo(m.id);
   showScreenView("self", stream);
@@ -2254,6 +2378,10 @@ function wirePtt() {
   if (!input) return;
   input.checked = pttOn;
   input.addEventListener("change", () => {
+    if (input.checked && !allow("voice.ptt", "Push To Talk غیرفعال شده است.")) {
+      input.checked = false;
+      return;
+    }
     pttOn = input.checked;
     store.set(PTT_KEY, pttOn);
     if (pttHeld) pttRelease();
@@ -2360,7 +2488,12 @@ function wireReactions() {
   for (const emoji of LIVE_EMOJIS) {
     tray.append(el("button", {
       type: "button", role: "menuitem", text: emoji, "aria-label": emoji,
-      onclick: () => { close(); net.command("reaction", { emoji }); }
+      onclick: () => {
+        if (!allow("chat.reactions", "واکنش‌ها غیرفعال شده است.")) return;
+        close();
+        recordFeatureUse("chat.reactions", { plan: flagContext.plan, role: flagContext.role, room: code });
+        net.command("reaction", { emoji });
+      }
     }));
   }
   toggle.addEventListener("click", () => {

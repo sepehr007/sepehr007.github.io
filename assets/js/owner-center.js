@@ -1,9 +1,9 @@
 import { el, store, toast } from "./core.js";
 import {
   CONFIG_REGISTRY, NAV_GROUPS, PAGE_DEFS, pageDef, configMeta,
-  DEFAULT_ROLES, PERMISSION_SCOPES, PERMISSIONS, FEATURE_DEFS
+  CONFIG_CATEGORIES, DEFAULT_ROLES, PERMISSION_SCOPES, PERMISSIONS, FEATURE_DEFS
 } from "./owner-registry.js";
-import { readAudit, logAudit, auditCountSince, clearAudit } from "./owner-audit.js";
+import { readAudit, logAudit, auditCountSince, clearAudit, lastChangeFor } from "./owner-audit.js";
 import { SITE_CONFIG_DEFAULTS } from "./site-config.js";
 import { ACCENTS } from "./core.js";
 import {
@@ -21,6 +21,14 @@ import {
 import { PROVIDERS, PROVIDER_MODES, sanitizeProviderConfig, providerHealth, createCheckout } from "./payment-providers.js";
 import { lineChart, barChart, donut } from "./charts.js";
 import { planCard } from "./pricing.js";
+import {
+  FLAGS, FLAG_GROUPS, FLAG_BY_ID, SCOPE_TYPES, HEALTH_LABELS,
+  readFeatureCenter, writeFeatureCenter, resolveFlags, flagHealth,
+  dependentIds, missingDependencies, lastHistoryFor, pushHistory,
+  snapshotFeatureState, buildFeatureExport, readFeatureImport,
+  readUsage, usageSeries, usageTop, usageByDimension, usageAdoption,
+  scheduleState, getPath, buildFlagContext
+} from "./feature-flags.js";
 
 const DATA_KEY = "wt.ownerData";
 const UI_KEY = "wt.ownerUi";
@@ -1951,6 +1959,826 @@ export function createCenter(ctx) {
     ctx.renderInputs();
   };
 
+  /* ----- feature center / config center (enterprise mode) ----- */
+  const FC_CONTEXT = () => buildFlagContext({ user: { username: "owner", role: "owner" } });
+  const fcStates = () => {
+    const center = readFeatureCenter();
+    return { center, states: resolveFlags(ctx.getDraft(), center.scopes, FC_CONTEXT()) };
+  };
+  const fcLabel = (id) => FLAG_BY_ID.get(id)?.label || id;
+  const fcCounts = (states) => {
+    const counts = { healthy: 0, partial: 0, disabled: 0, emergency: 0, scheduled: 0, dependency: 0, misconfigured: 0, future: 0, error: 0 };
+    for (const flag of FLAGS) counts[flagHealth(flag, states[flag.id]).id] += 1;
+    return counts;
+  };
+  const fcHistoryWrite = (entry) => {
+    const center = readFeatureCenter();
+    pushHistory(center, entry);
+    writeFeatureCenter(center);
+  };
+  const fcAudit = (flag, action, before, after, extra = {}) => {
+    logAudit({
+      kind: "feature",
+      action,
+      target: flag.id,
+      before,
+      after,
+      scope: extra.scope || "global",
+      reason: extra.reason || "",
+      source: extra.source || "owner",
+      rollback: extra.rollback ?? before
+    });
+    fcHistoryWrite({ id: flag.id, action, scope: extra.scope || "global", before, after, reason: extra.reason || "", source: extra.source || "owner" });
+  };
+  const fcSetGlobal = (flag, value, extra = {}) => {
+    const before = getPath(ctx.getDraft(), flag.path);
+    ctx.setCfg(flag.path, value);
+    fcAudit(flag, value ? "روشن‌کردن قابلیت" : "خاموش‌کردن قابلیت", before, value, extra);
+  };
+  const fcEnableChain = (id, seen = new Set()) => {
+    const flag = FLAG_BY_ID.get(id);
+    if (!flag || seen.has(id)) return true;
+    seen.add(id);
+    const { states } = fcStates();
+    const state = states[id];
+    if (state?.enabled) return true;
+    if (state?.reason && state.reason !== "global") return false;
+    for (const dep of flag.deps || []) if (!fcEnableChain(dep, seen)) return false;
+    const before = getPath(ctx.getDraft(), flag.path);
+    ctx.setCfg(flag.path, true);
+    fcAudit(flag, "روشن‌کردن از زنجیرهٔ وابستگی", before, true);
+    return true;
+  };
+  const fcRuleOf = (flag) => ctx.getDraft()?.featureRules?.[flag.path] || {};
+  const fcSaveRule = (flag, rule, action) => {
+    const before = JSON.stringify(fcRuleOf(flag));
+    ctx.setFeatureRule(flag.path, rule);
+    fcAudit(flag, action, before, JSON.stringify(rule), { source: "owner", reason: "زمان‌بندی/اضطرار" });
+  };
+  const fcModalLabel = (flag) => `${flag.label} · ${flag.id}`;
+  const fcDepPrompt = (flag, missing, done) => {
+    const body = el("div", { class: "fc-modal-body" });
+    body.append(el("p", { class: "ohint", text: "برای روشن‌بودن این قابلیت، وابستگی‌های زیر باید فعال باشند. وضعیت هر وابستگی نشان داده شده است." }));
+    for (const dep of missing) {
+      const { states } = fcStates();
+      const st = states[dep];
+      const row = el("div", { class: "fc-dep-row" });
+      row.append(el("b", { text: fcLabel(dep) }), tag(HEALTH_LABELS[flagHealth(FLAG_BY_ID.get(dep), st).id] || "—", st?.enabled ? "ok" : "bad"));
+      body.append(row);
+    }
+    const cancel = el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "انصراف", onclick: closeModal });
+    const proceed = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "روشن‌کردن وابستگی‌ها و این قابلیت" });
+    proceed.addEventListener("click", () => {
+      let ok = true;
+      for (const dep of missing) if (!fcEnableChain(dep)) ok = false;
+      if (ok) {
+        fcEnableChain(flag.id);
+        if (fcStates().states[flag.id]?.enabled) { closeModal(); toast("قابلیت و وابستگی‌هایش روشن شدند.", "success"); }
+        else { toast("وابستگی‌های مسدود (اضطراری/دامنه/زمان‌بندی) مانع روشن‌شدن هستند.", "error"); closeModal(); }
+      } else {
+        toast("برخی وابستگی‌ها مسدودند و از اینجا روشن نمی‌شوند.", "error");
+      }
+      done?.();
+    });
+    showModal(`وابستگی‌های «${flag.label}»`, body, [cancel, proceed]);
+  };
+
+  const FC_STATUS_OPTIONS = [
+    ["all", "همه"], ["healthy", "سالم"], ["disabled", "خاموش"], ["emergency", "اضطراری"],
+    ["scheduled", "زمان‌بندی"], ["dependency", "وابستگی"], ["partial", "محدود"], ["future", "آینده"]
+  ];
+
+  function fcFlagCard(flag, states, center, refresh) {
+    const state = states[flag.id];
+    const health = flagHealth(flag, state);
+    const rule = fcRuleOf(flag);
+    const history = lastHistoryFor(center, flag.id);
+    const notes = center.notes?.[flag.id] || "";
+    const isFav = center.favorites.includes(flag.id);
+    const isPinned = center.pinned.includes(flag.id);
+    const cardEl = el("article", { class: `ocard fc-flag${state?.enabled ? "" : " is-off"}${rule?.emergency ? " is-emergency" : ""}`, "data-flag": flag.id });
+    const head = el("div", { class: "fc-flag-head" });
+    head.append(el("b", { text: flag.label }), el("code", { text: flag.id }));
+    head.append(tag(health.label, health.id === "healthy" ? "ok" : health.id === "partial" ? "" : "bad"));
+    if (flag.future) head.append(tag("در انتظار پیاده‌سازی", ""));
+    if (isPinned) head.append(tag("سنجاق", "ok"));
+    const star = miniBtn(isFav ? "★" : "☆", () => {
+      const c = readFeatureCenter();
+      const list = new Set(c.favorites);
+      if (list.has(flag.id)) list.delete(flag.id); else list.add(flag.id);
+      c.favorites = [...list];
+      writeFeatureCenter(c);
+      refresh();
+    });
+    star.classList.add("fc-star");
+    const pin = miniBtn(isPinned ? "برداشتن سنجاق" : "سنجاق", () => {
+      const c = readFeatureCenter();
+      const list = new Set(c.pinned);
+      if (list.has(flag.id)) list.delete(flag.id); else list.add(flag.id);
+      c.pinned = [...list];
+      writeFeatureCenter(c);
+      refresh();
+    });
+    head.append(star, pin);
+    cardEl.append(head);
+    cardEl.append(el("p", { class: "fc-desc", text: flag.desc }));
+
+    const meta = el("div", { class: "fc-meta" });
+    meta.append(el("span", { text: `مسیر: ${flag.path}` }));
+    if (flag.deps?.length) meta.append(el("span", { text: `وابستگی: ${flag.deps.map(fcLabel).join("، ")}` }));
+    if (notes) meta.append(el("span", { text: `یادداشت: ${notes}` }));
+    if (history) meta.append(el("span", { text: `آخرین تغییر: ${new Date(history.at).toLocaleString("fa-IR")} · ${history.action}${history.scope !== "global" ? ` · ${history.scope}` : ""}` }));
+    if (rule?.enableAt) meta.append(el("span", { text: `روشن‌سازی: ${new Date(rule.enableAt).toLocaleString("fa-IR")}` }));
+    if (rule?.disableAt) meta.append(el("span", { text: `خاموشی: ${new Date(rule.disableAt).toLocaleString("fa-IR")}` }));
+    if (rule?.emergency) meta.append(el("span", { class: "fc-meta-danger", text: "خاموشی اضطراری فعال است" }));
+    if (state?.denials?.length) meta.append(el("span", { text: `منع دامنه: ${state.denials.join("، ")}` }));
+    if (state?.failedDeps?.length) meta.append(el("span", { class: "fc-meta-danger", text: `وابستگی خاموش: ${state.failedDeps.map(fcLabel).join("، ")}` }));
+    cardEl.append(meta);
+
+    const controls = el("div", { class: "fc-controls" });
+    const switchLine = el("label", { class: "switch-line" });
+    const sw = el("input", { type: "checkbox" });
+    sw.checked = getPath(ctx.getDraft(), flag.path) !== false;
+    sw.disabled = !!flag.future;
+    switchLine.append(sw, el("span", { text: flag.future ? "پیاده‌سازی نشده" : "فعال در پیکربندی سراسری" }));
+    sw.addEventListener("change", () => {
+      if (flag.future) return;
+      if (sw.checked) {
+        const missing = missingDependencies(flag.id, fcStates().states);
+        if (missing.length) { sw.checked = false; fcDepPrompt(flag, missing, refresh); return; }
+        fcSetGlobal(flag, true);
+      } else {
+        const dependents = dependentIds(flag.id).filter((id) => fcStates().states[id]?.enabled && !FLAG_BY_ID.get(id)?.future);
+        if (dependents.length && !confirm(`با خاموش‌کردن «${flag.label}» این قابلیت‌ها هم خاموش می‌شوند:\n${dependents.map(fcLabel).join("، ")}\nادامه می‌دهی؟`)) {
+          sw.checked = true;
+          return;
+        }
+        fcSetGlobal(flag, false, { reason: dependents.length ? "خاموشی وابسته‌ها" : "" });
+      }
+      refresh();
+      refreshDashboard();
+      refreshAnalytics();
+    });
+    controls.append(switchLine);
+
+    if (!flag.future) {
+      controls.append(miniBtn(rule?.emergency ? "پایان خاموشی اضطراری" : "خاموشی اضطراری", () => {
+        const cur = fcRuleOf(flag);
+        const next = { ...cur, emergency: !cur.emergency };
+        fcSaveRule(flag, next, next.emergency ? "خاموشی اضطراری" : "پایان خاموشی اضطراری");
+        refresh(); refreshDashboard(); refreshAnalytics();
+      }, !rule?.emergency));
+      controls.append(miniBtn("زمان‌بندی", () => fcScheduleModal(flag, refresh)));
+    }
+    controls.append(miniBtn("دامنه‌ها", () => fcScopeModal(flag, refresh)));
+    controls.append(miniBtn("یادداشت", () => fcNotesModal(flag, refresh)));
+    controls.append(miniBtn("تاریخچه", () => fcHistoryModal(flag, refresh)));
+    if (history && typeof history.before === "boolean") {
+      controls.append(miniBtn("بازگردانی", () => {
+        if (!confirm(`مقدار قبلی «${flag.label}» بازگردانده شود؟`)) return;
+        fcSetGlobal(flag, history.before, { reason: "بازگردانی از تاریخچه", scope: "rollback" });
+        refresh(); refreshDashboard(); refreshAnalytics();
+      }));
+    }
+    cardEl.append(controls);
+    return cardEl;
+  }
+
+  function fcScheduleModal(flag, refresh) {
+    const rule = fcRuleOf(flag);
+    const toLocal = (ts) => {
+      if (!ts) return "";
+      const d = new Date(ts);
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    const enableIn = el("input", { type: "datetime-local" });
+    const disableIn = el("input", { type: "datetime-local" });
+    enableIn.value = toLocal(rule.enableAt);
+    disableIn.value = toLocal(rule.disableAt);
+    const body = el("div", { class: "fc-modal-body" });
+    body.append(fieldRow("زمان روشن‌سازی", enableIn), fieldRow("زمان خاموش‌سازی", disableIn));
+    body.append(el("p", { class: "ohint", text: "اگر بازهٔ روشن‌سازی یا خاموش‌سازی آینده باشد، وضعیت قابلیت به‌صورت خودکار زمان‌بندی می‌شود. زمان‌ها روی همین مرورگر بلافاصله اعمال می‌شوند و برای همهٔ بازدیدکنندگان پس از انتشار." }));
+    const cancel = el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "انصراف", onclick: closeModal });
+    const clear = el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "پاک‌کردن زمان‌بندی" });
+    clear.addEventListener("click", () => {
+      const { enableAt, disableAt, ...rest } = rule;
+      fcSaveRule(flag, rest, "پاک‌کردن زمان‌بندی");
+      closeModal(); refresh(); refreshDashboard(); refreshAnalytics();
+    });
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیرهٔ زمان‌بندی" });
+    save.addEventListener("click", () => {
+      const enableAt = enableIn.value ? Date.parse(enableIn.value) : 0;
+      const disableAt = disableIn.value ? Date.parse(disableIn.value) : 0;
+      if ((enableAt && !Number.isFinite(enableAt)) || (disableAt && !Number.isFinite(disableAt))) return toast("زمان معتبر نیست.", "error");
+      if (enableAt && disableAt && enableAt >= disableAt) return toast("زمان روشن‌سازی باید قبل از خاموش‌سازی باشد.", "error");
+      fcSaveRule(flag, { ...rule, enableAt, disableAt }, "تنظیم زمان‌بندی");
+      closeModal(); refresh(); refreshDashboard(); refreshAnalytics();
+      toast("زمان‌بندی ذخیره شد.", "success");
+    });
+    showModal(`زمان‌بندی ${fcModalLabel(flag)}`, body, [cancel, clear, save]);
+  }
+
+  function fcScopeModal(flag, refresh) {
+    const body = el("div", { class: "fc-modal-body" });
+    const list = el("div", { class: "fc-scope-list" });
+    const typeSel = selectInput(SCOPE_TYPES.map((t) => ({ value: t.id, label: t.label })), "role");
+    const keyIn = el("input", { class: "ow-input", placeholder: "مثلاً member یا نام کاربری", dir: "ltr" });
+    const addBtn = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "افزودن منع" });
+    const hint = el("p", { class: "ohint", text: "دامنه‌ها فقط می‌توانند قابلیت را خاموش کنند (منع). سخت‌گیرانه‌ترین وضعیت برنده است و خاموشی اضطراری بر همه مقدم است. این منع‌ها روی همان مرورگر بلافاصله و برای سرور پس از اتصال API اعمال می‌شوند." });
+
+    const renderRows = () => {
+      list.replaceChildren();
+      const c = readFeatureCenter();
+      let found = false;
+      for (const type of SCOPE_TYPES) {
+        for (const [key, flags] of Object.entries(c.scopes[type.id] || {})) {
+          if (flags?.[flag.id] !== "off") continue;
+          found = true;
+          const row = el("div", { class: "fc-scope-row" });
+          row.append(el("span", { text: `${type.label}: ${key}` }), tag("منع", "bad"));
+          row.append(miniBtn("حذف", () => {
+            const center = readFeatureCenter();
+            delete center.scopes[type.id][key][flag.id];
+            if (!Object.keys(center.scopes[type.id][key]).length) delete center.scopes[type.id][key];
+            if (!Object.keys(center.scopes[type.id] || {}).length) delete center.scopes[type.id];
+            writeFeatureCenter(center);
+            logAudit({ kind: "feature", action: "حذف منع دامنه", target: flag.id, scope: `${type.id}:${key}`, source: "owner", before: "off", after: null });
+            fcHistoryWrite({ id: flag.id, action: "حذف منع دامنه", scope: `${type.id}:${key}`, before: "off", after: null, reason: "", source: "owner" });
+            renderRows(); refresh(); refreshDashboard();
+          }, true));
+          list.append(row);
+        }
+      }
+      if (!found) list.append(el("p", { class: "log-empty", text: "هیچ منع دامنه‌ای برای این قابلیت ثبت نشده." }));
+    };
+
+    addBtn.addEventListener("click", () => {
+      const type = typeSel.value;
+      const key = keyIn.value.trim();
+      if (!key) return toast("کلید دامنه را وارد کن.", "error");
+      const center = readFeatureCenter();
+      center.scopes[type] = center.scopes[type] || {};
+      center.scopes[type][key] = center.scopes[type][key] || {};
+      center.scopes[type][key][flag.id] = "off";
+      writeFeatureCenter(center);
+      logAudit({ kind: "feature", action: "افزودن منع دامنه", target: flag.id, scope: `${type}:${key}`, source: "owner", before: null, after: "off" });
+      fcHistoryWrite({ id: flag.id, action: "افزودن منع دامنه", scope: `${type}:${key}`, before: null, after: "off", reason: "scope", source: "owner" });
+      keyIn.value = "";
+      renderRows(); refresh(); refreshDashboard();
+      toast("منع دامنه ذخیره شد.", "success");
+    });
+
+    body.append(hint, list);
+    const addBar = el("div", { class: "ow-toolbar" });
+    addBar.append(typeSel, keyIn, addBtn);
+    body.append(addBar);
+    renderRows();
+    showModal(`دامنه‌های ${fcModalLabel(flag)}`, body, [el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "بستن", onclick: closeModal })]);
+  }
+
+  function fcNotesModal(flag, refresh) {
+    const ta = el("textarea", { rows: "3", maxlength: "240" });
+    ta.value = readFeatureCenter().notes?.[flag.id] || "";
+    const body = el("div", { class: "fc-modal-body" });
+    body.append(fieldRow("یادداشت مالک", ta));
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیره" });
+    save.addEventListener("click", () => {
+      const center = readFeatureCenter();
+      center.notes = center.notes || {};
+      center.notes[flag.id] = ta.value.trim();
+      writeFeatureCenter(center);
+      logAudit({ kind: "feature", action: "ویرایش یادداشت قابلیت", target: flag.id, detail: ta.value.trim(), source: "owner" });
+      closeModal(); refresh();
+    });
+    showModal(`یادداشت ${fcModalLabel(flag)}`, body, [
+      el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "انصراف", onclick: closeModal }), save
+    ]);
+  }
+
+  function fcHistoryModal(flag, refresh) {
+    const list = el("div", { class: "fc-history-list" });
+    const items = readFeatureCenter().history.filter((h) => h.id === flag.id).slice(0, 40);
+    if (!items.length) list.append(el("p", { class: "log-empty", text: "تاریخچه‌ای برای این قابلیت ثبت نشده." }));
+    for (const h of items) {
+      const row = el("div", { class: "fc-history-row" });
+      row.append(el("time", { text: new Date(h.at).toLocaleString("fa-IR") }));
+      row.append(el("b", { text: h.action }));
+      row.append(el("span", { text: `${h.scope} · ${h.source}` }));
+      row.append(el("span", { text: `${h.before ?? "—"} ← ${h.after ?? "—"}` }));
+      if (h.reason) row.append(el("small", { text: h.reason }));
+      if (typeof h.before === "boolean") {
+        row.append(miniBtn("بازگردانی", () => {
+          const cur = getPath(ctx.getDraft(), flag.path);
+          ctx.setCfg(flag.path, h.before);
+          logAudit({ kind: "feature", action: "بازگردانی از تاریخچه", target: flag.id, before: cur, after: h.before, scope: "rollback", reason: h.reason || "", source: "owner", rollback: cur });
+          fcHistoryWrite({ id: flag.id, action: "بازگردانی از تاریخچه", scope: "rollback", before: cur, after: h.before, reason: h.reason || "", source: "owner" });
+          closeModal(); refresh(); refreshDashboard(); refreshAnalytics();
+          toast("مقدار قبلی بازگردانده شد.", "success");
+        }));
+      }
+      list.append(row);
+    }
+    showModal(`تاریخچهٔ ${fcModalLabel(flag)}`, list, [el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "بستن", onclick: closeModal })]);
+  }
+
+  function fcDownloadExport() {
+    const data = buildFeatureExport(ctx.getDraft(), readFeatureCenter());
+    const blob = new Blob([JSON.stringify(data, null, 2) + "\n"], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = el("a", { href: url, download: `features-${new Date().toISOString().slice(0, 10)}.json` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    logAudit({ kind: "backup", action: "خروجی پیکربندی قابلیت‌ها", source: "owner" });
+  }
+
+  function fcImportFile(file, refresh) {
+    if (!file) return;
+    file.text().then((text) => {
+      const payload = readFeatureImport(JSON.parse(text));
+      ctx.applyFeatureSnapshot(payload);
+      const center = readFeatureCenter();
+      center.scopes = payload.scopes;
+      center.favorites = payload.favorites;
+      center.pinned = payload.pinned;
+      center.notes = payload.notes;
+      writeFeatureCenter(center);
+      logAudit({ kind: "backup", action: "بازیابی پیکربندی قابلیت‌ها", target: file.name || "", source: "owner" });
+      toast("پیکربندی قابلیت‌ها بازیابی شد.", "success");
+      refresh(); refreshDashboard(); refreshAnalytics();
+    }).catch(() => toast("فایل قابلیت معتبر نیست.", "error"));
+  }
+
+  function fcSnapshotsCard(refresh) {
+    const center = readFeatureCenter();
+    const cardEl = card("نقاط بازیابی", "وضعیت کامل قابلیت‌ها، قواعد، دامنه‌ها و یادداشت‌ها در همین مرورگر ذخیره می‌شود. حداکثر ۲۰ نقطه.");
+    const bar = el("div", { class: "ow-toolbar" });
+    const label = el("input", { class: "ow-input", placeholder: "برچسب نقطهٔ بازیابی (اختیاری)" });
+    const make = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ثبت نقطهٔ بازیابی" });
+    make.addEventListener("click", () => {
+      const c = readFeatureCenter();
+      const snap = snapshotFeatureState(ctx.getDraft(), c, label.value.trim() || `نقطهٔ ${new Date().toLocaleString("fa-IR")}`);
+      c.snapshots = [snap, ...(c.snapshots || [])].slice(0, 20);
+      writeFeatureCenter(c);
+      logAudit({ kind: "backup", action: "ثبت نقطهٔ بازیابی قابلیت‌ها", target: snap.label, source: "owner" });
+      refresh(); toast("نقطهٔ بازیابی ثبت شد.", "success");
+    });
+    bar.append(label, make);
+    cardEl.append(bar);
+    const list = el("div", { class: "fc-snap-list" });
+    if (!center.snapshots?.length) list.append(el("p", { class: "log-empty", text: "هنوز نقطهٔ بازیابی ثبت نشده." }));
+    for (const snap of center.snapshots || []) {
+      const row = el("div", { class: "fc-snap-row" });
+      row.append(el("b", { text: snap.label }), el("time", { text: new Date(snap.at).toLocaleString("fa-IR") }));
+      row.append(miniBtn("بازگردانی", () => {
+        if (!confirm(`بازگردانی «${snap.label}»؟ قابلیت‌های فعلی با این نقطه جایگزین می‌شوند.`)) return;
+        const payload = readFeatureImport(snap.data);
+        ctx.applyFeatureSnapshot(payload);
+        const c = readFeatureCenter();
+        c.scopes = payload.scopes;
+        c.favorites = payload.favorites;
+        c.pinned = payload.pinned;
+        c.notes = payload.notes;
+        writeFeatureCenter(c);
+        logAudit({ kind: "backup", action: "بازگردانی از نقطهٔ بازیابی", target: snap.label, source: "owner" });
+        refresh(); refreshDashboard(); refreshAnalytics();
+        toast("نقطهٔ بازیابی اعمال شد.", "success");
+      }));
+      row.append(miniBtn("حذف", () => {
+        const c = readFeatureCenter();
+        c.snapshots = c.snapshots.filter((s) => s.id !== snap.id);
+        writeFeatureCenter(c);
+        refresh();
+      }, true));
+      list.append(row);
+    }
+    cardEl.append(list);
+    return cardEl;
+  }
+
+  function fcAnalyticsCard() {
+    const usage = readUsage();
+    const series = usageSeries(usage, 14);
+    const top = usageTop(usage, 8);
+    const adopt = usageAdoption(usage, 14);
+    const cardEl = card("تحلیل استفاده از قابلیت‌ها", "استفاده‌ها روی همین مرورگر ثبت می‌شوند و با هر رویداد به‌روز می‌شوند. تفکیک پلن/نقش/اتاق از زمینهٔ اجرای صفحه خوانده می‌شود.");
+    const stats = el("div", { class: "stat-grid" });
+    const mk = (label, value) => {
+      const a = el("article", { class: "ostat" });
+      a.append(el("span", { class: "ostat-lbl", text: label }), el("strong", { text: String(value) }));
+      return a;
+    };
+    stats.append(mk("کل استفاده (۹۰ روز)", Object.values(usage.total || {}).reduce((s, n) => s + Number(n || 0), 0)), mk("قابلیت‌های استفاده‌شده", adopt.active), mk("روزهای با فعالیت", series.filter((d) => d.value > 0).length));
+    cardEl.append(stats);
+    const charts = el("div", { class: "fc-charts" });
+    const trend = el("div", { class: "fc-chart" });
+    trend.append(el("h3", { class: "ow-h3", text: "روند ۱۴ روز اخیر" }), lineChart({ labels: series.map((d) => d.label), values: series.map((d) => d.value), color: "#7c5cff" }));
+    const topBox = el("div", { class: "fc-chart" });
+    topBox.append(el("h3", { class: "ow-h3", text: "پرقصدمصرف‌ترین قابلیت‌ها" }));
+    if (top.length) topBox.append(barChart({ labels: top.map((t) => t.label.slice(0, 10)), values: top.map((t) => t.count), color: "#22d3ee" }));
+    else topBox.append(el("p", { class: "log-empty", text: "استفاده‌ای ثبت نشده است." }));
+    charts.append(trend, topBox);
+    cardEl.append(charts);
+    const dims = el("div", { class: "fc-dims" });
+    for (const [dim, label] of [["plan", "پلن"], ["role", "نقش"], ["room", "اتاق"]]) {
+      const rows = usageByDimension(usage, dim, 5);
+      const box = el("div", { class: "fc-dim" });
+      box.append(el("h4", { text: label }));
+      if (!rows.length) box.append(el("p", { class: "hint", text: "داده‌ای نیست." }));
+      for (const r of rows) box.append(el("div", { class: "fc-dim-row" }, el("span", { text: r.label }), el("b", { text: String(r.count) })));
+      dims.append(box);
+    }
+    cardEl.append(dims);
+    const disabledRecent = readFeatureCenter().history.filter((h) => /خاموش/.test(h.action)).slice(0, 5);
+    const recent = el("div", { class: "fc-recent-off" });
+    if (disabledRecent.length) {
+      recent.append(el("h3", { class: "ow-h3", text: "اخیراً خاموش‌شده‌ها" }));
+      for (const h of disabledRecent) {
+        const row = el("div", { class: "fc-history-row" });
+        row.append(el("time", { text: new Date(h.at).toLocaleString("fa-IR") }), el("b", { text: fcLabel(h.id) }), el("span", { text: h.action }));
+        recent.append(row);
+      }
+      cardEl.append(recent);
+    }
+    return cardEl;
+  }
+
+  const FC_PAGE_LINKS = {
+    branding: "branding", theme: "theme", seo: "seo", site: "branding", notifications: "notifications",
+    maintenance: "maintenance", accounts: "features", rooms: "rooms", chat: "chat", voice: "voice",
+    video: "video", screenShare: "screenShare", profile: "limits", billing: "pricing"
+  };
+  const BUSINESS_GATES = {
+    plans: ["business.subscriptions", "پلن‌ها"],
+    entitlements: ["business.subscriptions", "دسترسی‌های پلن"],
+    subscriptions: ["business.subscriptions", "اشتراک‌ها"],
+    coupons: ["business.coupons", "کدهای تخفیف"],
+    finance: ["business.analytics", "داشبورد مالی"],
+    pricing: ["business.subscriptions", "قیمت‌گذاری"],
+    premium: ["business.premiumPlans", "قابلیت‌های پریمیوم"],
+    payments: ["business.payments", "پرداخت‌ها"],
+    website: ["business.websiteBuilder", "سازندهٔ سایت"],
+    pages: ["business.websiteBuilder", "صفحه‌ساز"],
+    automation: ["business.automation", "خودکارسازی"]
+  };
+
+  function applyBusinessGate(pageId, section) {
+    const gate = BUSINESS_GATES[pageId];
+    if (!gate) return;
+    const draft = ctx.getDraft();
+    const rule = draft?.featureRules?.[FLAG_BY_ID.get(gate[0])?.path] || null;
+    const sched = scheduleState(rule);
+    const on = getPath(draft, FLAG_BY_ID.get(gate[0])?.path) !== false && !rule?.emergency && sched !== "off" && sched !== "waiting" && sched !== "invalid";
+    if (on) return;
+    const notice = el("article", { class: "ocard fc-gate" });
+    notice.append(el("b", { text: `${gate[1]} در سایت عمومی خاموش است` }));
+    notice.append(el("p", { class: "ohint", text: "این صفحه برای مدیریت مالک باز است، اما قابلیت مربوط به آن برای کاربران اعمال نمی‌شود. برای روشن‌کردن، از مرکز قابلیت‌ها استفاده کن." }));
+    notice.append(miniBtn("رفتن به مرکز قابلیت‌ها", () => ctx.showView("features")));
+    section.prepend(notice);
+  }
+
+  renderers.features = (section) => {
+    section.replaceChildren();
+    const paint = () => {
+      const { center, states } = fcStates();
+      const ui = center.ui || {};
+      const q = String(ui.q || "").toLowerCase();
+      section.replaceChildren();
+      const root = el("div", { class: "fc-root", "data-fc-root": "1" });
+
+      const summaryCard = card("مرکز قابلیت‌ها", "همهٔ کنترل‌ها واقعی‌اند: تغییر سراسری، خاموشی اضطراری، زمان‌بندی، دامنهٔ نقش/کاربر/پلن/اتاق، وابستگی‌ها، تاریخچه و بازگردانی. اعمال در همین مرورگر فوری است و برای همهٔ بازدیدکنندگان پس از انتشار.");
+      const counts = fcCounts(states);
+      const grid = el("div", { class: "stat-grid" });
+      for (const [id, label] of [["healthy", "سالم"], ["partial", "محدود"], ["disabled", "خاموش"], ["emergency", "اضطراری"], ["scheduled", "زمان‌بندی"], ["dependency", "وابستگی"], ["future", "آینده"]]) {
+        const a = el("article", { class: "ostat" });
+        a.append(el("span", { class: "ostat-lbl", text: label }), el("strong", { text: String(counts[id] || 0) }), el("small", { text: `${FLAGS.length} قابلیت` }));
+        grid.append(a);
+      }
+      summaryCard.append(grid);
+
+      const toolbar = el("div", { class: "ow-toolbar" });
+      const search = el("input", { type: "search", class: "ow-input", placeholder: "جستجوی قابلیت، شناسه یا توضیح…" });
+      search.value = ui.q || "";
+      search.addEventListener("input", () => {
+        const c = readFeatureCenter();
+        c.ui = { ...c.ui, q: search.value };
+        writeFeatureCenter(c);
+        paint();
+        const again = section.querySelector(".fc-root .ow-toolbar input[type=search]");
+        if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+      });
+      toolbar.append(search);
+      summaryCard.append(toolbar);
+
+      const groupChips = el("div", { class: "ow-chips" });
+      const mkChip = (id, label) => {
+        const chip = el("button", { type: "button", class: `ow-chip${(ui.group || "all") === id ? " active" : ""}`, text: label });
+        chip.addEventListener("click", () => {
+          const c = readFeatureCenter();
+          c.ui = { ...c.ui, group: id };
+          writeFeatureCenter(c);
+          paint();
+        });
+        return chip;
+      };
+      groupChips.append(mkChip("all", "همهٔ گروه‌ها"));
+      for (const g of FLAG_GROUPS) groupChips.append(mkChip(g.id, g.label));
+      summaryCard.append(groupChips);
+
+      const statusChips = el("div", { class: "ow-chips" });
+      for (const [id, label] of FC_STATUS_OPTIONS) {
+        const chip = el("button", { type: "button", class: `ow-chip${(ui.status || "all") === id ? " active" : ""}`, text: label });
+        chip.addEventListener("click", () => {
+          const c = readFeatureCenter();
+          c.ui = { ...c.ui, status: id };
+          writeFeatureCenter(c);
+          paint();
+        });
+        statusChips.append(chip);
+      }
+      const favChip = el("button", { type: "button", class: `ow-chip${ui.favOnly ? " active" : ""}`, text: "فقط علاقه‌مندی‌ها" });
+      favChip.addEventListener("click", () => {
+        const c = readFeatureCenter();
+        c.ui = { ...c.ui, favOnly: !c.ui.favOnly };
+        writeFeatureCenter(c);
+        paint();
+      });
+      statusChips.append(favChip);
+      summaryCard.append(statusChips);
+
+      const filtered = FLAGS.filter((flag) => {
+        if (ui.group && ui.group !== "all" && flag.group !== ui.group) return false;
+        if (ui.favOnly && !center.favorites.includes(flag.id)) return false;
+        if (ui.status && ui.status !== "all" && flagHealth(flag, states[flag.id]).id !== ui.status) return false;
+        if (q && !`${flag.label} ${flag.id} ${flag.desc} ${flag.path}`.toLowerCase().includes(q)) return false;
+        return true;
+      }).sort((a, b) => (center.pinned.includes(b.id) ? 1 : 0) - (center.pinned.includes(a.id) ? 1 : 0));
+
+      const bulk = el("div", { class: "ow-toolbar fc-bulk" });
+      const bulkDo = (label, value, danger) => {
+        const b = el("button", { class: `btn btn-ghost btn-sm${danger ? " ow-danger" : ""}`, type: "button", text: label });
+        b.addEventListener("click", () => {
+          if (!filtered.length) return toast("قابلیتی با این فیلتر نیست.", "error");
+          if (!confirm(`${filtered.length} قابلیت انتخاب‌شده ${value ? "روشن" : "خاموش"} شوند؟`)) return;
+          for (const flag of filtered) {
+            if (flag.future) continue;
+            if (value) {
+              const missing = missingDependencies(flag.id, fcStates().states).filter((d) => !FLAG_BY_ID.get(d)?.future);
+              for (const dep of missing) fcEnableChain(dep);
+            }
+            if (getPath(ctx.getDraft(), flag.path) !== value) fcSetGlobal(flag, value, { scope: "bulk", reason: "اقدام گروهی" });
+          }
+          paint(); refreshDashboard(); refreshAnalytics();
+          toast("اقدام گروهی اعمال شد.", "success");
+        });
+        return b;
+      };
+      bulk.append(bulkDo("روشن‌کردن فیلترشده", true), bulkDo("خاموش‌کردن فیلترشده", false));
+      const emergencyAll = el("button", { class: "btn btn-ghost btn-sm ow-danger", type: "button", text: "خاموشی اضطراری فیلترشده" });
+      emergencyAll.addEventListener("click", () => {
+        if (!filtered.length) return toast("قابلیتی با این فیلتر نیست.", "error");
+        if (!confirm(`خاموشی اضطراری روی ${filtered.length} قابلیت اعمال شود؟ این کنترل بر همهٔ تنظیمات دیگر مقدم است.`)) return;
+        for (const flag of filtered) {
+          if (flag.future) continue;
+          const cur = fcRuleOf(flag);
+          if (!cur.emergency) fcSaveRule(flag, { ...cur, emergency: true }, "خاموشی اضطراری گروهی");
+        }
+        paint(); refreshDashboard(); refreshAnalytics();
+        toast("خاموشی اضطراری گروهی اعمال شد.", "success");
+      });
+      const clearRules = el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "پاک‌کردن قواعد فیلترشده" });
+      clearRules.addEventListener("click", () => {
+        if (!filtered.length) return toast("قابلیتی با این فیلتر نیست.", "error");
+        if (!confirm("همهٔ زمان‌بندی‌ها و خاموشی‌های اضطراری انتخاب‌شده پاک شوند؟")) return;
+        for (const flag of filtered) {
+          if (Object.keys(fcRuleOf(flag)).length) fcSaveRule(flag, null, "پاک‌کردن قواعد");
+        }
+        paint(); refreshDashboard(); refreshAnalytics();
+        toast("قواعد فیلترشده پاک شدند.", "success");
+      });
+      bulk.append(emergencyAll, clearRules);
+
+      const exportBtn = miniBtn("خروجی JSON", () => fcDownloadExport());
+      const importBtn = miniBtn("ورود JSON", () => fileIn.click());
+      const fileIn = el("input", { type: "file", accept: "application/json", class: "hidden" });
+      fileIn.addEventListener("change", () => { fcImportFile(fileIn.files?.[0], paint); fileIn.value = ""; });
+      bulk.append(exportBtn, importBtn, fileIn);
+      summaryCard.append(bulk);
+      root.append(summaryCard);
+
+      const recentCard = card("آخرین تغییرات قابلیت‌ها", "تاریخچهٔ داخلی مرکز قابلیت‌ها با دامنه، دلیل و منبع.");
+      const recentList = el("div", { class: "fc-history-list" });
+      const recent = (center.history || []).slice(0, 6);
+      if (!recent.length) recentList.append(el("p", { class: "log-empty", text: "هنوز تغییری ثبت نشده." }));
+      for (const h of recent) {
+        const row = el("div", { class: "fc-history-row" });
+        row.append(el("time", { text: new Date(h.at).toLocaleString("fa-IR") }), el("b", { text: fcLabel(h.id) }), el("span", { text: h.action }), el("span", { text: h.scope }));
+        recentList.append(row);
+      }
+      recentCard.append(recentList);
+      root.append(recentCard);
+
+      for (const group of FLAG_GROUPS) {
+        const items = filtered.filter((f) => f.group === group.id);
+        if (!items.length) continue;
+        const groupCard = card(`${group.icon} ${group.label}`, `${items.length} قابلیت در این گروه`);
+        const list = el("div", { class: "fc-list" });
+        for (const flag of items) list.append(fcFlagCard(flag, states, center, paint));
+        groupCard.append(list);
+        root.append(groupCard);
+      }
+      if (!filtered.length) root.append(card("نتیجه‌ای نیست", "فیلترها را تغییر بده یا جستجو را پاک کن."));
+
+      root.append(fcSnapshotsCard(paint));
+      root.append(fcAnalyticsCard());
+      section.append(root);
+    };
+    paint();
+  };
+
+  const CC_CATEGORY_ORDER = ["branding", "theme", "site", "seo", "notifications", "maintenance", "accounts", "rooms", "chat", "voice", "video", "screenShare", "profile", "billing"];
+
+  function ccField(item, refresh) {
+    const draft = ctx.getDraft();
+    const value = getPath(draft, item.id);
+    const center = readFeatureCenter();
+    const isFav = center.configFavorites.includes(item.id);
+    const isPinned = center.configPinned.includes(item.id);
+    const row = el("div", { class: `cc-field${isPinned ? " is-pinned" : ""}` });
+    const head = el("div", { class: "cc-field-head" });
+    head.append(el("b", { text: item.name }), el("code", { text: item.id }));
+    if (isPinned) head.append(tag("سنجاق", "ok"));
+    const star = miniBtn(isFav ? "★" : "☆", () => {
+      const c = readFeatureCenter();
+      const list = new Set(c.configFavorites);
+      if (list.has(item.id)) list.delete(item.id); else list.add(item.id);
+      c.configFavorites = [...list];
+      writeFeatureCenter(c);
+      refresh();
+    });
+    star.classList.add("fc-star");
+    const pin = miniBtn(isPinned ? "برداشتن سنجاق" : "سنجاق", () => {
+      const c = readFeatureCenter();
+      const list = new Set(c.configPinned);
+      if (list.has(item.id)) list.delete(item.id); else list.add(item.id);
+      c.configPinned = [...list];
+      writeFeatureCenter(c);
+      refresh();
+    });
+    head.append(star, pin);
+    row.append(head);
+
+    const control = el("div", { class: "cc-control" });
+    if (item.type === "boolean") {
+      const line = el("label", { class: "switch-line" });
+      const cb = el("input", { type: "checkbox" });
+      cb.checked = value !== false;
+      cb.dataset.cfg = item.id;
+      line.append(cb, el("span", { text: cb.checked ? "روشن" : "خاموش" }));
+      cb.addEventListener("change", () => { line.querySelector("span").textContent = cb.checked ? "روشن" : "خاموش"; });
+      control.append(line);
+    } else if (item.type === "enum") {
+      const sel = selectInput((item.validation.enum || []).map((v) => ({ value: v, label: v })), String(value ?? ""));
+      sel.dataset.cfg = item.id;
+      control.append(sel);
+    } else if (item.type === "number") {
+      const input = numberInput(value, { min: item.validation.min, max: item.validation.max, step: item.validation.step || 1 });
+      input.dataset.cfg = item.id;
+      control.append(input);
+    } else if (item.type === "color") {
+      const input = el("input", { type: "color" });
+      input.value = String(value || "#7c5cff");
+      input.dataset.cfg = item.id;
+      control.append(input);
+    } else {
+      const input = el("input", { type: item.type === "url" ? "url" : "text", maxlength: item.validation.maxLength || "" });
+      input.value = String(value ?? "");
+      input.dataset.cfg = item.id;
+      if (item.type === "url") input.dir = "ltr";
+      control.append(input);
+    }
+    row.append(control);
+    if (item.description) row.append(el("p", { class: "ohint", text: item.description }));
+    const last = lastChangeFor(item.id);
+    if (last) row.append(el("span", { class: "cc-last", text: `آخرین تغییر: ${new Date(last.at).toLocaleString("fa-IR")} · ${last.before ?? "—"} ← ${last.after ?? "—"}` }));
+    if (item.defaultValue !== null && item.defaultValue !== undefined && String(item.defaultValue) !== String(value)) {
+      row.append(miniBtn("بازگردانی به پیش‌فرض", () => {
+        ctx.setCfg(item.id, item.defaultValue);
+        logAudit({ kind: "config", action: "بازگردانی تنظیم به پیش‌فرض", target: item.id, before: value, after: item.defaultValue, source: "configcenter" });
+        refresh(); refreshDashboard();
+      }));
+    }
+    return row;
+  }
+
+  renderers.configcenter = (section) => {
+    section.replaceChildren();
+    const paint = () => {
+      const center = readFeatureCenter();
+      const ui = center.ui || {};
+      const q = String(ui.cq || "").toLowerCase();
+      const category = ui.cat || "all";
+      section.replaceChildren();
+      const root = el("div", { class: "cc-root", "data-cc-root": "1" });
+      const top = card("مرکز پیکربندی سیستم", "همهٔ تنظیمات ثبت‌شده در یک صفحه: جستجو، فیلتر دسته، سنجاق و علاقه‌مندی، ویرایش گروهی بولین‌ها، و پیوند به صفحهٔ مرتبط. تغییرات در پیش‌نویس و اجرای زندهٔ همین مرورگر ذخیره می‌شوند.");
+      const stats = el("div", { class: "stat-grid" });
+      const onCount = CONFIG_REGISTRY.filter((i) => i.type === "boolean" && getPath(ctx.getDraft(), i.id) !== false).length;
+      const boolCount = CONFIG_REGISTRY.filter((i) => i.type === "boolean").length;
+      const a1 = el("article", { class: "ostat" });
+      a1.append(el("span", { class: "ostat-lbl", text: "تنظیمات ثبت‌شده" }), el("strong", { text: String(CONFIG_REGISTRY.length) }));
+      const a2 = el("article", { class: "ostat" });
+      a2.append(el("span", { class: "ostat-lbl", text: "کلیدهای بولین روشن" }), el("strong", { text: `${onCount}/${boolCount}` }));
+      const a3 = el("article", { class: "ostat" });
+      a3.append(el("span", { class: "ostat-lbl", text: "دسته‌ها" }), el("strong", { text: String(CC_CATEGORY_ORDER.length) }));
+      stats.append(a1, a2, a3);
+      top.append(stats);
+
+      const toolbar = el("div", { class: "ow-toolbar" });
+      const search = el("input", { type: "search", class: "ow-input", placeholder: "جستجو در نام، مسیر یا توضیح تنظیم…" });
+      search.value = ui.cq || "";
+      search.addEventListener("input", () => {
+        const c = readFeatureCenter();
+        c.ui = { ...c.ui, cq: search.value };
+        writeFeatureCenter(c);
+        paint();
+        const again = section.querySelector(".cc-root .ow-toolbar input[type=search]");
+        if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+      });
+      const favOnly = el("button", { type: "button", class: `ow-chip${ui.cfav ? " active" : ""}`, text: "فقط علاقه‌مندی‌ها" });
+      favOnly.addEventListener("click", () => {
+        const c = readFeatureCenter();
+        c.ui = { ...c.ui, cfav: !c.ui.cfav };
+        writeFeatureCenter(c);
+        paint();
+      });
+      toolbar.append(search, favOnly);
+      top.append(toolbar);
+
+      const chips = el("div", { class: "ow-chips" });
+      const mk = (id, label) => {
+        const chip = el("button", { type: "button", class: `ow-chip${category === id ? " active" : ""}`, text: label });
+        chip.addEventListener("click", () => {
+          const c = readFeatureCenter();
+          c.ui = { ...c.ui, cat: id };
+          writeFeatureCenter(c);
+          paint();
+        });
+        return chip;
+      };
+      chips.append(mk("all", "همه"));
+      for (const cat of CC_CATEGORY_ORDER) if (CONFIG_REGISTRY.some((i) => i.category === cat)) chips.append(mk(cat, CONFIG_CATEGORIES[cat] || cat));
+      top.append(chips);
+      root.append(top);
+
+      const list = CONFIG_REGISTRY.filter((item) => {
+        if (category !== "all" && item.category !== category) return false;
+        if (ui.cfav && !center.configFavorites.includes(item.id)) return false;
+        if (q && !`${item.name} ${item.id} ${item.description} ${item.category}`.toLowerCase().includes(q)) return false;
+        return true;
+      });
+      const pinned = list.filter((i) => center.configPinned.includes(i.id));
+      const rest = list.filter((i) => !center.configPinned.includes(i.id));
+
+      if (pinned.length) {
+        const pc = card("سنجاق‌شده‌ها", "دسترسی سریع به تنظیمات پرکاربرد.");
+        const plist = el("div", { class: "cc-list" });
+        for (const item of pinned) plist.append(ccField(item, paint));
+        pc.append(plist);
+        root.append(pc);
+      }
+
+      const activeCats = CC_CATEGORY_ORDER.filter((cat) => rest.some((i) => i.category === cat));
+      for (const cat of activeCats) {
+        const items = rest.filter((i) => i.category === cat);
+        const catCard = card(CONFIG_CATEGORIES[cat] || cat, `${items.length} تنظیم`);
+        const boolItems = items.filter((i) => i.type === "boolean");
+        if (boolItems.length) {
+          const bulk = el("div", { class: "ow-toolbar" });
+          const setAll = (value) => {
+            if (!confirm(`${boolItems.length} کلید بولین این دسته ${value ? "روشن" : "خاموش"} شوند؟`)) return;
+            for (const item of boolItems) ctx.setCfg(item.id, value);
+            logAudit({ kind: "config", action: value ? "روشن‌کردن گروهی تنظیمات" : "خاموش‌کردن گروهی تنظیمات", target: cat, source: "configcenter" });
+            paint(); refreshDashboard();
+            toast("اقدام گروهی اعمال شد.", "success");
+          };
+          bulk.append(miniBtn("روشن‌کردن بولین‌ها", () => setAll(true)), miniBtn("خاموش‌کردن بولین‌ها", () => setAll(false), true));
+          const link = FC_PAGE_LINKS[cat];
+          if (link) bulk.append(miniBtn("صفحهٔ مرتبط", () => ctx.showView(link)));
+          catCard.append(bulk);
+        }
+        const itemList = el("div", { class: "cc-list" });
+        for (const item of items) itemList.append(ccField(item, paint));
+        catCard.append(itemList);
+        root.append(catCard);
+      }
+      if (!list.length) root.append(card("نتیجه‌ای نیست", "فیلترها را تغییر بده یا جستجو را پاک کن."));
+      section.append(root);
+    };
+    paint();
+  };
+
   /* ----- analytics extra / feature center extra ----- */
   function enhanceAnalytics() {
     const view = document.querySelector('[data-view="analytics"]');
@@ -1978,7 +2806,7 @@ export function createCenter(ctx) {
 
   function enhanceFeatureCenter() {
     const view = document.querySelector('[data-view="features"]');
-    if (!view || view.querySelector("[data-ow-ext]")) return;
+    if (!view || view.querySelector("[data-ow-ext]") || view.querySelector("[data-fc-root]")) return;
     const ext = el("article", { class: "ocard", "data-ow-ext": "1" });
     ext.append(el("h2", { text: "کنترل پیشرفته" }));
     ext.append(el("p", { class: "ohint", text: "دامنهٔ نقش، کاربر، اتاق و پلن پس از اتصال بک‌اند در همین جدول فعال می‌شود. دکمه‌های زیر همین حالا واقعی‌اند." }));
@@ -2070,6 +2898,7 @@ export function createCenter(ctx) {
     const renderer = renderers[def.id];
     if (renderer) renderer(section);
     else section.replaceChildren(card(def.title, "این صفحه آماده است."));
+    applyBusinessGate(def.id, section);
     ensureExtras();
   }
 

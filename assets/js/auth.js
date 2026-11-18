@@ -1,7 +1,8 @@
 import { $, colorFor, initials, applyUIPrefs } from "./core.js";
 import { t } from "./i18n.js";
 import { avatarId, avatarSrc, isAvatarId, presetValue } from "./avatars.js";
-import { loadSiteConfig, applySiteConfig, accessOn } from "./site-config.js";
+import { loadSiteConfig, applySiteConfig, accessOn, featureOn } from "./site-config.js";
+import { buildFlagContext, recordFeatureUse } from "./feature-flags.js";
 import { logModeration } from "./modlog.js";
 import { apiFetch, apiGetToken, apiSetToken, apiClearToken } from "./api.js";
 
@@ -682,12 +683,17 @@ export async function initAuthPage() {
     if (sub) sub.textContent = t(m === "login" ? "auth.loginSub" : "auth.registerSub");
     if (submit) submit.textContent = t(m === "login" ? "auth.login" : "auth.register");
     if (errLine) errLine.textContent = "";
-    $("#forgotLink")?.classList.toggle("hidden", m !== "login");
+    $("#forgotLink")?.classList.toggle("hidden", m !== "login" || !featureOn("passwordReset", cfg));
     if (m === "register") drawCaptcha();
     $("#username")?.focus();
   }
 
   function showRecover(on) {
+    const resetOpen = featureOn("passwordReset", cfg);
+    if (on && !resetOpen) {
+      toast(document.documentElement.lang === "fa" ? "بازیابی رمز غیرفعال شده است." : "Password recovery is disabled.", "error");
+      return;
+    }
     recovering = on;
     $("#authForm")?.classList.toggle("hidden", on);
     $("#recoverForm")?.classList.toggle("hidden", !on);
@@ -724,7 +730,7 @@ export async function initAuthPage() {
 
     form.classList.toggle("is-closed", bothClosed);
     if (submit) submit.disabled = bothClosed;
-    $("#forgotLink")?.classList.toggle("hidden", bothClosed || !loginOpen || mode !== "login");
+    $("#forgotLink")?.classList.toggle("hidden", bothClosed || !loginOpen || mode !== "login" || !featureOn("passwordReset", cfg));
 
     if (bothClosed) return;
     if (mode === "register" && !regOpen) setMode("login");
@@ -762,6 +768,7 @@ export async function initAuthPage() {
     const fa = document.documentElement.lang === "fa";
     const err = (m) => { const el = $("#recError"); if (el) el.textContent = m; };
     if (!accessOn("login", cfg)) return err(fa ? "بازیابی رمز موقتاً بسته است." : "Password recovery is temporarily closed.");
+    if (!featureOn("passwordReset", cfg)) return err(fa ? "بازیابی رمز غیرفعال شده است." : "Password recovery is disabled.");
     const username = $("#recUsername").value.trim();
     const name = $("#recName").value;
     const password = $("#recPassword").value;
@@ -861,6 +868,7 @@ export async function initAuthPage() {
 
     const u = username.trim().toLowerCase();
     logModeration(mode === "register" ? "register" : "login", `${mode === "register" ? "ساخت حساب" : "ورود"} @${u}`);
+    recordFeatureUse(mode === "register" ? "account.registration" : "account.login", buildFlagContext({ user: currentUser() }));
     location.replace(next);
   });
 }

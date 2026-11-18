@@ -1,5 +1,6 @@
 import { normalizePlan, publicPricingPlans, effectivePrice, CURRENCIES, formatMoney } from "./billing-model.js";
 import { summarizeEntitlements, FREE_ENTITLEMENTS } from "./entitlements.js";
+import { isFlagOn } from "./feature-flags.js";
 
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
@@ -27,21 +28,22 @@ function primaryCycle(plan) {
 
 const CYCLE_LABEL = { monthly: "ماهانه", yearly: "سالانه", lifetime: "مادام‌العمر", custom: "دورهٔ سفارشی" };
 
-function priceNode(plan, currency, now) {
+function priceNode(plan, currency, now, showPromo = true) {
   const cycle = primaryCycle(plan);
   const price = effectivePrice(plan, cycle, now);
+  const shown = showPromo ? price : { ...price, original: price.amount, discountPercent: 0 };
   const wrap = el("div", { class: "price-val" });
   if (isFree(plan)) {
     wrap.append(el("strong", { text: "۰" }), el("span", { text: (CURRENCIES[currency] || CURRENCIES.IRT).fa }));
     return wrap;
   }
-  if (price.original > price.amount) wrap.append(el("s", { class: "price-old", text: formatMoney(price.original, currency) }));
+  if (shown.original > shown.amount) wrap.append(el("s", { class: "price-old", text: formatMoney(shown.original, currency) }));
   wrap.append(el("strong", { text: formatMoney(price.amount, currency) }), el("span", { text: CYCLE_LABEL[cycle] }));
-  if (price.discountPercent > 0) wrap.append(el("em", { class: "price-off", text: `٪${price.discountPercent.toLocaleString("fa-IR")} تخفیف` }));
+  if (shown.discountPercent > 0) wrap.append(el("em", { class: "price-off", text: `٪${shown.discountPercent.toLocaleString("fa-IR")} تخفیف` }));
   return wrap;
 }
 
-export function planCard(plan, { currency = "IRT", now = Date.now(), onSelect = null } = {}) {
+export function planCard(plan, { currency = "IRT", now = Date.now(), onSelect = null, promotions = true, payments = true } = {}) {
   const card = el("article", { class: `price-card plan-card-public${plan.popular ? " is-popular" : ""}` });
   if (plan.color) card.style.borderColor = `${plan.color}55`;
   const tag = el("span", { class: "price-tag" });
@@ -49,11 +51,11 @@ export function planCard(plan, { currency = "IRT", now = Date.now(), onSelect = 
   tag.append(plan.name);
   card.append(tag);
   const badges = el("div", { class: "plan-badges" });
-  if (plan.popular) badges.append(el("span", { class: "plan-badge hot", text: "پرفروش" }));
+  if (promotions && plan.popular) badges.append(el("span", { class: "plan-badge hot", text: "پرفروش" }));
   if (plan.recommended) badges.append(el("span", { class: "plan-badge rec", text: "پیشنهادی" }));
   if (plan.badge) badges.append(el("span", { class: "plan-badge custom", text: plan.badge }));
   if (badges.children.length) card.append(badges);
-  card.append(priceNode(plan, currency, now));
+  card.append(priceNode(plan, currency, now, promotions));
   if (plan.description) card.append(el("p", { class: "hint", text: plan.description }));
   if (Number(plan.trialDays) > 0) card.append(el("p", { class: "plan-trial", text: `${plan.trialDays.toLocaleString("fa-IR")} روز آزمایشی` }));
   const list = el("ul", { class: "price-list" });
@@ -66,7 +68,12 @@ export function planCard(plan, { currency = "IRT", now = Date.now(), onSelect = 
   card.append(list);
   const cta = el("button", { class: "btn btn-block", type: "button", text: isFree(plan) ? "شروع رایگان" : "انتخاب پلن" });
   cta.classList.add(isFree(plan) ? "btn-primary" : "btn-secondary");
+  if (!payments && !isFree(plan)) {
+    cta.disabled = true;
+    cta.textContent = "پرداخت موقتاً غیرفعال است";
+  }
   cta.addEventListener("click", () => {
+    if (cta.disabled) return;
     if (onSelect) return onSelect(plan);
     if (plan.ctaUrl) window.open(plan.ctaUrl, "_blank", "noopener");
     else document.getElementById("create")?.scrollIntoView({ behavior: "smooth" });
@@ -78,7 +85,11 @@ export function planCard(plan, { currency = "IRT", now = Date.now(), onSelect = 
 export function configPlans(config) {
   const raw = config?.billing?.plans;
   if (!Array.isArray(raw) || !raw.length) return [];
-  return publicPricingPlans(raw.map((p, i) => normalizePlan(p, i)));
+  if (!isFlagOn(config, "business.subscriptions")) return [];
+  const freeOn = isFlagOn(config, "business.freePlans");
+  const premiumOn = isFlagOn(config, "business.premiumPlans");
+  return publicPricingPlans(raw.map((p, i) => normalizePlan(p, i)))
+    .filter((plan) => (isFree(plan) ? freeOn : premiumOn));
 }
 
 export function renderPricingGrid(grid, plans, opts = {}) {
@@ -87,6 +98,7 @@ export function renderPricingGrid(grid, plans, opts = {}) {
   for (const plan of plans) frag.append(planCard(plan, opts));
   grid.replaceChildren(frag);
   grid.dataset.dynamic = "1";
+  grid.classList.remove("feature-off");
   grid.classList.toggle("pricing-single", plans.length === 1);
   return true;
 }
@@ -95,8 +107,17 @@ export function renderPricingSection(config, root = document) {
   const grid = root.querySelector(".pricing-grid");
   if (!grid) return 0;
   const plans = configPlans(config);
-  if (!plans.length) return 0;
+  if (!plans.length) {
+    if (!isFlagOn(config, "business.subscriptions") || !isFlagOn(config, "business.premiumPlans") || !isFlagOn(config, "business.freePlans")) {
+      grid.classList.add("feature-off");
+    }
+    return 0;
+  }
   const currency = config?.billing?.currency || "IRT";
-  renderPricingGrid(grid, plans, { currency });
+  renderPricingGrid(grid, plans, {
+    currency,
+    promotions: isFlagOn(config, "business.promotions"),
+    payments: isFlagOn(config, "business.payments")
+  });
   return plans.length;
 }

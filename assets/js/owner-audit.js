@@ -8,7 +8,7 @@ export function readAudit() {
   return Array.isArray(list) ? list.filter((x) => x && typeof x === "object") : [];
 }
 
-export function logAudit({ kind = "action", action = "", target = "", detail = "", before = null, after = null } = {}) {
+export function logAudit({ kind = "action", action = "", target = "", detail = "", before = null, after = null, scope = "global", reason = "", source = "owner", rollback = null, actor = "owner" } = {}) {
   const list = readAudit();
   list.unshift({
     at: Date.now(),
@@ -18,7 +18,11 @@ export function logAudit({ kind = "action", action = "", target = "", detail = "
     detail: String(detail || "").slice(0, 240),
     before,
     after,
-    actor: "owner"
+    scope: String(scope || "global").slice(0, 40),
+    reason: String(reason || "").slice(0, 200),
+    source: String(source || "owner").slice(0, 40),
+    rollback: rollback === null ? null : rollback,
+    actor: String(actor || "owner").slice(0, 40)
   });
   store.set(AUDIT_KEY, list.slice(0, MAX));
   return list[0];

@@ -1,8 +1,9 @@
 import { $, $$, toast, store, applyUIPrefs, safeReload, onceAsync } from "./core.js";
 import {
   SITE_CONFIG_DEFAULTS, normalizeSiteConfig, loadSiteConfig, getSiteConfig,
-  verifyOwnerSession, setOwnerSession, savePreviewDraft
+  verifyOwnerSession, setOwnerSession, savePreviewDraft, broadcastLiveConfig
 } from "./site-config.js";
+import { normalizeRule, normalizeFeatureRules } from "./feature-flags.js";
 import { readModLog, logModeration, clearModLog } from "./modlog.js";
 import { apiFetch, getApiBase } from "./api.js";
 import { logAudit } from "./owner-audit.js";
@@ -195,6 +196,7 @@ function loadDraft() {
 function saveDraft() {
   draft = normalizeSiteConfig(draft);
   store.set(DRAFT_KEY, draft);
+  broadcastLiveConfig(draft);
   markDirty();
 }
 function scheduleSave() {
@@ -831,6 +833,28 @@ function setCfg(path, value) {
   saveDraft();
   renderInputs();
 }
+function setFeatureRule(flagPath, rule) {
+  if (!draft) return;
+  const rules = { ...(draft.featureRules || {}) };
+  const clean = normalizeRule(rule);
+  if (clean) rules[flagPath] = clean;
+  else delete rules[flagPath];
+  draft.featureRules = rules;
+  saveDraft();
+  renderInputs();
+}
+function applyFeatureSnapshot(payload = {}) {
+  if (!draft) return;
+  for (const [key, value] of Object.entries(payload.features || {})) {
+    if (draft.features && Object.prototype.hasOwnProperty.call(draft.features, key)) draft.features[key] = value !== false;
+  }
+  for (const [key, value] of Object.entries(payload.access || {})) {
+    if (draft.access && Object.prototype.hasOwnProperty.call(draft.access, key)) draft.access[key] = value !== false;
+  }
+  draft.featureRules = normalizeFeatureRules(payload.featureRules || {});
+  saveDraft();
+  renderInputs();
+}
 function lockConsole() {
   if (!confirm("کنسول قفل شود؟ برای ورود دوباره رمز مالک لازم است.")) return;
   setOwnerSession(false);
@@ -845,6 +869,8 @@ const center = createCenter({
   getPublished: () => published,
   isDirty,
   setCfg,
+  setFeatureRule,
+  applyFeatureSnapshot,
   renderInputs,
   toast,
   showView,

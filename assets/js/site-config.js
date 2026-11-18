@@ -1,9 +1,12 @@
 import { store } from "./core.js";
 import { renderPricingSection } from "./pricing.js";
+import { FLAGS, normalizeFeatureRules, scheduleState, isFlagOn } from "./feature-flags.js";
 
 const CONFIG_URL = new URL("../data/site-config.json", import.meta.url);
 const SESSION_KEY = "wt.ownerSession";
 const PREVIEW_KEY = "wt.ownerPreview";
+const LIVE_KEY = "wt.liveConfig";
+const LIVE_TTL = 86400000;
 
 export const SITE_CONFIG_DEFAULTS = {
   version: 1,
@@ -74,13 +77,21 @@ export const SITE_CONFIG_DEFAULTS = {
   billing: {
     currency: "IRT",
     plans: []
-  }
+  },
+  featureRules: {}
 };
+
+for (const flag of FLAGS) {
+  const [rootKey, leaf] = flag.path.split(".");
+  if (!SITE_CONFIG_DEFAULTS[rootKey]) continue;
+  if (!(leaf in SITE_CONFIG_DEFAULTS[rootKey])) SITE_CONFIG_DEFAULTS[rootKey][leaf] = true;
+}
 
 let current = clone(SITE_CONFIG_DEFAULTS);
 let loaded = false;
 let loading = null;
 let fromPreview = false;
+let fromLive = false;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -135,6 +146,13 @@ export function normalizeSiteConfig(raw) {
   if (!["IRT", "USD"].includes(merged.billing.currency)) merged.billing.currency = "IRT";
   if (!Array.isArray(merged.billing.plans)) merged.billing.plans = [];
   merged.billing.plans = merged.billing.plans.slice(0, 60);
+  merged.featureRules = normalizeFeatureRules(merged.featureRules);
+  for (const flag of FLAGS) {
+    const [rootKey, leaf] = flag.path.split(".");
+    if (merged[rootKey] && Object.prototype.hasOwnProperty.call(merged[rootKey], leaf)) {
+      merged[rootKey][leaf] = merged[rootKey][leaf] !== false;
+    }
+  }
   const text = (v, max) => String(v ?? "").trim().slice(0, max);
   merged.site.metaTitleFa = text(merged.site.metaTitleFa, 70);
   merged.site.metaTitleEn = text(merged.site.metaTitleEn, 70);
@@ -156,6 +174,12 @@ export async function loadSiteConfig() {
       const res = await fetch(`${CONFIG_URL.href}?t=${Math.floor(Date.now() / 300000)}`, { cache: "no-store" });
       if (res.ok) cfg = normalizeSiteConfig(await res.json());
     } catch {}
+    const live = store.get(LIVE_KEY, null);
+    const publishedAt = Date.parse(cfg.updatedAt || "") || 0;
+    if (live?.at && live.config && Number(live.at) > publishedAt && Date.now() - Number(live.at) < LIVE_TTL) {
+      cfg = normalizeSiteConfig(live.config);
+      fromLive = true;
+    }
     const params = new URLSearchParams(location.search);
     if (params.get("preview") === "1" && ownerSessionValid()) {
       const draft = store.get(PREVIEW_KEY, null);
@@ -173,6 +197,49 @@ export async function loadSiteConfig() {
 
 export function isConfigPreview() {
   return fromPreview;
+}
+
+export function isConfigLive() {
+  return fromLive;
+}
+
+let liveChannel = null;
+let liveWired = false;
+
+export function broadcastLiveConfig(config) {
+  const payload = { at: Date.now(), config: normalizeSiteConfig(config) };
+  store.set(LIVE_KEY, payload);
+  try {
+    if (!liveChannel && "BroadcastChannel" in window) liveChannel = new BroadcastChannel("wt-config-live");
+    liveChannel?.postMessage(payload);
+  } catch {}
+  return payload;
+}
+
+export function clearLiveConfig() {
+  try { localStorage.removeItem(LIVE_KEY); } catch {}
+}
+
+export function listenLiveConfig(callback) {
+  if (liveWired || typeof window === "undefined") return;
+  liveWired = true;
+  const apply = (payload) => {
+    if (!payload?.config) return;
+    current = normalizeSiteConfig(payload.config);
+    fromLive = true;
+    callback?.(current);
+    window.dispatchEvent(new Event("wt:config"));
+  };
+  try {
+    if ("BroadcastChannel" in window) {
+      liveChannel = liveChannel || new BroadcastChannel("wt-config-live");
+      liveChannel.addEventListener("message", (ev) => apply(ev.data));
+    }
+  } catch {}
+  window.addEventListener("storage", (ev) => {
+    if (ev.key !== LIVE_KEY || !ev.newValue) return;
+    try { apply(JSON.parse(ev.newValue)); } catch {}
+  });
 }
 
 const OWNER_SESSION_TTL = 12 * 3600 * 1000;
@@ -221,10 +288,22 @@ export function savePreviewDraft(draft) {
 }
 
 export function featureOn(name, cfg = current) {
+  const rule = cfg?.featureRules?.[`features.${name}`];
+  if (rule) {
+    if (rule.emergency) return false;
+    const sched = scheduleState(rule);
+    if (sched === "off" || sched === "waiting" || sched === "invalid") return false;
+  }
   return cfg?.features?.[name] !== false;
 }
 
 export function accessOn(name, cfg = current) {
+  const rule = cfg?.featureRules?.[`access.${name}`];
+  if (rule) {
+    if (rule.emergency) return false;
+    const sched = scheduleState(rule);
+    if (sched === "off" || sched === "waiting" || sched === "invalid") return false;
+  }
   return cfg?.access?.[name] !== false;
 }
 
@@ -340,17 +419,20 @@ export function applySiteConfig(cfg = current, { root = document } = {}) {
 
   const premiumCard = root.querySelector(".price-soon");
   if (premiumCard) {
+    const premiumAllowed = isFlagOn(cfg, "business.premiumPlans");
+    const paymentsAllowed = isFlagOn(cfg, "business.payments");
+    premiumCard.classList.toggle("feature-off", !premiumAllowed);
     const strong = premiumCard.querySelector(".price-val strong");
     const button = premiumCard.querySelector("button");
     const note = premiumCard.querySelector(".hint");
     if (strong) strong.textContent = fa ? cfg.plans.premiumPriceFa : cfg.plans.premiumPriceEn;
     if (note) note.textContent = fa ? cfg.plans.premiumNoteFa : cfg.plans.premiumNoteEn;
-    if (cfg.plans.premiumEnabled && cfg.plans.premiumUrl) {
+    if (cfg.plans.premiumEnabled && cfg.plans.premiumUrl && premiumAllowed) {
       premiumCard.classList.remove("price-soon");
       if (button) {
-        button.disabled = false;
-        button.textContent = fa ? "خرید پریمیوم" : "Get Premium";
-        button.onclick = () => window.open(cfg.plans.premiumUrl, "_blank", "noopener");
+        button.disabled = !paymentsAllowed;
+        button.textContent = paymentsAllowed ? (fa ? "خرید پریمیوم" : "Get Premium") : (fa ? "پرداخت غیرفعال" : "Payments disabled");
+        button.onclick = paymentsAllowed ? () => window.open(cfg.plans.premiumUrl, "_blank", "noopener") : null;
       }
     } else if (button) {
       button.disabled = true;

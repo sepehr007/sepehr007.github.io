@@ -139,7 +139,7 @@ export const PAGE_DEFS = [
   page("voice", null, "صدا", "♪", "experience", "صدای زنده", "کنترل صدای زندهٔ اتاق.", "dynamic", "voice صدا"),
   page("video", null, "ویدیو", "▣", "experience", "ویدیو", "فایل محلی، صف پخش و زیرنویس.", "dynamic", "video ویدیو"),
   page("screenShare", null, "اشتراک صفحه", "⧉", "experience", "اشتراک صفحه", "نمایش صفحه و واکنش‌های زنده.", "dynamic", "screen share اشتراک"),
-  page("features", null, "مرکز قابلیت‌ها", "◧", "experience", "مرکز قابلیت‌ها", "کنترل سراسری همهٔ قابلیت‌های موجود + خاموشی اضطراری.", "core", "feature center قابلیت"),
+  page("features", null, "مرکز قابلیت‌ها", "◧", "experience", "مرکز قابلیت‌ها", "کنترل سراسری همهٔ قابلیت‌ها با دامنه، زمان‌بندی، وابستگی، سلامت و تاریخچه.", "dynamic", "feature center قابلیت فلگ flag"),
   page("limits", null, "محدودیت‌ها", "⏱", "experience", "محدودیت‌ها", "ظرفیت اتاق و نرخ مجاز چت، آواتار و اکشن.", "core", "limits محدودیت"),
 
   page("plans", null, "پلن‌های اشتراک", "◇", "business", "سازندهٔ پلن", "ساخت، ویرایش، کپی، آرشیو و ترتیب پلن‌ها با قیمت‌گذاری کامل.", "dynamic", "plans subscription پلن اشتراک builder"),
@@ -160,6 +160,7 @@ export const PAGE_DEFS = [
   page("notifications", null, "اعلام‌ها", "🔔", "content", "اعلام‌ها", "نوار اطلاعیه و پیام‌های سراسری.", "dynamic", "notifications اعلام"),
 
   page("security", null, "امنیت", "⛨", "system", "امنیت مالک", "ورود، نشست و قفل کنسول.", "core", "security امنیت"),
+  page("configcenter", null, "مرکز پیکربندی", "⚙", "system", "مرکز پیکربندی", "جستجو، فیلتر، گروه‌بندی و ویرایش گروهی همهٔ تنظیمات سیستم در یک صفحه.", "dynamic", "config center پیکربندی تنظیمات configuration"),
   page("system", null, "سیستم", "⚙", "system", "سیستم", "وضعیت API، شبکه و محیط اجرا.", "core", "system سیستم"),
   page("automation", null, "خودکارسازی", "⚙", "system", "خودکارسازی", "پایهٔ قواعد خودکار و رویدادمحور.", "dynamic", "automation خودکار"),
   page("storage", null, "فضای ذخیره", "▤", "system", "فضای ذخیره", "پایهٔ سهمیه و فایل‌های ابری.", "dynamic", "storage ذخیره"),
