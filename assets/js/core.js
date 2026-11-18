@@ -471,22 +471,51 @@ export function wireInstallPrompt() {
 
 export function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
-  if (["localhost", "127.0.0.1"].includes(location.hostname)) return;
-  if (location.protocol !== "https:") return;
+  const local = ["localhost", "127.0.0.1"].includes(location.hostname);
+  if (!local && location.protocol !== "https:") return;
   window.addEventListener("load", async () => {
     try {
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
       reg.update().catch(() => {});
-      if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
-      const hadController = !!navigator.serviceWorker.controller;
-      let reloaded = false;
+      const ensureUpdateChip = (worker) => {
+        let chip = document.getElementById("updateChip");
+        if (!chip) {
+          chip = el("div", { class: "update-chip", id: "updateChip" });
+          const text = el("span", { class: "uc-text", text: t("update.ready") });
+          const apply = el("button", { class: "btn btn-primary btn-sm", type: "button", text: t("update.apply") });
+          const later = el("button", { class: "link-btn", type: "button", text: t("update.later") });
+          apply.addEventListener("click", () => {
+            try { sessionStorage.setItem("wt.swApply", "1"); } catch {}
+            chip.classList.add("hidden");
+            /* a newer install can replace the worker we first saw; target
+               whichever worker is waiting right now */
+            const activate = reg.waiting || worker;
+            try { activate?.postMessage({ type: "SKIP_WAITING" }); } catch {}
+            toast(t("update.applied"), "info", 4000);
+          });
+          later.addEventListener("click", () => chip.classList.add("hidden"));
+          chip.append(text, apply, later);
+          document.body.append(chip);
+        }
+        chip.classList.remove("hidden");
+      };
+      const offer = (worker) => {
+        if (!worker || !navigator.serviceWorker.controller) return;
+        ensureUpdateChip(worker);
+      };
+      if (reg.waiting) offer(reg.waiting);
+      reg.addEventListener("updatefound", () => {
+        const worker = reg.installing;
+        if (!worker) return;
+        worker.addEventListener("statechange", () => {
+          if (worker.state === "installed" && navigator.serviceWorker.controller) offer(reg.waiting || worker);
+        });
+      });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (!hadController || reloaded) return;
-        let seen = false;
-        try { seen = sessionStorage.getItem("wt.swReload") === "1"; } catch {}
-        if (seen) return;
-        reloaded = true;
-        try { sessionStorage.setItem("wt.swReload", "1"); } catch {}
+        let applied = false;
+        try { applied = sessionStorage.getItem("wt.swApply") === "1"; } catch {}
+        if (!applied) return;
+        try { sessionStorage.removeItem("wt.swApply"); } catch {}
         safeReload({ force: true });
       });
       document.addEventListener("visibilitychange", () => {
@@ -494,4 +523,44 @@ export function registerServiceWorker() {
       });
     } catch {}
   });
+}
+
+let netStatusWired = false;
+export function wireNetworkStatus() {
+  if (netStatusWired || typeof document === "undefined") return;
+  netStatusWired = true;
+  let bar = null;
+  const paint = (online) => {
+    if (online) {
+      if (bar) { bar.classList.add("leaving"); setTimeout(() => bar?.remove(), 260); bar = null; }
+      return;
+    }
+    if (!bar) {
+      bar = el("div", { class: "offline-bar", id: "offlineBar", role: "status", "aria-live": "polite" });
+      const icon = el("span", { class: "ob-icon" });
+      icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3l18 18M8.5 8.6A6 6 0 0 1 12 8c3 0 5.5 2 6.5 4M5 12a9 9 0 0 1 3-2.4M12 18h.01"/></svg>';
+      const text = el("span", { class: "ob-text", id: "offlineText" });
+      const retry = el("button", { class: "ob-retry", type: "button", text: t("offline.retry") });
+      retry.addEventListener("click", () => safeReload({ force: true }));
+      bar.append(icon, text, retry);
+      document.body.append(bar);
+    }
+    const text = document.getElementById("offlineText");
+    if (text) text.textContent = `${t("offline.title")} — ${t("offline.body")}`;
+  };
+  window.addEventListener("online", () => paint(true));
+  window.addEventListener("offline", () => paint(false));
+  document.addEventListener("langchange", () => { if (bar) paint(false); });
+  paint(navigator.onLine);
+}
+
+if (typeof document !== "undefined") wireNetworkStatus();
+
+/* Decorative animation stops while the tab is hidden (battery). */
+if (typeof document !== "undefined") {
+  const paintVisibility = () => {
+    document.documentElement.dataset.visibility = document.hidden ? "hidden" : "visible";
+  };
+  document.addEventListener("visibilitychange", paintVisibility);
+  paintVisibility();
 }

@@ -27,7 +27,7 @@ export function parseSubtitles(raw) {
 }
 
 export class Player {
-  constructor({ video, frame, onControl, onTime, onLoaded, onError, onLevels, onAudio, onText, canControl }) {
+  constructor({ video, frame, onControl, onTime, onLoaded, onError, onLevels, onAudio, onText, onBuffering, canControl }) {
     this.video = video;
     this.frame = frame;
     this.onControl = onControl;
@@ -37,6 +37,7 @@ export class Player {
     this.onLevels = onLevels;
     this.onAudio = onAudio;
     this.onText = onText;
+    this.onBuffering = onBuffering;
     this.canControl = canControl || (() => true);
 
     this.url = "";
@@ -58,7 +59,18 @@ export class Player {
       this.#syncNow();
       this.#emitTime();
     });
-    this.video.addEventListener("error", () => this.onError?.("media"));
+    this.video.addEventListener("error", () => {
+      const map = { 1: "aborted", 2: "network", 3: "decode", 4: "format" };
+      this.onError?.(map[this.video.error?.code] || "media");
+    });
+    const bufferingOn = () => this.onBuffering?.(true);
+    const bufferingOff = () => this.onBuffering?.(false);
+    this.video.addEventListener("waiting", bufferingOn);
+    this.video.addEventListener("stalled", bufferingOn);
+    this.video.addEventListener("playing", bufferingOff);
+    this.video.addEventListener("canplay", bufferingOff);
+    this.video.addEventListener("seeked", bufferingOff);
+    this.video.addEventListener("emptied", bufferingOff);
     this.video.addEventListener("play", () => { if (!this.applying) this.#request("play"); });
     this.video.addEventListener("pause", () => { if (!this.applying) this.#request("pause", { time: this.video.currentTime }); });
     this.video.addEventListener("ratechange", () => { if (!this.applying) this.#request("rate", { value: this.video.playbackRate, time: this.video.currentTime }); });
@@ -74,7 +86,12 @@ export class Player {
     this.video.audioTracks?.addEventListener?.("addtrack", () => this.#emitAudio());
     this.video.addEventListener("loadedmetadata", () => { this.#emitText(); this.#emitAudio(); });
 
-    this.timer = setInterval(() => this.#syncNow(true), 2500);
+    this.timer = setInterval(() => { if (!document.hidden) this.#syncNow(true); }, 2500);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      this.#emitTime();
+      this.#syncNow(false);
+    });
   }
 
   #request(action, payload = {}) {
@@ -116,19 +133,51 @@ export class Player {
     this.subsOffset = 0;
     this.lastCue = "";
     const isHls = /\.m3u8($|\?)/i.test(url);
-    if (isHls && window.Hls?.isSupported()) {
-      this.hls = new window.Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 30 });
-      this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => { this.#emitLevels(); this.#emitAudio(); });
-      this.hls.on(window.Hls.Events.LEVEL_SWITCHED, () => this.#emitLevels());
-      this.hls.on(window.Hls.Events.AUDIO_TRACKS_UPDATED, () => this.#emitAudio());
-      this.hls.on(window.Hls.Events.AUDIO_TRACK_SWITCHED, () => this.#emitAudio());
-      this.hls.loadSource(url);
-      this.hls.attachMedia(this.video);
-    } else {
+    if (isHls) {
+      if (window.Hls?.isSupported()) this.#startHls(url);
+      else this.#loadHlsEngine(url);
+      return;
+    }
+    this.onLevels?.(null);
+    this.onAudio?.(null);
+    this.video.src = url;
+  }
+
+  /* The HLS engine is only downloaded when a stream actually needs it. */
+  async #loadHlsEngine(url) {
+    if (!this.hlsLoader) {
+      this.hlsLoader = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "assets/js/hls.min.js";
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.append(script);
+      }).catch(() => null);
+    }
+    await this.hlsLoader;
+    if (this.url !== url) return;
+    if (!window.Hls?.isSupported()) {
       this.onLevels?.(null);
       this.onAudio?.(null);
-      this.video.src = url;
+      return this.onError?.("format");
     }
+    this.#startHls(url);
+  }
+
+  #startHls(url) {
+    this.hls = new window.Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 30 });
+    this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => { this.#emitLevels(); this.#emitAudio(); });
+    this.hls.on(window.Hls.Events.LEVEL_SWITCHED, () => this.#emitLevels());
+    this.hls.on(window.Hls.Events.AUDIO_TRACKS_UPDATED, () => this.#emitAudio());
+    this.hls.on(window.Hls.Events.AUDIO_TRACK_SWITCHED, () => this.#emitAudio());
+    this.hls.on(window.Hls.Events.ERROR, (_evt, data) => {
+      if (!data?.fatal) return;
+      if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) this.hls.startLoad();
+      else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) this.hls.recoverMediaError();
+      else this.onError?.("format");
+    });
+    this.hls.loadSource(url);
+    this.hls.attachMedia(this.video);
   }
 
   #emitLevels() {
@@ -376,13 +425,19 @@ export class Player {
   async toggleFullscreen() {
     const target = this.frame;
     try {
-      if (document.fullscreenElement) return await document.exitFullscreen();
-      if (target.requestFullscreen) return await target.requestFullscreen();
-      if (target.webkitRequestFullscreen) return target.webkitRequestFullscreen();
+      if (document.fullscreenElement) { await document.exitFullscreen(); return true; }
+      if (target.requestFullscreen) { await target.requestFullscreen(); return true; }
+      if (target.webkitRequestFullscreen) { target.webkitRequestFullscreen(); return true; }
       const video = this.video;
-      if (video?.webkitEnterFullscreen) return video.webkitEnterFullscreen();
-      target.classList.toggle("theater");
+      if (video?.webkitEnterFullscreen) { video.webkitEnterFullscreen(); return true; }
     } catch {}
+    if (!document.fullscreenElement) {
+      /* fullscreen failed (permissions, embedded webview, desktop headless):
+         fall back to the in-page theater layout and report failure */
+      target.classList.toggle("theater");
+      return false;
+    }
+    return true;
   }
   async togglePiP() {
     try {

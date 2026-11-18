@@ -17,6 +17,8 @@ html{
 body{
   -webkit-tap-highlight-color:transparent;
 }
+/* class-based display rules must never resurrect a [hidden] element */
+[hidden]{display:none!important}
 button,a,summary,label,[role="button"],input,select,textarea{
   touch-action:manipulation;
 }
@@ -229,6 +231,9 @@ html[dir="ltr"] .voice-dock,[dir="ltr"] .voice-dock{transform:translateX(-50%)}
 
 @media (any-pointer:coarse) and (max-width:640px){
   .icon-btn{width:40px;height:40px}
+  /* the room topbar rule in style.css narrows these to 32px; keep tap targets usable */
+  .page-room .topbar-right .icon-btn{width:40px;height:40px;border-radius:12px}
+  .page-room .topbar-right{gap:0}
   .stage-controls .ctl{height:40px;min-width:34px}
   .invite-btn{height:32px}
   .chat-fab{height:44px}
@@ -346,3 +351,80 @@ html[dir="ltr"] .voice-dock,[dir="ltr"] .voice-dock{transform:translateX(-50%)}
   .room-code-row{gap:4px}
   .room-meta h1{max-width:32vw}
 }
+
+/* ---------- Part 8: touch player extras ---------- */
+@media (pointer:coarse){#video{touch-action:none}}
+#video{transition:filter .12s linear}
+.video-frame.buffering::after{
+  content:"";position:absolute;inset:0;margin:auto;width:38px;height:38px;border-radius:50%;
+  border:3px solid rgba(255,255,255,.2);border-top-color:#fff;
+  animation:wtSpin .8s linear infinite;z-index:4;pointer-events:none;
+}
+@keyframes wtSpin{to{transform:rotate(360deg)}}
+.gesture-hud{
+  position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:8;
+  display:flex;align-items:center;gap:9px;padding:9px 14px;border-radius:14px;min-width:158px;
+  background:rgba(8,10,17,.84);border:1px solid rgba(255,255,255,.16);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  color:#fff;font-size:12px;font-weight:700;pointer-events:none;
+}
+.gesture-hud.hidden{display:none}
+.gh-icon svg{width:17px;height:17px;display:block}
+.gh-bar{flex:1;height:5px;border-radius:99px;background:rgba(255,255,255,.18);overflow:hidden}
+.gh-bar i{display:block;height:100%;width:0;background:var(--grad);border-radius:inherit;transition:width .08s linear}
+.gh-val{min-width:36px;text-align:end;font-variant-numeric:tabular-nums}
+.player-error{
+  position:absolute;inset:0;z-index:6;display:grid;place-items:center;padding:20px;
+  background:rgba(4,5,9,.84);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+}
+.player-error.hidden{display:none}
+.pe-box{
+  width:100%;max-width:430px;text-align:center;padding:20px 18px;border-radius:16px;
+  background:rgba(15,17,27,.96);border:1px solid var(--border-strong);box-shadow:0 24px 60px rgba(0,0,0,.6);
+}
+.pe-box h3{font-size:15px;margin-bottom:8px}
+.pe-box p{font-size:12.5px;line-height:1.9;color:var(--text-dim)}
+.pe-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px}
+#peCloseBtn{min-width:42px}
+html[data-theme="light"] .pe-box{background:#fff;border-color:rgba(15,23,42,.14)}
+html[data-theme="light"] .pe-box p{color:#475569}
+.cap-off{opacity:.45}
+.cap-off:hover{opacity:.62}
+.cap-limited{opacity:.75}
+
+/* ---------- Part 8: offline bar + safe update chip ---------- */
+@keyframes obIn{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+.offline-bar{
+  position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(var(--sheet-h,0px) + 62px + env(safe-area-inset-bottom));
+  z-index:94;display:flex;align-items:center;gap:10px;max-width:calc(100% - 24px);
+  padding:10px 12px;border-radius:14px;font-size:12px;line-height:1.7;color:#ffe9c4;
+  background:rgba(30,22,10,.95);border:1px solid rgba(245,178,62,.42);
+  box-shadow:0 18px 40px rgba(0,0,0,.5);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  transition:opacity .24s,transform .24s;
+}
+.offline-bar.leaving{opacity:0;transform:translate(-50%,8px)}
+.ob-icon svg{width:16px;height:16px;display:block;flex:none}
+.ob-text{min-width:0}
+.ob-retry{
+  flex:none;border:none;border-radius:9px;padding:7px 11px;min-height:34px;
+  background:rgba(245,178,62,.16);color:#ffd489;font:inherit;font-size:11.5px;font-weight:800;
+  cursor:pointer;touch-action:manipulation;
+}
+.update-chip{
+  position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 72px);transform:translateX(-50%);
+  z-index:94;display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;
+  max-width:calc(100% - 24px);padding:9px 13px;border-radius:15px;font-size:12px;
+  background:rgba(13,17,32,.97);border:1px solid rgba(var(--brand-rgb),.5);
+  box-shadow:0 18px 44px rgba(0,0,0,.55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  animation:obIn .22s ease;
+}
+.update-chip.hidden{display:none}
+.uc-text{font-weight:700}
+.update-chip .btn,.update-chip .link-btn{min-height:34px}
+html[data-theme="light"] .update-chip{background:#fff;color:#0f172a;border-color:rgba(61,107,255,.4)}
+
+/* hidden tab: no decorative animation work */
+html[data-visibility="hidden"] *,
+html[data-visibility="hidden"] *::before,
+html[data-visibility="hidden"] *::after{animation-play-state:paused!important}

@@ -47,12 +47,18 @@ export class Voice {
     await this.ctx.resume().catch(() => {});
     this.#attachAnalyser("self", stream);
     this.#startLoop();
+    this.visibility = () => {
+      if (document.hidden) { clearInterval(this.loop); this.loop = null; }
+      else if (this.joined && !this.loop) this.#startLoop();
+    };
+    document.addEventListener("visibilitychange", this.visibility);
     this.#syncVoicePeers();
     return true;
   }
 
   leave() {
     this.joined = false;
+    if (this.visibility) { document.removeEventListener("visibilitychange", this.visibility); this.visibility = null; }
     for (const [, call] of this.calls) { try { call.close(); } catch {} }
     this.calls.clear();
     for (const [, audio] of this.audios) { audio.srcObject = null; audio.remove(); }
@@ -191,6 +197,7 @@ export class Voice {
 
   #startLoop() {
     clearInterval(this.loop);
+    if (document.hidden) { this.loop = null; return; }
     this.loop = setInterval(() => {
       for (const [id, { analyser, data }] of this.analysers) {
         if (id === "self" && (this.muted || !this.stream)) { this.#reportSpeaking(id, false); continue; }

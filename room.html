@@ -79,6 +79,11 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
             <span data-i18n="menu.profile">پروفایل</span>
           </a>
+          <button class="top-menu-item" id="roomNotifBtn" type="button" role="menuitem">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8M10.3 21a2 2 0 0 0 3.4 0"/></svg>
+            <span data-i18n="room.notifMute">اعلان این اتاق</span>
+            <span class="menu-tag" id="roomNotifTag">—</span>
+          </button>
           <button class="top-menu-item danger" id="leaveBtn" type="button" role="menuitem">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 17l5-5-5-5M20 12H9M12 20H5V4h7"/></svg>
             <span data-i18n="menu.leave">خروج از اتاق</span>
@@ -95,6 +100,22 @@
         <div class="subtitle-layer" id="subtitleLayer"></div>
         <div class="media-loading hidden" id="mediaLoading" role="status" aria-live="polite">
           <div class="ml-box"><span class="ml-spin" aria-hidden="true"></span><span data-i18n="player.loading">در حال بارگذاری ویدیو…</span></div>
+        </div>
+        <div class="gesture-hud hidden" id="gestureHud" aria-hidden="true">
+          <span class="gh-icon" id="gestureIcon"></span>
+          <span class="gh-bar"><i id="gestureFill"></i></span>
+          <span class="gh-val" id="gestureVal">0%</span>
+        </div>
+        <div class="player-error hidden" id="playerError" role="alert">
+          <div class="pe-box">
+            <h3 data-i18n="player.errorTitle">این ویدیو پخش نشد</h3>
+            <p id="playerErrorBody" data-i18n="player.errorBody">مرورگر نتوانست فرمت یا کدک این فایل را بخواند…</p>
+            <div class="pe-actions">
+              <button class="btn btn-primary btn-sm" id="peFileBtn" type="button" data-i18n="player.errorFile">انتخاب فایل دیگر</button>
+              <button class="btn btn-secondary btn-sm" id="peSampleBtn" type="button" data-i18n="player.errorSample">امتحان با نمونه</button>
+              <button class="btn btn-ghost btn-sm" id="peCloseBtn" type="button" aria-label="Close">✕</button>
+            </div>
+          </div>
         </div>
 
         <button class="player-big-play hidden" id="bigPlayBtn" type="button" data-i18n-title="player.play" title="Play" aria-label="Play">
@@ -606,7 +627,6 @@
 <div class="toast-wrap" id="toasts" aria-live="polite"></div>
 <div class="ctx-menu hidden" id="ctxMenu"></div>
 
-<script defer src="assets/js/hls.min.js"></script>
 <script type="module" src="assets/js/room.js"></script>
 </body>
 </html>

@@ -173,6 +173,37 @@
         <p class="hint activity-empty hidden" id="activityEmpty" data-i18n="profile.activityEmpty">هنوز فعالیتی ثبت نشده — یک اتاق بساز تا اینجا جان بگیرد!</p>
       </section>
 
+      <section class="card profile-card" id="deviceCard">
+        <h2 data-i18n="profile.deviceTitle">دستگاه و اعلان‌ها</h2>
+        <p class="hint" data-i18n="profile.deviceNote">آنچه همین مرورگر واقعاً می‌تواند انجام دهد؛ هر چیزی که در دسترس نباشد، فقط همان دکمه خاموش می‌شود و بقیهٔ سایت سر جایش می‌ماند.</p>
+        <p class="device-summary"><span data-i18n="profile.deviceSummary">دستگاه شناسایی‌شده</span>: <strong id="deviceSummary">—</strong></p>
+        <details class="cap-details" id="capDetails">
+          <summary data-i18n="profile.capDetails">جزئیات سازگاری</summary>
+          <ul class="cap-list" id="capList"></ul>
+        </details>
+        <div class="notif-block">
+          <h3 data-i18n="profile.notifTitle">اعلان پیام‌ها</h3>
+          <p class="hint" data-i18n="profile.notifNote">اتاق‌ها بین خود مرورگرهاست و سرور اعلان نداریم؛ پس اعلان فقط وقتی این سایت در پس‌زمینه باز است می‌رسد.</p>
+          <p class="hint notif-expl hidden" id="notifExplain" data-i18n="profile.notifExplain">وقتی تب پنهان است، مرورگر می‌تواند پیام مهم را خبر بدهد. متن پیام فقط وقتی روشن باشد در اعلان می‌آید و هر زمان می‌توانی خاموشش کنی.</p>
+          <p class="form-msg" id="notifMsg" role="alert"></p>
+          <div class="notif-actions">
+            <button class="btn btn-secondary btn-sm" id="notifEnable" type="button" data-i18n="profile.notifEnable">اجازهٔ اعلان از مرورگر</button>
+            <button class="link-btn" id="notifTest" type="button" data-i18n="profile.notifTest" hidden>اعلان آزمایشی</button>
+          </div>
+          <div class="notif-prefs hidden" id="notifPrefs">
+            <label class="switch-row"><span data-i18n="profile.notifMentions">اشاره‌ها (@اسم من)</span><input type="checkbox" id="notifMentions"><span class="switch"></span></label>
+            <label class="switch-row"><span data-i18n="profile.notifChat">همهٔ پیام‌های اتاق</span><input type="checkbox" id="notifChat"><span class="switch"></span></label>
+            <label class="switch-row"><span data-i18n="profile.notifActivity">ورود و خروج اعضا</span><input type="checkbox" id="notifActivity"><span class="switch"></span></label>
+            <label class="switch-row"><span data-i18n="profile.notifPreview">نمایش متن پیام در اعلان</span><input type="checkbox" id="notifPreview"><span class="switch"></span></label>
+          </div>
+          <div class="notif-muted hidden" id="notifMutedWrap">
+            <h3 data-i18n="profile.notifMutedRooms">اتاق‌های بی‌صدا</h3>
+            <p class="hint hidden" id="notifMutedEmpty" data-i18n="profile.notifMutedEmpty">اتاقی بی‌صدا نیست.</p>
+            <ul class="muted-rooms" id="notifMutedRooms"></ul>
+          </div>
+        </div>
+      </section>
+
       <section class="card profile-card" id="appearanceCard">
         <h2 data-i18n="profile.appearance">ظاهر</h2>
         <div class="field">

@@ -1,4 +1,4 @@
-const CACHE = "wt-v92";
+const CACHE = "wt-v94";
 const SHELL = [
   "./",
   "./index.html",
@@ -6,6 +6,7 @@ const SHELL = [
   "./profile.html",
   "./room.html",
   "./owner.html",
+  "./offline.html",
   "./assets/css/design-system.css",
   "./assets/css/style.css",
   "./assets/css/landing-v8.css",
@@ -17,17 +18,6 @@ const SHELL = [
   "./assets/js/site-config.js",
   "./assets/js/feature-flags.js",
   "./assets/js/api.js",
-  "./assets/js/modlog.js",
-  "./assets/js/owner.js",
-  "./assets/js/owner-registry.js",
-  "./assets/js/owner-audit.js",
-  "./assets/js/owner-center.js",
-  "./assets/js/owner-god.js",
-  "./assets/js/entitlements.js",
-  "./assets/js/billing-model.js",
-  "./assets/js/payment-providers.js",
-  "./assets/js/charts.js",
-  "./assets/js/pricing.js",
   "./assets/js/core.js",
   "./assets/js/i18n.js",
   "./assets/js/db.js",
@@ -41,21 +31,10 @@ const SHELL = [
   "./assets/js/livefeed.js",
   "./assets/js/net.js",
   "./assets/js/player.js",
-  "./assets/js/hls.min.js",
   "./assets/js/voice.js",
   "./assets/js/transcode.js",
-  "./assets/avatars/girl-1.webp",
-  "./assets/avatars/girl-2.webp",
-  "./assets/avatars/girl-3.webp",
-  "./assets/avatars/girl-4.webp",
-  "./assets/avatars/girl-5.webp",
-  "./assets/avatars/girl-6.webp",
-  "./assets/avatars/boy-1.webp",
-  "./assets/avatars/boy-2.webp",
-  "./assets/avatars/boy-3.webp",
-  "./assets/avatars/boy-4.webp",
-  "./assets/avatars/boy-5.webp",
-  "./assets/avatars/boy-6.webp",
+  "./assets/js/capabilities.js",
+  "./assets/js/notifications.js",
   "./assets/icon.svg",
   "./assets/img/icon-192.png",
   "./assets/img/icon-512.png",
@@ -73,7 +52,6 @@ self.addEventListener("install", (event) => {
         if (res.ok) await cache.put(url, res);
       } catch {}
     }));
-    await self.skipWaiting();
   })());
 });
 
@@ -87,6 +65,32 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const data = event.notification.data || {};
+  const target = data.url || "./";
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const sameRoom = data.roomId
+      ? windows.find((c) => {
+          try { return new URL(c.url).searchParams.get("room") === data.roomId; } catch { return false; }
+        })
+      : null;
+    const anyRoom = windows.find((c) => {
+      try { return new URL(c.url).pathname.endsWith("/room.html") || new URL(c.url).pathname.endsWith("room.html"); } catch { return false; }
+    });
+    const client = sameRoom || anyRoom;
+    if (client) {
+      try { await client.focus(); } catch {}
+      if (!sameRoom && "navigate" in client) {
+        try { await client.navigate(target); } catch {}
+      }
+      return;
+    }
+    try { await self.clients.openWindow(target); } catch {}
+  })());
 });
 
 self.addEventListener("fetch", (event) => {
@@ -111,15 +115,31 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (req.mode === "navigate" || req.headers.get("accept")?.includes("text/html")) {
-    event.respondWith(
-      fetch(req, { cache: "no-cache" })
-        .then((res) => {
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(req, { cache: "no-cache" });
+        /* URLs carrying query strings (room codes, reset tokens) are never
+           written to the cache — a shared device must not leak them. */
+        if (res.ok && !url.search) {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
-          return res;
-        })
-        .catch(() => caches.match(req).then((r) => r || caches.match("./index.html")))
-    );
+        }
+        return res;
+      } catch {
+        if (!url.search) {
+          const cached = await caches.match(req);
+          if (cached) return cached;
+        }
+        const shell = await caches.match(url.pathname.replace(/^\//, "./"));
+        if (shell && !url.search) return shell;
+        const offline = await caches.match("./offline.html");
+        if (offline) return offline;
+        return new Response(
+          "<!doctype html><meta charset=utf-8><title>Offline</title><p style=\"font-family:system-ui;padding:32px\">You are offline.</p>",
+          { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } }
+        );
+      }
+    })());
     return;
   }
 

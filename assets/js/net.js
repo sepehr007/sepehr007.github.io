@@ -223,8 +223,7 @@ export class Net {
   }
 
   async start() {
-    if (this.started) return;
-    this.started = true;
+    if (this.started) return;    this.started = true;
     this.emit("status", "connecting");
     this.selfId = (this.isHost ? "h" : "g") + uid().slice(0, 7);
     this.topic = await topicFor(this.code);
@@ -236,6 +235,17 @@ export class Net {
       if (this.privacy === "password" && this.password) this.pwdHash = await sha256hex(this.password);
       this.#hostOnline();
     } else this.#guestJoin();
+  }
+
+  /* Called when the OS says the network is back. EventSource usually heals
+     itself; this only rebuilds the transport when it was never created. */
+  retry() {
+    if (this.destroyed || !this.signal || this.signal.closed) return;
+    const es = this.signal.es;
+    if (es && (es.readyState === 0 || es.readyState === 1)) return;
+    if (this.signal.reconnectTimer) return;
+    this.signal.ready = false;
+    this.signal.start().catch(() => {});
   }
 
   /* ================= host ================= */

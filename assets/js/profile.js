@@ -13,6 +13,11 @@ import { dbGetByIndex } from "./db.js";
 import { subscriptionStatus } from "./plans.js";
 import { loadSiteConfig, applySiteConfig, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
 import { resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, recordFeatureUse, readFeatureCenter } from "./feature-flags.js";
+import { capabilityRows, deviceSummary } from "./capabilities.js";
+import {
+  notifPrefs, saveNotifPrefs, notifPermission, requestNotifPermission,
+  setRoomNotif, mutedRooms, testNotification
+} from "./notifications.js";
 
 applyUIPrefs();
 initI18n();
@@ -87,6 +92,7 @@ async function boot(me) {
   renderFriends();
   renderActivity();
   renderPlan();
+  renderDeviceCard();
   wireAccount();
   wirePassword();
   wireDetails();
@@ -94,6 +100,7 @@ async function boot(me) {
   wireAvatar();
   wireAppearance();
   wireMisc();
+  wireNotifications();
   document.addEventListener("langchange", () => {
     applySiteConfig(siteCfg);
     document.title = `${t("profile.title")} — هم‌تماشا`;
@@ -102,6 +109,8 @@ async function boot(me) {
     renderFriends();
     renderActivity();
     renderPlan();
+    renderDeviceCard();
+    refreshNotifUI();
     paintMemberSince();
   });
 }
@@ -564,5 +573,125 @@ function wireMisc() {
   $("#logoutBtn").addEventListener("click", () => {
     logout();
     location.replace("./");
+  });
+}
+
+function renderDeviceCard() {
+  const lang = document.documentElement.lang === "fa" ? "fa" : "en";
+  const sum = $("#deviceSummary");
+  if (sum) sum.textContent = deviceSummary(lang);
+  const list = $("#capList");
+  if (!list) return;
+  list.innerHTML = "";
+  for (const row of capabilityRows(lang)) {
+    const pill = t(row.status === "ok" ? "profile.capOk" : row.status === "limited" ? "profile.capLimited" : "profile.capNo");
+    list.append(el("li", { class: `cap-row cap-${row.status}` }, [
+      el("div", { class: "cap-head" }, [
+        el("span", { class: "cap-label", text: row.label }),
+        el("span", { class: `cap-pill ${row.status}`, text: pill })
+      ]),
+      el("small", { class: "cap-note", text: row.note })
+    ]));
+  }
+  refreshNotifUI();
+}
+
+function refreshNotifUI() {
+  const enable = $("#notifEnable");
+  if (!enable) return;
+  const uid = profile.username;
+  const perm = notifPermission();
+  const prefs = notifPrefs(uid);
+  const msg = $("#notifMsg");
+  msg.textContent = "";
+  msg.classList.remove("ok");
+  enable.hidden = false;
+  enable.disabled = false;
+  enable.dataset.confirmed = "";
+  $("#notifExplain").classList.add("hidden");
+
+  if (perm === "unsupported") {
+    enable.hidden = true;
+    msg.textContent = t("profile.notifUnsupported");
+  } else if (perm === "denied") {
+    enable.hidden = true;
+    msg.textContent = t("profile.notifBlocked");
+  } else if (perm === "granted") {
+    enable.hidden = true;
+    $("#notifExplain").classList.add("hidden");
+  }
+
+  const granted = perm === "granted";
+  $("#notifPrefs").classList.toggle("hidden", !granted);
+  $("#notifTest").hidden = !granted;
+  $("#notifMutedWrap").classList.toggle("hidden", !granted);
+  if (granted) {
+    $("#notifMentions").checked = !!prefs.mentions;
+    $("#notifChat").checked = !!prefs.chat;
+    $("#notifActivity").checked = !!prefs.activity;
+    $("#notifPreview").checked = !!prefs.preview;
+  }
+  renderMutedRooms();
+}
+
+function renderMutedRooms() {
+  const list = $("#notifMutedRooms");
+  if (!list) return;
+  const rooms = mutedRooms(profile.username);
+  list.innerHTML = "";
+  $("#notifMutedEmpty").classList.toggle("hidden", rooms.length > 0);
+  for (const room of rooms) {
+    list.append(el("li", { class: "muted-room" }, [
+      el("span", { text: room.name }),
+      el("button", {
+        type: "button",
+        class: "link-btn",
+        text: t("profile.notifUnmute"),
+        onclick: () => {
+          setRoomNotif(profile.username, room.roomId, true);
+          renderMutedRooms();
+        }
+      })
+    ]));
+  }
+}
+
+function wireNotifications() {
+  $("#notifEnable")?.addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget;
+    const msg = $("#notifMsg");
+    if (!btn.dataset.confirmed) {
+      btn.dataset.confirmed = "1";
+      $("#notifExplain").classList.remove("hidden");
+      return;
+    }
+    const result = await requestNotifPermission();
+    if (result === "granted") {
+      saveNotifPrefs(profile.username, { enabled: true });
+      msg.textContent = t("profile.notifGranted");
+      msg.classList.add("ok");
+      refreshNotifUI();
+    } else if (result === "denied") {
+      refreshNotifUI();
+    }
+  });
+
+  const prefsMap = {
+    notifMentions: "mentions",
+    notifChat: "chat",
+    notifActivity: "activity",
+    notifPreview: "preview"
+  };
+  for (const [id, key] of Object.entries(prefsMap)) {
+    $("#" + id)?.addEventListener("change", (ev) => {
+      saveNotifPrefs(profile.username, { [key]: ev.currentTarget.checked, enabled: true });
+    });
+  }
+
+  $("#notifTest")?.addEventListener("click", () => {
+    testNotification();
+    const msg = $("#notifMsg");
+    msg.textContent = t("profile.notifTestSent");
+    msg.classList.add("ok");
   });
 }

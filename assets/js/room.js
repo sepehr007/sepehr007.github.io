@@ -12,6 +12,8 @@ import { currentUser, isLocallyBanned } from "./auth.js";
 import { touchLobby, forceCloseLobby } from "./lobbies.js";
 import { dbPut, dbGetByIndex, dbDelete, recordActivity } from "./db.js";
 import { avatarSrc } from "./avatars.js";
+import { CAPS } from "./capabilities.js";
+import { notifPrefs, notifPermission, setRoomNotif, notifyChat, notifyActivity } from "./notifications.js";
 import { loadSiteConfig, applySiteConfig, featureOn, accessOn, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
 import {
   resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, recordFeatureUse, readFeatureCenter
@@ -43,6 +45,7 @@ let net = null;
 let player = null;
 let voice = null;
 let members = [];
+let seenMemberIds = null;
 let queueItems = [];
 let roomInfo = null;
 let activeTabName = "chat";
@@ -77,6 +80,7 @@ const SAMPLE_SOURCES = [
 let samplePending = false;
 let sampleIndex = 0;
 let mediaWatchdog = 0;
+let lastGestureAt = 0;
 let autoplayHintShown = false;
 const PTT_KEY = "wt.ptt";
 let pttOn = store.get(PTT_KEY, false) === true;
@@ -236,8 +240,11 @@ async function boot() {
       if (duration) $("#seek").value = String(Math.round((current / duration) * 1000));
       paintSeekFill(current, duration);
     },
-    onLoaded: () => { clearMediaWatchdog(); hideMediaLoading(); finishSample(true); syncStageEmpty(); },
-    onError: () => { hideMediaLoading(); if (!retrySample()) toast(t("toast.videoInvalid"), "error"); },
+    onLoaded: () => { clearMediaWatchdog(); hideMediaLoading(); hidePlayerError(); finishSample(true); syncStageEmpty(); },
+    onError: (kind) => { hideMediaLoading(); if (!retrySample()) showPlayerError(kind); },
+    onBuffering: (on) => {
+      $("#videoFrame")?.classList.toggle("buffering", !!on && !!player?.url);
+    },
     onLevels: (info) => renderQuality(info),
     onAudio: (info) => renderAudio(info),
     onText: (info) => renderTextTracks(info)
@@ -279,12 +286,69 @@ async function boot() {
   wireViewport();
   wireSheet();
   wireFileLoad();
+  applyCapabilityGates();
+  wireRoomNotifToggle();
+  wireInterruptions();
   applyFeatureFlags();
-  broadcastTimer = setInterval(() => broadcastLocalState(), 4000);
+  broadcastTimer = setInterval(() => { if (!document.hidden) broadcastLocalState(); }, 4000);
 
   createNet();
 }
 
+function applyCapabilityGates() {
+  const shareBtn = $("#shareBtn");
+  if (shareBtn && !CAPS.screenShare) {
+    shareBtn.classList.add("cap-off");
+    shareBtn.title = t("toast.screenUnsupported");
+    shareBtn.setAttribute("aria-label", shareBtn.title);
+  }
+  const pipBtn = $("#pipBtn");
+  if (pipBtn && !CAPS.pip) {
+    pipBtn.classList.add("cap-off");
+    pipBtn.title = t("toast.pipUnsupported");
+    pipBtn.setAttribute("aria-label", pipBtn.title);
+  }
+  const fullBtn = $("#fullBtn");
+  if (fullBtn && !CAPS.fullscreen) {
+    fullBtn.classList.add("cap-limited");
+    fullBtn.title = t("toast.fullscreenFallback");
+  }
+  const voiceBtn = $("#voiceBtn");
+  if (voiceBtn && (!CAPS.mic || !CAPS.webrtc)) {
+    voiceBtn.classList.add("cap-off");
+    voiceBtn.title = t("toast.voiceUnsupported");
+    voiceBtn.setAttribute("aria-label", voiceBtn.title);
+  }
+  if (CAPS.vibrate && !CAPS.hover) document.documentElement.dataset.vibrate = "1";
+}
+
+function wireRoomNotifToggle() {
+  const btn = $("#roomNotifBtn");
+  if (!btn) return;
+  if (!CAPS.notifications) { btn.classList.add("hidden"); return; }
+  const uid = authUser?.username || "";
+  const paint = () => {
+    const perm = notifPermission();
+    const tag = $("#roomNotifTag");
+    if (!tag) return;
+    if (perm !== "granted") tag.textContent = t("room.notifEnableTag");
+    else tag.textContent = t(notifPrefs(uid).muted[code] ? "room.notifOffTag" : "room.notifOnTag");
+    btn.title = tag.textContent;
+  };
+  btn.addEventListener("click", () => {
+    const perm = notifPermission();
+    if (perm === "default") { location.href = "profile.html#deviceCard"; return; }
+    if (perm === "denied") return toast(t("profile.notifBlocked"), "error", 6500);
+    if (perm === "unsupported") return toast(t("profile.notifUnsupported"), "error", 5000);
+    const muted = !!notifPrefs(uid).muted[code];
+    const roomTitle = $("#roomTitle")?.textContent || `Room ${code}`;
+    setRoomNotif(uid, code, muted, roomTitle);
+    toast(t(muted ? "room.notifUnmuted" : "room.notifMuted"), "info");
+    paint();
+  });
+  document.addEventListener("langchange", paint);
+  paint();
+}
 function applyFeatureFlags() {
   chatEnabled = flagOn(flagStates, "chat.text");
   document.querySelector(".room-shell")?.classList.toggle("no-chat", !chatEnabled);
@@ -437,6 +501,20 @@ function wireNet() {
     members = list;
     const mine = list.find((m) => m.id === me.id);
     if (mine) { me.role = mine.role; me.nick = mine.nick; if (mine.avatar) me.avatar = mine.avatar; }
+    const ids = new Set(list.map((m) => m.id));
+    if (seenMemberIds) {
+      for (const m of list) {
+        if (m.id && m.id !== me.id && !seenMemberIds.has(m.id)) {
+          notifyActivity(authUser?.username, {
+            roomId: code,
+            roomName: $("#roomTitle")?.textContent || `Room ${code}`,
+            text: t("notif.joinText", { name: m.nick || "" }),
+            url: location.pathname + location.search
+          });
+        }
+      }
+    }
+    seenMemberIds = ids;
     syncAdminTools();
     paintManagerOptions(roomInfo);
     renderMembers();
@@ -447,6 +525,13 @@ function wireNet() {
   });
 
   net.on("chat", (msg) => {
+    notifyChat(authUser?.username, {
+      roomId: code,
+      roomName: $("#roomTitle")?.textContent || `Room ${code}`,
+      msg,
+      selfNick: me.nick,
+      url: location.pathname + location.search
+    });
     persistChatEntry(msg);
     const near = isChatNearBottom();
     const mine = msg.by === me.id;
@@ -576,7 +661,8 @@ function wireNet() {
       $("#connLostBar")?.classList.add("hidden");
       toast(t("net.backOnline"), "success", 2400);
     } else {
-      safeReload();
+      try { net.retry(); } catch {}
+      setTimeout(() => { if (navigator.onLine && !net.isReady()) safeReload(); }, 4500);
     }
   });
   net.on("closed", () => {
@@ -693,8 +779,22 @@ function wirePlayer() {
     const r = player.cycleRate();
     $("#speedBtn").textContent = `${r}×`;
   });
-  $("#fullBtn").addEventListener("click", () => player.toggleFullscreen());
-  $("#pipBtn").addEventListener("click", () => player.togglePiP());
+  $("#fullBtn").addEventListener("click", async () => {
+    if (!document.fullscreenElement && !CAPS.fullscreen) {
+      player.toggleTheater();
+      return toast(t("toast.fullscreenFallback"), "info");
+    }
+    const ok = await player.toggleFullscreen();
+    if (!ok) toast(t("toast.fullscreenFallback"), "info");
+    if (document.fullscreenElement && CAPS.orientationLock && CAPS.coarse) {
+      const v = player.video;
+      if (v.videoWidth > v.videoHeight) screen.orientation.lock("landscape").catch(() => {});
+    }
+  });
+  $("#pipBtn").addEventListener("click", () => {
+    if (!CAPS.pip) return toast(t("toast.pipUnsupported"), "error", 5000);
+    player.togglePiP();
+  });
   $("#castBtn")?.addEventListener("click", async () => {
     try { await video.remote.prompt(); }
     catch { toast(t("toast.castFail"), "error"); }
@@ -757,6 +857,13 @@ function wirePlayer() {
     if (samplePending) return;
     startSample(0);
   });
+  $("#peFileBtn")?.addEventListener("click", () => $("#fileInput")?.click());
+  $("#peSampleBtn")?.addEventListener("click", () => {
+    hidePlayerError();
+    if (!player.canControl()) return toast(t("toast.cantControl"), "error");
+    if (!samplePending) startSample(0);
+  });
+  $("#peCloseBtn")?.addEventListener("click", hidePlayerError);
   $("#videoUrlInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadVideoFromInput(); });
 
   const showTapHint = (side) => {
@@ -768,9 +875,22 @@ function wirePlayer() {
 
   let lastTap = 0;
   video.addEventListener("click", (e) => {
+    if (performance.now() - lastGestureAt < 400) return;
     if (!matchMedia("(pointer: coarse)").matches) { player.togglePlay(); return; }
     const now = performance.now();
-    if (now - lastTap < 280) { lastTap = 0; return; }
+    if (now - lastTap < 280) {
+      /* Android does not reliably synthesise dblclick for touches, so the
+         second tap itself performs the ±10s seek */
+      lastTap = 0;
+      if (!player?.url) return;
+      const rect = video.getBoundingClientRect();
+      const ratio = rect.width ? (e.clientX - rect.left) / rect.width : 0.5;
+      if (ratio >= 0.3 && ratio <= 0.7) return;
+      const forward = ratio > 0.7;
+      player.seekBy(forward ? 10 : -10);
+      showTapHint(forward ? "right" : "left");
+      return;
+    }
     lastTap = now;
     setTimeout(() => {
       if (lastTap !== now) return;
@@ -779,6 +899,7 @@ function wirePlayer() {
     }, 240);
   });
   video.addEventListener("dblclick", (e) => {
+    if (matchMedia("(pointer: coarse)").matches) return;
     if (!player?.url) return;
     const rect = video.getBoundingClientRect();
     const ratio = rect.width ? (e.clientX - rect.left) / rect.width : 0.5;
@@ -787,6 +908,7 @@ function wirePlayer() {
     player.seekBy(forward ? 10 : -10);
     showTapHint(forward ? "right" : "left");
   });
+  wireVideoGestures(video);
   video.addEventListener("play", () => updatePlayUI(true));
   video.addEventListener("pause", () => updatePlayUI(false));
 
@@ -830,7 +952,11 @@ function wirePlayer() {
     const target = e.target instanceof Element ? e.target : null;
     if (target?.closest("input,textarea,select,[contenteditable]")) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key === "Escape") { $("#sidebar").classList.remove("open"); return; }
+    if (e.key === "Escape") {
+      if (overlayStatePushed) popOverlayState();
+      else $("#sidebar").classList.remove("open");
+      return;
+    }
     if (!player?.url) return;
     const k = e.key.toLowerCase();
     const back = getLang() === "fa" ? 1 : -1;
@@ -923,6 +1049,7 @@ function syncStageEmpty() {
   if (!stageEmpty) return;
   const has = !!player?.url;
   stageEmpty.classList.toggle("hidden", has);
+  if (!has) hidePlayerError();
   $("#emptyBackBtn")?.classList.toggle("hidden", !has);
   $("#videoFrame").classList.toggle("has-media", has);
   if (has) maybeAutoOpenCine();
@@ -1003,6 +1130,127 @@ function retrySample() {
   }
   startSample(sampleIndex);
   return true;
+}
+
+/* ---------- media errors with real explanations ---------- */
+function showPlayerError(kind) {
+  const box = $("#playerError");
+  if (!box) return;
+  const fa = getLang() === "fa";
+  const body = $("#playerErrorBody");
+  if (body) {
+    if (kind === "network") {
+      body.textContent = fa
+        ? "سرور فایل جواب نداد یا اتصال قطع شد. لینک مستقیم را چک کن؛ فایل محلی هم همیشه مطمئن‌ترین راه است."
+        : "The file server did not respond. Check the direct link, or use a local file — that always works.";
+    } else if (kind === "aborted") {
+      body.textContent = fa
+        ? "بارگذاری نیمه‌کاره ماند. دوباره پخش کن یا فایل را دوباره انتخاب کن."
+        : "Loading was interrupted. Try playing again or re-select the file.";
+    } else {
+      body.textContent = t("player.errorBody");
+    }
+  }
+  $("#videoFrame")?.classList.remove("buffering");
+  box.classList.remove("hidden");
+}
+
+function hidePlayerError() {
+  $("#playerError")?.classList.add("hidden");
+}
+
+/* ---------- touch gestures: swipe for brightness / volume ---------- */
+function wireVideoGestures(video) {
+  if (!video || !CAPS.coarse) return;
+  const hud = $("#gestureHud");
+  const fill = $("#gestureFill");
+  const val = $("#gestureVal");
+  const icon = $("#gestureIcon");
+  if (!hud || !fill || !val || !icon) return;
+
+  const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>';
+  const VOL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg>';
+
+  let bright = Number(store.get("wt.bright", 1)) || 1;
+  const applyBright = (v) => {
+    bright = Math.max(0.25, Math.min(1, v));
+    store.set("wt.bright", bright);
+    video.style.filter = `brightness(${bright.toFixed(2)})`;
+    return bright;
+  };
+  applyBright(bright);
+
+  let mode = "";
+  let startY = 0;
+  let startX = 0;
+  let base = 1;
+  let active = false;
+  let pid = null;
+  let hideTimer = 0;
+
+  const paint = (pct) => {
+    fill.style.width = `${pct}%`;
+    val.textContent = `${Math.round(pct)}%`;
+  };
+  const open = (kind) => {
+    mode = kind;
+    icon.innerHTML = kind === "volume" ? VOL : SUN;
+    hud.classList.remove("hidden");
+    clearTimeout(hideTimer);
+  };
+  const close = () => {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => hud.classList.add("hidden"), 700);
+  };
+
+  video.addEventListener("pointerdown", (e) => {
+    if (!player?.url || e.pointerType === "mouse" || !e.isPrimary) return;
+    pid = e.pointerId;
+    startY = e.clientY;
+    startX = e.clientX;
+    active = false;
+    mode = "";
+  });
+  video.addEventListener("pointermove", (e) => {
+    if (pid !== e.pointerId || !player?.url) return;
+    const dy = startY - e.clientY;
+    const dx = Math.abs(e.clientX - startX);
+    if (!active) {
+      if (Math.abs(dy) < 14 || Math.abs(dy) < dx * 1.2) return;
+      active = true;
+      const rect = video.getBoundingClientRect();
+      const leftSide = startX < rect.left + rect.width / 2;
+      if (leftSide) { open("bright"); base = bright; }
+      else {
+        open("volume");
+        if (video.muted) { video.muted = false; store.set("wt.muted", false); }
+        base = video.volume;
+      }
+      lastGestureAt = performance.now();
+    }
+    e.preventDefault();
+    const height = Math.max(120, video.getBoundingClientRect().height);
+    const delta = dy / height;
+    if (mode === "bright") {
+      paint(applyBright(base + delta * 1.1) * 100);
+    } else {
+      const v = Math.max(0, Math.min(1, base + delta * 1.4));
+      video.volume = v;
+      video.muted = v === 0;
+      store.set("wt.vol", v);
+      store.set("wt.muted", video.muted);
+      paint(v * 100);
+    }
+  });
+  const end = (e) => {
+    if (pid !== e.pointerId) return;
+    if (active) { close(); lastGestureAt = performance.now(); }
+    pid = null;
+    active = false;
+    mode = "";
+  };
+  video.addEventListener("pointerup", end);
+  video.addEventListener("pointercancel", end);
 }
 
 /* Remote clocks can differ wildly between devices; anchor the shared
@@ -2794,6 +3042,7 @@ function activateTab(name) {
 /* ================= voice ================= */
 function wireVoice() {
   $("#voiceBtn").addEventListener("click", () => {
+    if (!selfVoice && (!CAPS.webrtc || !CAPS.mic)) return toast(t("toast.voiceUnsupported"), "error", 6000);
     if (!selfVoice && !allow("voice.chat", "صدای زنده غیرفعال شده است.")) return;
     toggleVoice();
   });
@@ -3005,8 +3254,10 @@ function hideScreenView() {
   const video = $("#screenVideo");
   try { video.pause(); } catch {}
   video.srcObject = null;
-  $("#screenLayer").classList.add("hidden");
-  $("#screenLayer").classList.remove("expanded");
+  const layer = $("#screenLayer");
+  if (layer?.classList.contains("expanded")) popOverlayState();
+  layer?.classList.add("hidden");
+  layer?.classList.remove("expanded");
   $("#screenPeek").classList.toggle("hidden", screenViews.size === 0);
 }
 
@@ -3020,7 +3271,12 @@ function wireScreen() {
     if (activeScreen === "self") stopScreenShare();
     else hideScreenView();
   });
-  $("#screenFitBtn").addEventListener("click", () => $("#screenLayer").classList.toggle("expanded"));
+  $("#screenFitBtn").addEventListener("click", () => {
+    const layer = $("#screenLayer");
+    layer.classList.toggle("expanded");
+    if (layer.classList.contains("expanded")) pushOverlayState();
+    else popOverlayState();
+  });
   $("#screenPeek").addEventListener("click", () => {
     const next = [...screenViews.entries()].pop();
     if (next) showScreenView(next[0], next[1]);
@@ -3434,6 +3690,27 @@ function wireReactions() {
 }
 
 /* ================= misc ================= */
+/* Back button (Android) closes overlays before leaving the room. */
+let overlayStatePushed = false;
+function pushOverlayState() {
+  if (overlayStatePushed) return;
+  overlayStatePushed = true;
+  try { history.pushState({ wtOverlay: 1 }, ""); } catch { overlayStatePushed = false; }
+}
+function popOverlayState() {
+  if (!overlayStatePushed) return;
+  overlayStatePushed = false;
+  try { history.back(); } catch {}
+}
+function closeOverlaysForBack() {
+  overlayStatePushed = false;
+  $("#sidebar")?.classList.remove("open");
+  $("#topMenu")?.classList.add("hidden");
+  $("#moreBtn")?.setAttribute("aria-expanded", "false");
+  $("#screenLayer")?.classList.remove("expanded");
+}
+window.addEventListener("popstate", () => { if (overlayStatePushed) closeOverlaysForBack(); });
+
 function wireMisc() {
   const invite = async (useShare) => {
     const base = `${location.origin}${location.pathname.replace(/room\.html$/, "")}room.html`;
@@ -3462,14 +3739,18 @@ function wireMisc() {
   const topMenu = $("#topMenu");
   if (moreBtn && topMenu) {
     const closeMenu = () => {
+      const wasOpen = !topMenu.classList.contains("hidden");
       topMenu.classList.add("hidden");
       moreBtn.setAttribute("aria-expanded", "false");
+      if (wasOpen) popOverlayState();
     };
     moreBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       const willOpen = topMenu.classList.contains("hidden");
       topMenu.classList.toggle("hidden", !willOpen);
       moreBtn.setAttribute("aria-expanded", String(willOpen));
+      if (willOpen) pushOverlayState();
+      else popOverlayState();
     });
     document.addEventListener("click", (e) => {
       if (topMenu.classList.contains("hidden")) return;
@@ -3526,7 +3807,10 @@ function wireMisc() {
     const mq = window.matchMedia;
     const drawer = mq("(min-width:641px) and (max-width:819px)").matches;
     if (drawer) {
-      $("#sidebar").classList.toggle("open");
+      const side = $("#sidebar");
+      side.classList.toggle("open");
+      if (side.classList.contains("open")) pushOverlayState();
+      else popOverlayState();
       return;
     }
     setChatHidden(!chatHidden);
@@ -3569,6 +3853,47 @@ function wireMisc() {
   });
 
   window.addEventListener("beforeunload", cleanup);
+  window.addEventListener("pagehide", (e) => { if (!e.persisted) cleanup(); });
+}
+
+/* phone calls, app switches, screen locks and network drops */
+function wireInterruptions() {
+  window.addEventListener("offline", () => toast(t("net.offline"), "error", 5200));
+  window.addEventListener("online", () => {
+    try { net?.retry?.(); } catch {}
+    if (currentPlayback?.playing && player?.url && player.video.paused) player.applyState(currentPlayback);
+  });
+
+  let wasPlaying = false;
+  let hiddenAt = 0;
+  document.addEventListener("visibilitychange", () => {
+    const v = player?.video;
+    if (!v) return;
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      wasPlaying = !!currentPlayback?.playing && !v.paused;
+      return;
+    }
+    if (wasPlaying && currentPlayback?.playing && v.paused) {
+      player.applyState(currentPlayback);
+    }
+    wasPlaying = false;
+    if (v.readyState >= 3) $("#videoFrame")?.classList.remove("buffering");
+    if (hiddenAt && Date.now() - hiddenAt > 90000 && !net?.isReady?.()) {
+      try { net?.retry?.(); } catch {}
+      setTimeout(() => { if (!net?.isReady?.()) safeReload({ force: true }); }, 5000);
+    }
+    hiddenAt = 0;
+  });
+
+  if (screen.orientation) {
+    screen.orientation.addEventListener?.("change", () => {
+      setTimeout(() => {
+        $("#stageControls")?.classList.remove("idle");
+        paintSeekFill(player?.video?.currentTime || 0, player?.video?.duration || 0);
+      }, 150);
+    });
+  }
 }
 
 /* ================= instant tooltips ================= */
@@ -3665,6 +3990,7 @@ document.addEventListener("click", (e) => {
   if (!side.classList.contains("open")) return;
   if (side.contains(e.target)) return;
   side.classList.remove("open");
+  popOverlayState();
 });
 
 /* draggable split between video and chat on phones */
