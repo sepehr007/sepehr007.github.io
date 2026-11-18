@@ -1,0 +1,27 @@
+# Copy to /etc/systemd/system/hammatama-api.service and adjust paths/user.
+# Node 22.5+ is required (node:sqlite). Put secrets in /opt/hammatama/server/.env.
+
+[Unit]
+Description=Hammatama API (Fastify)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hammatama
+Group=hammatama
+WorkingDirectory=/opt/hammatama/server
+EnvironmentFile=/opt/hammatama/server/.env
+ExecStart=/usr/bin/node index.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=25
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/hammatama/server/data
+
+[Install]
+WantedBy=multi-user.target

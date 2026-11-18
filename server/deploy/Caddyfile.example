@@ -1,0 +1,7 @@
+# /etc/caddy/Caddyfile
+# Caddy obtains and renews HTTPS certificates automatically and proxies WebSocket.
+
+api.example.com {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:3001
+}

@@ -99,6 +99,21 @@ export async function connectRedis(url = process.env.REDIS_URL) {
   return state.connecting;
 }
 
+export async function disconnectRedis() {
+  const client = state.client;
+  state.client = null;
+  state.ready = false;
+  state.connecting = null;
+  if (!client) return;
+  try {
+    await client.quit();
+  } catch {
+    try {
+      client.disconnect();
+    } catch {}
+  }
+}
+
 function pruneMap(map, max) {
   if (map.size <= max) return;
   const overflow = map.size - max;

@@ -1,11 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import nodemailer from "nodemailer";
 import { loadConnections, connections } from "./settings.js";
+import { appConfig } from "./config.js";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = process.env.DATA_DIR || path.join(HERE, "data");
+const DATA_DIR = appConfig.dataDir;
 const OUTBOX_FILE = path.join(DATA_DIR, "mail-outbox.jsonl");
 const FROM = process.env.MAIL_FROM || "هم‌تماشا <no-reply@hammatama.ir>";
 const SITE_NAME = "هم‌تماشا";

@@ -6,7 +6,8 @@ import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import { connectDB, dbReady, dbState, disconnectDB } from "./db.js";
 import { storeState } from "./userStore.js";
-import { connectRedis, redisReady, redisState, createRateLimiter } from "./redis.js";
+import { connectRedis, redisState, createRateLimiter, disconnectRedis } from "./redis.js";
+import { appConfig, configWarnings, publicConfig } from "./config.js";
 import { resolveFeatureState, isEnabled, summarizeFeatures, featureStatus } from "./features.js";
 import { publicPlatformSettings, settingNumber } from "./platformSettings.js";
 import { mailState } from "./mailer.js";
@@ -16,16 +17,15 @@ import lobbyRoutes from "./routes/lobbies.js";
 import billingRoutes from "./routes/billing.js";
 import adminRoutes from "./routes/admin.js";
 import platformRoutes from "./routes/platform.js";
-import { startMaintenance } from "./database/index.js";
+import { startMaintenance, getDatabase, databaseState, stopMaintenance, closeDatabase } from "./database/index.js";
 import { Room } from "./models/Room.js";
 import { Message } from "./models/Message.js";
 import { PlaybackState } from "./models/PlaybackState.js";
 import { ensureStore } from "./userStore.js";
 import { sqlFindRoomByCode, sqlRecentMessages, sqlAddMessage, sqlSavePlaybackState } from "./stores/rooms.js";
 
-const PORT = Number(process.env.PORT || 3001);
-const HOST = process.env.HOST || "0.0.0.0";
-const IS_PROD = process.env.NODE_ENV === "production";
+const PORT = appConfig.port;
+const HOST = appConfig.host;
 const ROOM_RE = /^[A-Z0-9-]{4,16}$/;
 const CHAT_WINDOW_MS = 5000;
 const CHAT_MAX = 10;
@@ -336,19 +336,28 @@ function registerRealtime(app) {
 }
 
 export async function buildServer() {
-  if (IS_PROD && !process.env.JWT_SECRET) {
-    throw new Error("JWT_SECRET must be set in production");
+  if (appConfig.isDeployed && !appConfig.hasJwtSecret) {
+    throw new Error("JWT_SECRET must be set when APP_ENV is staging or production");
   }
 
   const app = Fastify({
-    logger: { level: process.env.LOG_LEVEL || "info" },
-    trustProxy: true,
+    logger: { level: appConfig.logLevel },
+    trustProxy: appConfig.trustProxy,
     ignoreTrailingSlash: true,
     bodyLimit: 1024 * 1024
   });
 
-  const corsEnv = String(process.env.CORS_ORIGIN || "").trim();
-  const corsOrigin = corsEnv ? corsEnv.split(",").map((s) => s.trim()).filter(Boolean) : true;
+  for (const warning of configWarnings()) {
+    if (warning.level === "error") app.log.error(`[config] ${warning.message}`);
+    else if (warning.level === "warn") app.log.warn(`[config] ${warning.message}`);
+    else app.log.info(`[config] ${warning.message}`);
+  }
+
+  const corsOrigin = appConfig.cors.allowAll
+    ? true
+    : appConfig.cors.origins.length
+      ? [...appConfig.cors.origins]
+      : false;
 
   await app.register(cors, {
     origin: corsOrigin,
@@ -374,24 +383,48 @@ export async function buildServer() {
   });
 
   const limiter = createRateLimiter({
-    max: Number(process.env.RATE_LIMIT_MAX || 50),
-    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60000),
-    skip: (req) => req.url.startsWith("/ws") || req.url === "/api/health"
+    max: appConfig.rateLimit.max,
+    windowMs: appConfig.rateLimit.windowMs,
+    skip: (req) => req.url.startsWith("/ws") || req.url === "/api/health" || req.url === "/api/ready"
   });
   app.addHook("onRequest", limiter);
 
-  app.get("/api/health", async () => ({
-    ok: true,
-    service: "watch-together-api",
-    version: "0.1.0",
-    uptime: Math.round(process.uptime()),
-    now: new Date().toISOString(),
-    db: dbState(),
-    userStore: storeState(),
-    mail: mailState(),
-    sms: smsState(),
-    redis: redisState()
-  }));
+  app.get("/api/health", async () => {
+    await getDatabase();
+    const storage = databaseState();
+    return {
+      ok: true,
+      ready: storage.ready || dbReady(),
+      service: "watch-together-api",
+      ...publicConfig(),
+      uptime: Math.round(process.uptime()),
+      now: new Date().toISOString(),
+      db: dbState(),
+      userStore: storeState(),
+      storage,
+      mail: mailState(),
+      sms: smsState(),
+      redis: redisState(),
+      capabilities: {
+        persistentProcess: true,
+        websockets: true,
+        backgroundJobs: "in-process",
+        mediaProcessing: "browser"
+      }
+    };
+  });
+
+  app.get("/api/ready", async (req, reply) => {
+    await getDatabase();
+    const store = storeState().mode;
+    const ready = store === "sqlite" || store === "mongodb";
+    return reply.code(ready ? 200 : 503).send({
+      ok: ready,
+      store,
+      redis: redisState().mode,
+      at: new Date().toISOString()
+    });
+  });
 
   await app.register(authRoutes, { prefix: "/api/auth" });
   await app.register(lobbyRoutes, { prefix: "/api/lobbies" });
@@ -465,8 +498,15 @@ async function start() {
     if (closing) return;
     closing = true;
     app.log.info(`Received ${signal}, shutting down`);
+    stopMaintenance();
     try {
       await app.close();
+    } catch {}
+    try {
+      closeDatabase();
+    } catch {}
+    try {
+      await disconnectRedis();
     } catch {}
     await disconnectDB();
     process.exit(0);

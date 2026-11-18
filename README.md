@@ -186,7 +186,12 @@ assets/css/style.css    استایل کامل
 assets/css/owner.css    استایل کنسول مالک
 docs/architecture.md    نقشهٔ معماری فرانت، بک‌اند، دیتابیس، زمان واقعی و احراز هویت
 docs/database.md        ساختار جدول‌ها، ایندکس‌ها، مهاجرت، پشتیبان‌گیری و نگهداری داده
+docs/deployment.md      محیط‌ها، پیکربندی، VPS/داکر، میزبانی اشتراکی، سلامت و بازیابی
 server/                 بک‌اند Fastify: احراز هویت، لابی، مالی، اتاق و WebSocket
+server/config.js        پیکربندی متمرکز، محیط اجرا، CORS، مسیر ذخیره‌سازی و هشدارهای راه‌اندازی
+server/restore.js       بازیابی امن دیتابیس از پشتیبان (بررسی، نسخهٔ ایمن، سپس جایگزینی)
+server/Dockerfile       تصویر تک‌مرحله‌ای Node 24 با کاربر غیر root و هلث‌چک
+server/deploy/          نمونهٔ systemd، nginx و Caddy برای HTTPS و WebSocket
 server/database/        اسکیمای ~۴۰ جدول، مهاجرت نسخه‌دار، تراکنش، پشتیبان و خروجی
 server/stores/          کوئری‌های SQLite برای لابی، اتاق/پیام و مالی
 server/routes/admin.js  API دیتابیس و حسابرسی مخصوص مالک
@@ -217,3 +222,9 @@ sw.js / manifest.webmanifest   PWA
 
 ## استقرار
 هر `git push` به برنچ `main` سایت را آپدیت می‌کند (GitHub Pages از پوشه ریشه).
+
+- **فرانت‌اند**: روی هر میزبان استاتیک. آدرس API در `assets/data/runtime-config.json` (`apiBase`) تعیین می‌شود.
+- **بک‌اند**: Node 22.5+ با `APP_ENV` (`development`/`staging`/`production`)، پیکربندی متمرکز در `server/config.js` و `server/.env`. پیش از استقرار `npm run config` را اجرا کنید.
+- **VPS**: `server/Dockerfile` و `docker-compose.yml` یا سرویس systemd نمونه در `server/deploy/` همراه nginx/Caddy برای HTTPS و WebSocket.
+- **بازیابی**: `npm run restore -- <backup.sqlite> [--yes]` پس از توقف سرویس.
+- راهنمای کامل محیط‌ها، متغیرها، میزبانی اشتراکی، سلامت و بازیابی: [docs/deployment.md](docs/deployment.md).

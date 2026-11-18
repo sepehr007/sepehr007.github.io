@@ -1,14 +1,13 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { MIGRATIONS } from "./schema.js";
+import { appConfig } from "../config.js";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SERVER_DIR = path.resolve(HERE, "..");
-export const DATA_DIR = process.env.DATA_DIR || path.join(SERVER_DIR, "data");
-export const SQLITE_FILE = process.env.SQLITE_FILE || path.join(DATA_DIR, "wt.sqlite");
-export const BACKUP_DIR = process.env.BACKUP_DIR || path.join(DATA_DIR, "backups");
+export const DATA_DIR = appConfig.dataDir;
+export const SQLITE_FILE = appConfig.sqliteFile;
+export const BACKUP_DIR = appConfig.backupDir;
+const RETRY_MS = appConfig.databaseRetryMs;
 
 const BUSY_TIMEOUT_MS = Math.max(1000, Number(process.env.DB_BUSY_TIMEOUT_MS) || 5000);
 const BACKUP_KEEP = Math.max(0, Number(process.env.BACKUP_KEEP) || 30);
@@ -31,6 +30,7 @@ let lastError = "";
 let openedAt = 0;
 let maintenanceTimer = null;
 let transactionDepth = 0;
+let retryTimer = null;
 
 const statements = new Map();
 const MAX_STATEMENTS = 400;
@@ -88,13 +88,23 @@ function migrate(connection) {
   }
 }
 
+function scheduleRetry() {
+  if (retryTimer || !RETRY_MS) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    tried = false;
+    getDatabase().catch(() => {});
+  }, RETRY_MS);
+  retryTimer.unref?.();
+}
+
 export async function getDatabase() {
   if (db) return db;
   if (opening) return opening;
   if (tried) return null;
 
-  opening = (async () => {
-    tried = true;
+  tried = true;
+  const attempt = (async () => {
     try {
       fs.mkdirSync(path.dirname(SQLITE_FILE), { recursive: true });
       const { DatabaseSync } = await import("node:sqlite");
@@ -111,17 +121,38 @@ export async function getDatabase() {
       db = connection;
       openedAt = nowMs();
       lastError = "";
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = null;
       return db;
     } catch (err) {
       lastError = err.message;
       console.error("[db] sqlite unavailable:", err.message);
+      scheduleRetry();
       return null;
-    } finally {
-      opening = null;
     }
   })();
 
+  opening = attempt;
+  attempt
+    .finally(() => {
+      if (opening === attempt) opening = null;
+    })
+    .catch(() => {});
   return opening;
+}
+
+export function closeDatabase() {
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
+  statements.clear();
+  if (db) {
+    try {
+      db.close();
+    } catch {}
+  }
+  db = null;
+  tried = false;
+  openedAt = 0;
 }
 
 export function databaseReady() {

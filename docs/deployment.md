@@ -1,0 +1,211 @@
+# استقرار هم‌تماشا
+
+این سند نحوهٔ اجرای پروژه روی محیط‌های مختلف را مشخص می‌کند: توسعهٔ محلی، استیجینگ، سرور مجازی (VPS)، داکر و میزبانی اشتراکی. هدف این است که پروژه فقط روی کامپیوتر توسعه‌دهنده کار نکند.
+
+## ۱. دو بخش مستقل
+
+| بخش | چیستی | محل استقرار |
+| --- | --- | --- |
+| فرانت‌اند | HTML/CSS/JS استاتیک + PWA | هر میزبان استاتیک؛ در این پروژه GitHub Pages از ریشهٔ مخزن |
+| بک‌اند | Fastify + SQLite (و اختیاری Mongo/Redis) + WebSocket | VPS، داکر، یا هر میزبانی که فرآیند دائمی Node بدهد |
+
+فرانت‌اند بدون بک‌اند هم بالا می‌آید و از حساب محلی مرورگر استفاده می‌کند. قابلیت‌های سروری (حساب مرکزی، اتاق‌های پایدار، مدیریت، اشتراک) فقط با بک‌اند فعال می‌شوند.
+
+## ۲. محیط‌ها
+
+محیط با `APP_ENV` تعیین می‌شود (اگر خالی باشد از `NODE_ENV` خوانده می‌شود).
+
+| مقدار | کاربرد | رفتار امنیتی |
+| --- | --- | --- |
+| `development` | توسعهٔ محلی و تست | CORS آزاد، بدون نیاز به راز، بازکردن خودکار SQLite |
+| `staging` | پیش‌تولید | مثل پروداکشن: `JWT_SECRET` اجباری، CORS هرگز `*` نمی‌شود |
+| `production` | سایت واقعی | همان قواعد استیجینگ |
+
+نکته: `staging` و `production` اگر `JWT_SECRET` نداشته باشند بالا نمی‌آیند. برای ساخت راز:
+
+```bash
+openssl rand -base64 48
+```
+
+### استیجینگ
+
+برای استیجینگ همان تصویر/کد پروداکشن را با این تفاوت‌ها اجرا کنید: `APP_ENV=staging`، `DATA_DIR` (یا والیوم) جدا، دیتابیس خالی و seed جدا، `JWT_SECRET` متفاوت، و `CORS_ORIGIN`/`APP_ORIGIN` روی دامنهٔ استیجینگ. این کار مانع می‌شود داده یا توکن‌های تستی با پروداکشن قاطی شوند.
+
+## ۳. پیکربندی متمرکز
+
+همهٔ متغیرها در `server/.env` (بر اساس `server/.env.example`) تعریف می‌شوند و در `server/config.js` یک‌جا خوانده و اعتبارسنجی می‌شوند. هیچ دامنه یا مسیر تولیدی در کد سرور هاردکد نیست.
+
+پیش از هر استقرار:
+
+```bash
+cd server
+npm ci --omit=dev
+npm run config
+```
+
+`npm run config` پیکربندی مؤثر را بدون نمایش رازها چاپ می‌کند و در صورت خطای مهلک با کد ۱ خارج می‌شود.
+
+### متغیرهای کلیدی
+
+| متغیر | پیش‌فرض | توضیح |
+| --- | --- | --- |
+| `APP_ENV` | `development` | `development` / `staging` / `production` |
+| `PORT` / `HOST` | `3001` / `0.0.0.0` | شنوندهٔ HTTP |
+| `TRUST_PROXY` | `true` | پشت nginx/Caddy روشن؛ اگر پورت مستقیم در معرض است خاموش کنید |
+| `CORS_ORIGIN` | خالی | فهرست مبدأهای مجاز با کاما؛ خالی یعنی `APP_ORIGIN`؛ بیرون از توسعه هرگز `*` |
+| `APP_ORIGIN` | `https://sepehr007.github.io` | مبدأ سایت برای لینک ایمیل/بازیابی (`PUBLIC_URL` هم پذیرفته می‌شود) |
+| `JWT_SECRET` | خالی | بیرون از توسعه اجباری |
+| `MONGO_URI` / `REDIS_URL` | خالی | اختیاری؛ برای مقیاس‌پذیری |
+| `DATA_DIR` | `server/data` | SQLite، پشتیبان‌ها و outbox ایمیل/پیامک |
+| `SQLITE_FILE` / `BACKUP_DIR` | زیر `DATA_DIR` | مسیر دقیق فایل و پشتیبان |
+| `DB_RETRY_MS` | ۱۵۰۰۰ بیرون از توسعه | تلاش مجدد بازکردن SQLite |
+| `FEATURE_SCOPE_CACHE_MS` | `3000` | کش کوتاه قابلیت‌ها؛ نوشتن پنل آن را فوراً پاک می‌کند |
+| `SECURITY_MANDATORY_OFF` | خالی | کف امنیتی سخت‌گیرانه؛ هیچ ادمینی نمی‌تواند بازش کند |
+| `AUTO_BACKUP_HOURS` / `BACKUP_KEEP` | `24` / `30` | پشتیبان خودکار و تعداد نسخه‌های نگهداری‌شده |
+| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` | `50` / `60000` | سهمیهٔ پیش‌فرض هر IP |
+
+`server/.env` در git نیست. مقادیر محرمانه را فقط در محیط استقرار نگه دارید.
+
+## ۴. فرانت‌اند جداگانه
+
+1. آدرس API را در `assets/data/runtime-config.json` بگذارید:
+
+```json
+{ "apiBase": "https://api.example.com/api" }
+```
+
+اولویت آدرس API: `globalThis.WT_API_BASE` → مقدار ذخیره‌شده در `localStorage.wt.apiBase` → همین فایل → `http://localhost:3001/api` فقط روی localhost.
+
+2. در بک‌اند `CORS_ORIGIN` را دقیقاً روی مبدأ فرانت بگذارید (مثلاً `https://sepehr007.github.io`). بیرون از توسعه، خالی‌بودن آن یعنی API فقط به هم‌مبدأ پاسخ می‌دهد.
+3. `APP_ORIGIN` را روی همان مبدأ فرانت بگذارید تا لینک‌های تأیید و بازیابی درست ساخته شوند.
+
+### هویت و دامنهٔ استقرار
+
+این مقادیر بخشی از هویت هر نصب هستند و هنگام تغییر دامنه/مخزن باید عوض شوند:
+
+- `index.html` و `room.html`: متاتگ‌های `og:url`، `og:image`، `twitter:image`
+- `assets/data/site-config.json`: بلوک `owner` (`login`، `repo`، `branch`) و متن‌های `site`
+- `assets/js/site-config.js`: همان مقادیر به‌عنوان پیش‌فرض وقتی JSON در دسترس نیست
+- `manifest.webmanifest`: `start_url` و `scope` نسبی‌اند و معمولاً نیاز به تغییر ندارند
+- `sw.js`: با هر تغییر فایل‌های پوسته، مقدار `CACHE` را یک نسخه بالا ببرید
+
+HTTPS برای میکروفون، دوربین، اشتراک صفحه و PWA الزامی است (localhost استثناست).
+
+## ۵. VPS با systemd و پروکسی معکوس
+
+پیش‌نیازها: Node.js 22.5 یا بالاتر (برای `node:sqlite`)، nginx یا Caddy، گواهی TLS.
+
+```bash
+# روی سرور
+sudo useradd --system --home /opt/hammatama --shell /usr/sbin/nologin hammatama
+sudo mkdir -p /opt/hammatama
+sudo chown -R hammatama:hammatama /opt/hammatama
+# کد را در /opt/hammatama/server قرار دهید، سپس:
+cd /opt/hammatama/server
+npm ci --omit=dev
+cp .env.example .env      # مقادیر را ویرایش کنید
+npm run config            # باید ok:true بدهد
+npm run seed              # فقط روی دیتابیس خالی
+sudo chown -R hammatama:hammatama /opt/hammatama/server/data
+```
+
+- سرویس نمونه: `server/deploy/wt-api.service` → `/etc/systemd/system/hammatama-api.service`
+- nginx نمونه: `server/deploy/nginx.conf.example` (هدرهای `Upgrade` برای WebSocket و تایم‌اوت طولانی)
+- Caddy نمونه: `server/deploy/Caddyfile.example` (گواهی و WebSocket خودکار)
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now hammatama-api
+curl -fsS http://127.0.0.1:3001/api/ready
+```
+
+لاگ‌ها: `journalctl -u hammatama-api -f` (خروجی JSON از Fastify/pino). سطح لاگ با `LOG_LEVEL` کنترل می‌شود.
+
+## ۶. داکر و Compose
+
+`server/Dockerfile` روی `node:24-slim` با کاربر غیر root، هلث‌چک داخلی و والیوم داده ساخته شده است. `docker-compose.yml` در ریشهٔ مخزن (Compose v2.24+ برای `env_file` اختیاری):
+
+```bash
+cp server/.env.example server/.env    # ویرایش مقادیر
+docker compose up -d --build
+docker compose ps
+curl -fsS http://127.0.0.1:3001/api/health
+```
+
+- پورت فقط روی `127.0.0.1` باز می‌شود؛ nginx/Caddy روی هاست جلوی آن قرار می‌گیرد.
+- داده در والیوم `wt-data` می‌ماند؛ `docker compose down` بدون `-v` آن را پاک نمی‌کند.
+- Redis اختیاری: `docker compose --profile redis up -d` و سپس `REDIS_URL=redis://redis:6379` در `server/.env`.
+- Mongo اختیاری: `docker compose --profile mongo up -d` و سپس `MONGO_URI=mongodb://mongo:27017/hammatama`.
+
+ری‌استارت خودکار با `restart: unless-stopped` و هلث‌چک تصویر انجام می‌شود.
+
+## ۷. سازگاری با میزبانی اشتراکی
+
+| قابلیت | نیاز فنی | میزبانی اشتراکی |
+| --- | --- | --- |
+| فرانت‌اند و PWA | فایل استاتیک + HTTPS | بله |
+| بک‌اند Node | فرآیند دائمی Node ≥22.5 | معمولاً نه (فقط برخی هاست‌ها) |
+| WebSocket (`/ws`) | پشتیبانی Upgrade در پروکسی | اغلب بسته یا محدود |
+| SQLite | فایل‌سیستم پایدار و قابل نوشتن | گاهی، اما قفل فایل و ظرفیت محدود است |
+| Redis / Mongo | سرویس جداگانه | معمولاً نه |
+| TURN | سرور UDP/TCP جدا (مثلاً coturn) | نه |
+| کارهای زمان‌بندی‌شده | پروسهٔ زنده یا cron | وابسته به خواب فرآیند؛ غیرقابل اتکا |
+| ایمیل خروجی | SMTP یا API | اغلب بسته؛ از SMTP خارجی استفاده کنید |
+| HTTPS | گواهی معتبر | معمولاً بله |
+
+نتیجه: **اگر میزبان فرآیند دائمی Node و WebSocket نمی‌دهد، فقط فرانت‌اند را آنجا بگذارید و بک‌اند را روی VPS اجرا کنید.** هیچ قابلیتی از بک‌اند به پورت اختصاصی یا دسترسی root نیاز ندارد، اما به فرآیند زنده، فایل‌سیستم نوشتنی و پروکسی WebSocket نیاز دارد.
+
+### TURN و صدا
+
+تماس صوتی و اشتراک صفحه با WebRTC کار می‌کند. تنظیمات فعلی `assets/js/net.js` از STUN عمومی و یک رلهٔ TURN عمومی استفاده می‌کند. برای پایداری در شبکه‌های سخت‌گیرانه، یک سرور coturn روی VPS جدا توصیه می‌شود؛ میزبانی اشتراکی این امکان را نمی‌دهد. پردازش رسانه سمت سرور لازم نیست: پخش و ترنسکد در مرورگر انجام می‌شود.
+
+## ۸. سلامت، پایش و بازیابی
+
+- **Liveness:** `GET /api/health` همیشه وضعیت سرویس، ذخیره‌سازی، Redis، ایمیل/پیامک و محیط را برمی‌گرداند. مناسب هلث‌چک داکر و پایش خارجی.
+- **Readiness:** `GET /api/ready` تا وقتی SQLite یا Mongo آماده است `200` و در غیر این صورت `503` می‌دهد. مناسب لودبالانسر.
+- **Graceful shutdown:** با `SIGTERM`/`SIGINT` اتصال‌های WebSocket با کد 1001 بسته می‌شوند، حلقهٔ نگهداری متوقف، SQLite بسته و Redis/Mongo قطع می‌شوند. `TimeoutStopSec=25` در unit نمونه همین را فرض کرده است.
+- **اتصال مجدد:** Mongo با تأخیر ۵ ثانیه‌ای دوباره تلاش می‌کند؛ Redis با backoff و در نبود آن به حافظه برمی‌گردد؛ SQLite با `DB_RETRY_MS` دوباره باز می‌شود.
+- **پشتیبان‌گیری:** خودکار هر `AUTO_BACKUP_HOURS` در `BACKUP_DIR` (پیش‌فرض ۲۴ ساعت، نگهداری ۳۰ نسخه) و دستی از کنسول مالک یا `POST /api/admin/database/backup`. فایل‌های پشتیبان را با rsync به ماشین دیگر هم منتقل کنید.
+- **صحت دیتابیس:** `PRAGMA integrity_check` و `foreign_key_check` در سلامت پنل و اسکریپت بازیابی اجرا می‌شوند.
+
+### بازیابی از پشتیبان
+
+اسکریپت بازیابی به‌صورت پیش‌فرض فقط بررسی می‌کند و چیزی را عوض نمی‌کند:
+
+```bash
+cd /opt/hammatama/server
+sudo systemctl stop hammatama-api
+npm run restore -- backups/wt-2026-11-18T12-00-00-000Z.sqlite          # بررسی
+npm run restore -- backups/wt-2026-11-18T12-00-00-000Z.sqlite --yes    # جایگزینی
+sudo systemctl start hammatama-api
+curl -fsS http://127.0.0.1:3001/api/ready
+```
+
+اسکریپت قبل از جایگزینی، از دیتابیس فعلی یک نسخهٔ `pre-restore-*.sqlite` می‌گیرد و فایل‌های `-wal`/`-shm` قدیمی را پاک می‌کند. **حتماً سرویس را قبل از اجرا متوقف کنید.** در داکر:
+
+```bash
+docker compose stop api
+docker compose run --rm api node restore.js /app/data/backups/wt-....sqlite --yes
+docker compose start api
+```
+
+## ۹. مقیاس و محدودیت‌ها
+
+- طراحی فعلی **تک‌نودی** است: SQLite منبع اصلی داده و بازنویسی قابلیت‌هاست. دو نمونه API را روی یک فایل SQLite (خصوصاً روی فایل‌سیستم شبکه‌ای) اجرا نکنید.
+- برای مقیاس افقی، Mongo و Redis را وصل کنید؛ اما ذخیرهٔ override قابلیت‌ها هنوز SQLite محلی است و برای چند نود نیاز به انتقال آن به یک فروشگاه مشترک دارد. این کار انجام نشده و ادعا نمی‌شود.
+- نامهٔ تأیید/بازیابی بدون SMTP در فایل outbox ذخیره می‌شود؛ در پروداکشن SMTP یا API واقعی وصل کنید.
+
+## ۱۰. چک‌لیست امنیتی پروداکشن
+
+- [ ] `APP_ENV=production` و `JWT_SECRET` تصادفی ≥۳۲ کاراکتر
+- [ ] `CORS_ORIGIN` دقیقاً مبدأ فرانت (بدون `*`)
+- [ ] HTTPS اجباری و `TRUST_PROXY` متناسب با پروکسی
+- [ ] رمز مالک از مقدار نمونه/پیش‌فرض عوض شده و جایی منتشر نشده
+- [ ] `DATA_DIR` فقط برای کاربر سرویس قابل نوشتن است
+- [ ] پشتیبان خودکار روشن و نسخه‌ها به سرور دیگر منتقل می‌شوند
+- [ ] `npm run config` بدون خطا
+- [ ] `GET /api/ready` بعد از استارت `200` می‌دهد
+
+### دربارهٔ کوکی‌ها
+
+این API هیچ کوکی نمی‌نویسد؛ احراز هویت با `Authorization: Bearer` و JWT انجام می‌شود. بنابراین سطح حملهٔ CSRF کوکی وجود ندارد، اما توکن در `localStorage` مرورگر نگه داشته می‌شود و امنیت آن به نبود XSS و CSP مناسب بستگی دارد. اگر در آینده احراز هویت کوکی اضافه شد، کوکی باید `HttpOnly; Secure; SameSite=None` باشد (چون فرانت و API می‌توانند دامنه‌های جدا داشته باشند) و محافظت CSRF هم اضافه شود.
