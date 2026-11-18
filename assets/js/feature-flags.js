@@ -8,12 +8,15 @@ export const FLAG_GROUPS = [
 ];
 
 export const SCOPE_TYPES = [
-  { id: "role", label: "نقش", hint: "شناسهٔ نقش مثل member" },
-  { id: "user", label: "کاربر", hint: "نام کاربری" },
   { id: "plan", label: "اشتراک", hint: "شناسهٔ پلن" },
+  { id: "role", label: "نقش", hint: "شناسهٔ نقش مثل member" },
+  { id: "server", label: "سرور", hint: "شناسهٔ سرور" },
   { id: "room", label: "اتاق", hint: "کد اتاق" },
-  { id: "server", label: "سرور", hint: "شناسهٔ سرور" }
+  { id: "user", label: "کاربر", hint: "نام کاربری" }
 ];
+
+// Authority order of scoped denials: plan > role > server > room > personal.
+export const SCOPE_ORDER = ["plan", "role", "server", "room", "user"];
 
 export const FLAGS = [
   { id: "system.realtime", path: "features.realtimeEnabled", group: "system", label: "موتور Realtime", desc: "اتصال زندهٔ اتاق، حضور و پیام‌رسانی.", deps: [] },
@@ -286,12 +289,12 @@ export function scopeKeyFor(type, context) {
 
 export function scopeDenials(flagId, scopes, context) {
   const denials = [];
-  for (const type of SCOPE_TYPES) {
-    const key = scopeKeyFor(type, context);
+  for (const typeId of SCOPE_ORDER) {
+    const key = scopeKeyFor({ id: typeId }, context);
     if (!key) continue;
-    for (const [storedKey, flags] of Object.entries(scopes?.[type.id] || {})) {
+    for (const [storedKey, flags] of Object.entries(scopes?.[typeId] || {})) {
       if (String(storedKey).toLowerCase() !== key) continue;
-      if (flags?.[flagId] === "off") denials.push(type.id);
+      if (flags?.[flagId] === "off") denials.push(typeId);
     }
   }
   return denials;
@@ -305,12 +308,13 @@ export function resolveFlags(config, scopes = {}, context = {}, now = Date.now()
     const sched = scheduleState(rule, now);
     let enabled = true;
     let reason = "ok";
-    if (rule?.emergency) { enabled = false; reason = "emergency"; }
-    else if (sched === "invalid") { enabled = false; reason = "misconfigured"; }
-    else if (sched === "off" || sched === "waiting") { enabled = false; reason = "scheduled"; }
-    else if (getPath(config, flag.path) === false) { enabled = false; reason = "global"; }
-    else if (denialScopes.length) { enabled = false; reason = `scope_${denialScopes[0]}`; }
-    states[flag.id] = { enabled, reason, denials: denialScopes, rule, sched, future: !!flag.future };
+    let layer = "default";
+    if (rule?.emergency) { enabled = false; reason = "emergency"; layer = "security"; }
+    else if (sched === "invalid") { enabled = false; reason = "misconfigured"; layer = "global"; }
+    else if (sched === "off" || sched === "waiting") { enabled = false; reason = "scheduled"; layer = "global"; }
+    else if (getPath(config, flag.path) === false) { enabled = false; reason = "global"; layer = "global"; }
+    else if (denialScopes.length) { enabled = false; reason = `scope_${denialScopes[0]}`; layer = denialScopes[0]; }
+    states[flag.id] = { enabled, reason, layer, denials: denialScopes, rule, sched, future: !!flag.future };
   }
   for (let pass = 0; pass < 6; pass++) {
     let changed = false;

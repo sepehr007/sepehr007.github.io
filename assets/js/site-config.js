@@ -209,7 +209,8 @@ export async function loadSiteConfig() {
             const [root, leaf] = pathName.split(".");
             if (!root || !leaf) continue;
             if (!cfg[root] || typeof cfg[root] !== "object") cfg[root] = {};
-            cfg[root][leaf] = enabled !== false;
+            // A server flag is a ceiling, not a grant: it never lifts a local switch.
+            cfg[root][leaf] = cfg[root][leaf] !== false && enabled !== false;
           }
           fromServer = true;
         }

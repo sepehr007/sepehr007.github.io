@@ -27,6 +27,7 @@ import {
   listFeatureSchedules,
   listFeatureHistory,
   removeSchedule,
+  configHierarchy,
   FEATURE_CATALOG
 } from "../features.js";
 import {
@@ -457,7 +458,8 @@ export default async function platformRoutes(app) {
     const state = await resolveFeatureState(ctx);
     return {
       ok: true,
-      context: ctx,
+      context: state.context || ctx,
+      hierarchy: configHierarchy(),
       catalog: FEATURE_CATALOG.map(({ key, id, group, label, desc, deps }) => ({ key, id, group, label, desc, deps })),
       status: featureStatus(state),
       overrides: await listFeatureOverrides(),
@@ -485,7 +487,7 @@ export default async function platformRoutes(app) {
       });
       return { ok: true };
     } catch (err) {
-      return fail(reply, err.statusCode || 400, "feature_invalid", err.message);
+      return fail(reply, err.statusCode || 400, err.code || "feature_invalid", err.message);
     }
   });
 
@@ -529,7 +531,7 @@ export default async function platformRoutes(app) {
       await audit("admin.feature.schedule", req, { targetType: "feature", targetId: entry.key, meta: entry });
       return { ok: true, entry };
     } catch (err) {
-      return fail(reply, err.statusCode || 400, "schedule_invalid", err.message);
+      return fail(reply, err.statusCode || 400, err.code || "schedule_invalid", err.message);
     }
   });
 

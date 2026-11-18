@@ -2,7 +2,14 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getDatabase, all } from "./database/index.js";
+import { getDatabase, all, get } from "./database/index.js";
+import {
+  CONFIG_LAYERS,
+  CONFLICT_RULE,
+  ROOM_SETTING_FEATURES,
+  matchesFloorKey,
+  securityFloorKeys
+} from "./configHierarchy.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = process.env.SITE_CONFIG_PATH || path.join(HERE, "..", "assets", "data", "site-config.json");
@@ -15,7 +22,9 @@ const DEFAULTS = {
 };
 
 export const FEATURE_SCOPES = ["global", "plan", "role", "server", "room", "user"];
-export const SCOPE_PRIORITY = ["user", "room", "server", "role", "plan"];
+// Restriction order for scoped overrides: an entitlement outranks a role,
+// which outranks server and room configuration, which outranks personal taste.
+export const SCOPE_PRIORITY = ["plan", "role", "server", "room", "user"];
 
 export const FEATURE_CATALOG = [
   { key: "features.realtimeEnabled", id: "system.realtime", group: "system", label: "موتور Realtime", desc: "اتصال زندهٔ اتاق، حضور و پیام‌رسانی.", deps: [] },
@@ -86,6 +95,14 @@ export function invalidateFeatureState() {
 function envEmergency() {
   return String(process.env.FEATURE_EMERGENCY_OFF || "")
     .split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+export function isSecurityLocked(key) {
+  return matchesFloorKey(securityFloorKeys(), String(key)) || matchesFloorKey(envEmergency(), String(key));
+}
+
+export function configHierarchy() {
+  return { layers: CONFIG_LAYERS, conflict: CONFLICT_RULE };
 }
 
 function normalizeRules(raw) {
@@ -180,35 +197,53 @@ async function applyDueSchedules() {
   } catch {}
 }
 
-function buildFlags(state, scoped = new Map(), now = Date.now()) {
+function buildFlags(state, scoped = new Map(), now = Date.now(), roomBlocks = new Map()) {
   const flags = {};
   const rules = state.featureRules || {};
   const emergency = envEmergency();
+  const floor = securityFloorKeys();
   for (const item of FEATURE_CATALOG) {
     const key = item.key;
-    let enabled = groupValue(state, key);
-    let source = "default";
-    let reason = "";
-    if (scoped.has(key)) {
-      const hit = scoped.get(key);
-      enabled = Boolean(hit.enabled);
-      source = `${hit.scope_type}:${hit.scope_id || "all"}`;
-      reason = hit.note || "";
-    } else if (state.globalOverrides?.has(key)) {
-      enabled = Boolean(state.globalOverrides.get(key).enabled);
-      source = "global";
+    const layers = [];
+    const push = (layer, enabled, source, note = "", scopeId = "") => {
+      layers.push({ layer, enabled: Boolean(enabled), source, note, scopeId });
+    };
+
+    if (matchesFloorKey(floor, key)) push("security", false, "security", "SECURITY_MANDATORY_OFF");
+    else if (matchesFloorKey(emergency, key)) push("security", false, "emergency", "FEATURE_EMERGENCY_OFF");
+
+    let globalEnabled = groupValue(state, key);
+    let globalSource = "default";
+    if (state.globalOverrides?.has(key)) {
+      globalEnabled = Boolean(state.globalOverrides.get(key).enabled);
+      globalSource = "global";
     }
-    if (ruleRejects(rules[key], now)) {
-      enabled = false;
-      source = "rule";
-      reason = "emergency or scheduled rule";
+    const blockedByRule = ruleRejects(rules[key], now);
+    if (blockedByRule) {
+      globalEnabled = false;
+      globalSource = "rule";
     }
-    if (emergency.some((id) => key === id || key.endsWith(`.${id}`))) {
-      enabled = false;
-      source = "env";
-      reason = "FEATURE_EMERGENCY_OFF";
+    push("global", globalEnabled, globalSource, blockedByRule ? "emergency or scheduled rule" : "");
+
+    for (const scope of SCOPE_PRIORITY) {
+      const hit = scoped.get(scope)?.get(key);
+      if (hit) push(scope, hit.enabled, scope, hit.note || "", hit.scope_id || "");
     }
-    flags[key] = { enabled, source, reason, label: item.label, group: item.group, id: item.id, deps: item.deps };
+    const roomNote = roomBlocks.get(key);
+    if (roomNote) push("room", false, "room_settings", roomNote);
+
+    const blocked = layers.find((layer) => layer.enabled === false);
+    flags[key] = {
+      enabled: !blocked,
+      source: blocked ? blocked.source : "default",
+      layer: blocked ? blocked.layer : "default",
+      reason: blocked ? blocked.note || "" : "",
+      layers,
+      label: item.label,
+      group: item.group,
+      id: item.id,
+      deps: item.deps
+    };
   }
   for (const item of FEATURE_CATALOG) {
     const flag = flags[item.key];
@@ -217,6 +252,8 @@ function buildFlags(state, scoped = new Map(), now = Date.now()) {
     if (blocker) {
       flag.enabled = false;
       flag.source = "dependency";
+      flag.layer = "dependency";
+      flag.blockedBy = blocker;
       flag.reason = `${blocker} is off`;
     }
   }
@@ -249,43 +286,79 @@ export async function loadFeatureState() {
   return state;
 }
 
+export async function activePlanFor(userId) {
+  if (!userId) return "";
+  try {
+    if (!(await getDatabase())) return "";
+    const row = get(
+      "SELECT plan_id FROM subscriptions WHERE user_id = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > ?) ORDER BY updated_at DESC LIMIT 1",
+      String(userId),
+      Date.now()
+    );
+    return row?.plan_id || "";
+  } catch {
+    return "";
+  }
+}
+
+async function roomServerFor(roomCode) {
+  if (!roomCode) return "";
+  try {
+    if (!(await getDatabase())) return "";
+    const row = get("SELECT server_id FROM rooms WHERE room_code = ?", String(roomCode).toUpperCase());
+    return row?.server_id || "";
+  } catch {
+    return "";
+  }
+}
+
+async function roomSettingBlocks(roomCode) {
+  const map = new Map();
+  if (!roomCode) return map;
+  try {
+    if (!(await getDatabase())) return map;
+    const row = get(
+      "SELECT rs.* FROM room_settings rs JOIN rooms r ON r.id = rs.room_id WHERE r.room_code = ?",
+      String(roomCode).toUpperCase()
+    );
+    if (!row) return map;
+    for (const [column, keys] of Object.entries(ROOM_SETTING_FEATURES)) {
+      if (Number(row[column]) !== 0) continue;
+      for (const key of keys) map.set(key, `room setting ${column} is off`);
+    }
+  } catch {}
+  return map;
+}
+
 export async function resolveFeatureState(ctx = {}) {
   const base = await loadFeatureState();
   const now = Date.now();
-  const scopeFilters = [];
-  if (ctx.userId) scopeFilters.push({ type: "user", id: String(ctx.userId) });
-  if (ctx.room) scopeFilters.push({ type: "room", id: String(ctx.room).toUpperCase() });
-  if (ctx.server) scopeFilters.push({ type: "server", id: String(ctx.server) });
-  if (ctx.role) scopeFilters.push({ type: "role", id: String(ctx.role) });
-  if (ctx.plan) scopeFilters.push({ type: "plan", id: String(ctx.plan) });
-  if (!scopeFilters.length) return base;
-
-  const rows = await dbRows(
-    `SELECT * FROM feature_overrides
-     WHERE scope_type IN ('user','room','server','role','plan')
-       AND ((scope_type = 'user' AND scope_id = ?) OR (scope_type = 'room' AND scope_id = ?)
-         OR (scope_type = 'server' AND scope_id = ?) OR (scope_type = 'role' AND scope_id = ?)
-         OR (scope_type = 'plan' AND scope_id = ?))`,
-    [
-      ctx.userId ? String(ctx.userId) : "\u0000",
-      ctx.room ? String(ctx.room).toUpperCase() : "\u0000",
-      ctx.server ? String(ctx.server) : "\u0000",
-      ctx.role ? String(ctx.role) : "\u0000",
-      ctx.plan ? String(ctx.plan) : "\u0000"
-    ]
-  );
-  const scoped = new Map();
-  for (const priority of SCOPE_PRIORITY) {
+  const room = ctx.room ? String(ctx.room).toUpperCase() : "";
+  const plan = ctx.plan ? String(ctx.plan) : await activePlanFor(ctx.userId);
+  const server = ctx.server ? String(ctx.server) : await roomServerFor(room);
+  const scopeIds = {
+    user: ctx.userId ? String(ctx.userId) : "",
+    room,
+    server,
+    role: ctx.role ? String(ctx.role) : "",
+    plan
+  };
+  const scoped = new Map(SCOPE_PRIORITY.map((scope) => [scope, new Map()]));
+  const active = SCOPE_PRIORITY.filter((scope) => scopeIds[scope]);
+  if (active.length) {
+    const rows = await dbRows(
+      `SELECT * FROM feature_overrides WHERE ${active.map(() => "(scope_type = ? AND scope_id = ?)").join(" OR ")}`,
+      active.flatMap((scope) => [scope, scopeIds[scope]])
+    );
     for (const row of rows) {
-      if (row.scope_type !== priority) continue;
-      if (scoped.has(row.feature_key)) continue;
-      scoped.set(row.feature_key, row);
+      scoped.get(row.scope_type)?.set(row.feature_key, row);
     }
   }
+  const roomBlocks = await roomSettingBlocks(room);
   return {
     ...base,
-    flags: buildFlags(base, scoped, now),
-    context: { userId: ctx.userId || "", role: ctx.role || "", room: ctx.room || "", server: ctx.server || "", plan: ctx.plan || "" }
+    flags: buildFlags(base, scoped, now, roomBlocks),
+    context: { userId: ctx.userId || "", role: ctx.role || "", room, server, plan }
   };
 }
 
@@ -313,7 +386,11 @@ export function featureStatus(state) {
       deps: item.deps,
       enabled: flag.enabled !== false,
       source: flag.source || "default",
-      reason: flag.reason || ""
+      layer: flag.layer || "default",
+      locked: flag.layer === "security",
+      reason: flag.reason || "",
+      blockedBy: flag.blockedBy || "",
+      layers: flag.layers || []
     };
   });
 }
@@ -342,6 +419,9 @@ function validScope(scopeType, scopeId) {
 export async function setFeatureOverride({ key, scopeType = "global", scopeId = "", enabled, note = "", actor = "" }) {
   if (!FEATURE_BY_KEY.has(key)) throw Object.assign(new Error("Unknown feature key."), { statusCode: 400 });
   if (!validScope(scopeType, scopeId)) throw Object.assign(new Error("Invalid scope."), { statusCode: 400 });
+  if (enabled && isSecurityLocked(key)) {
+    throw Object.assign(new Error("This feature is locked off by a global security restriction."), { statusCode: 403, code: "security_locked" });
+  }
   if (!(await getDatabase())) throw Object.assign(new Error("Database is unavailable."), { statusCode: 503 });
   const cleanScope = scopeType === "room" ? String(scopeId).trim().toUpperCase() : String(scopeId || "").trim();
   const now = Date.now();
@@ -384,6 +464,9 @@ export async function clearFeatureOverride({ key, scopeType = "global", scopeId 
 export async function scheduleFeatureChange({ key, scopeType = "global", scopeId = "", enabled, effectiveAt, note = "", actor = "" }) {
   if (!FEATURE_BY_KEY.has(key)) throw Object.assign(new Error("Unknown feature key."), { statusCode: 400 });
   if (!validScope(scopeType, scopeId)) throw Object.assign(new Error("Invalid scope."), { statusCode: 400 });
+  if (enabled && isSecurityLocked(key)) {
+    throw Object.assign(new Error("This feature is locked off by a global security restriction."), { statusCode: 403, code: "security_locked" });
+  }
   const at = Number(effectiveAt);
   if (!Number.isFinite(at) || at < Date.now() + 5000) {
     throw Object.assign(new Error("Effective time must be at least a few seconds in the future."), { statusCode: 400 });

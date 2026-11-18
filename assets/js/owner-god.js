@@ -7,16 +7,41 @@ const GOD_GROUP = "god";
 
 const SCOPES = [
   { id: "global", label: "سراسری" },
-  { id: "user", label: "کاربر" },
+  { id: "plan", label: "پلن" },
   { id: "role", label: "نقش" },
   { id: "server", label: "سرور" },
   { id: "room", label: "اتاق" },
-  { id: "plan", label: "پلن" }
+  { id: "user", label: "کاربر" }
 ];
 const SCOPE_LABELS = Object.fromEntries(SCOPES.map((s) => [s.id, s.label]));
 const SCOPE_FIELD = { user: "userId", role: "role", server: "server", room: "room", plan: "plan" };
 const FLAG_GROUPS = { system: "زیرساخت", comm: "ارتباطات", watch: "تماشا", voice: "صدا و تصویر", account: "حساب", business: "کسب‌وکار" };
-const SOURCE_LABELS = { default: "پیش‌فرض", global: "سراسری", dependency: "وابستگی", rule: "قاعده", env: "اضطراری" };
+const LAYER_LABELS = {
+  security: "قفل امنیتی",
+  global: "سراسری",
+  plan: "پلن",
+  role: "نقش",
+  server: "سرور",
+  room: "اتاق",
+  user: "کاربر",
+  dependency: "وابستگی",
+  default: "پیش‌فرض"
+};
+const SOURCE_LABELS = {
+  default: "پیش‌فرض",
+  global: "سراسری",
+  dependency: "وابستگی",
+  rule: "قاعده",
+  env: "اضطراری",
+  emergency: "اضطرار سراسری",
+  security: "قفل امنیتی",
+  plan: "پلن",
+  role: "نقش",
+  server: "سرور",
+  room: "اتاق",
+  room_settings: "تنظیمات اتاق",
+  user: "کاربر"
+};
 const ROLE_LABELS = { super_owner: "مالک ارشد", owner: "مالک", administrator: "مدیر", moderator: "ناظر", room_owner: "مالک اتاق", member: "عضو", user: "کاربر", guest: "مهمان" };
 const STATUS_LABELS = { active: "فعال", suspended: "تعلیق", banned: "مسدود", pending: "در انتظار" };
 
@@ -602,6 +627,10 @@ function renderGovernance(section, center) {
 
       const summary = card("کنترل کامل قابلیت‌ها", "برای هر قابلیت: روشن/خاموش، دامنه، وابستگی‌ها، وضعیت واقعی، زمان‌بندی و تاریخچه. دسترسی سرور هم همان لحظه بسته می‌شود.");
       summary.append(el("p", { class: "hint-s", text: scopeHint }));
+      const hierarchy = data.hierarchy;
+      if (hierarchy?.layers?.length) {
+        summary.append(el("p", { class: "hint-s", text: `ترتیب اختیار: ${hierarchy.layers.map((l) => l.label).join(" ← ")}. هر لایه فقط می‌تواند محدودتر کند؛ لایهٔ پایین‌تر هیچ‌وقت محدودیت بالاتر را باز نمی‌کند.` }));
+      }
       if (govState.scopeType !== "global" && !govState.scopeId) {
         summary.append(el("p", { class: "ohint", text: "شناسهٔ دامنه را وارد کن تا وضعیت مؤثر همان دامنه را ببینی." }));
       }
@@ -627,7 +656,7 @@ function renderGovernance(section, center) {
           const toggleLabel = el("label", { class: "switch-line og-switch" });
           const toggle = el("input", { type: "checkbox" });
           toggle.checked = state.enabled !== false;
-          toggle.disabled = !scopeReady;
+          toggle.disabled = !scopeReady || state.locked === true;
           toggle.addEventListener("change", async () => {
             toggle.disabled = true;
             try {
@@ -653,18 +682,28 @@ function renderGovernance(section, center) {
           toggleLabel.append(toggle, names);
           top.append(toggleLabel, state.enabled !== false ? tag("روشن", "ok") : tag("خاموش", "off"));
           const meta = el("div", { class: "og-meta" });
-          const sourceText = state.source?.includes(":")
-            ? `${SOURCE_LABELS[state.source.split(":")[0]] || state.source} (${state.source.split(":")[1]})`
-            : (SOURCE_LABELS[state.source] || state.source || "پیش‌فرض");
+          const sourceText = SOURCE_LABELS[state.layer] || SOURCE_LABELS[state.source] || state.source || "پیش‌فرض";
           meta.append(el("span", { class: "hint-s", text: `منبع: ${sourceText}` }));
           if (state.reason) meta.append(el("span", { class: "hint-s", text: state.reason }));
+          if (Array.isArray(state.layers) && state.layers.length) {
+            const merged = [];
+            for (const layer of state.layers) {
+              const seen = merged.find((entry) => entry.layer === layer.layer);
+              if (!seen) merged.push({ layer: layer.layer, enabled: layer.enabled });
+              else if (!layer.enabled) seen.enabled = false;
+            }
+            const chain = merged
+              .map((entry) => `${LAYER_LABELS[entry.layer] || entry.layer}: ${entry.enabled ? "باز" : "بسته"}`)
+              .join(" · ");
+            meta.append(el("span", { class: "hint-s og-chain", text: chain }));
+          }
           if (item.deps?.length) meta.append(el("span", { class: "hint-s", text: `وابسته به: ${item.deps.map((d) => (status.get(d)?.label || d)).join("، ")}` }));
           if (override) meta.append(tag("بازنویسی فعال", "warn"));
           rowEl.append(top, meta);
 
           const actions = el("div", { class: "og-actions" });
           const schedBtn = el("button", { class: "mini-btn", type: "button", text: "زمان‌بندی" });
-          schedBtn.disabled = !scopeReady;
+          schedBtn.disabled = !scopeReady || state.locked === true;
           schedBtn.addEventListener("click", () => openScheduleModal(item, state));
           actions.append(schedBtn);
           if (override) {

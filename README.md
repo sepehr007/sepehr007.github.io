@@ -192,6 +192,7 @@ server/stores/          کوئری‌های SQLite برای لابی، اتاق/
 server/routes/admin.js  API دیتابیس و حسابرسی مخصوص مالک
 server/routes/platform.js  API داشبورد مالک: کاربران، پیام‌ها، گزارش‌ها، مالی، آمار، ذخیره‌سازی، تنظیمات و قابلیت‌ها
 server/features.js      موتور کنترل قابلیت: دامنه، وابستگی، زمان‌بندی و تاریخچه
+server/configHierarchy.js  ترتیب اختیار لایه‌ها و قاعدهٔ حل تعارض پیکربندی
 server/platformSettings.js  رجیستری و اعتبارسنجی تنظیمات سایت ذخیره‌شده در دیتابیس
 server/adminGuard.js    محافظ نقش مالک و نرخ درخواست مسیرهای پنل
 assets/data/site-config.json  تنظیمات سراسری منتشرشده (با کنسول مالک کامیت می‌شود)
