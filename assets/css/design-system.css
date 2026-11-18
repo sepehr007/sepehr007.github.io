@@ -1,0 +1,123 @@
+/* ============================================================
+   هم‌تماشا — Design system (single source of truth for tokens)
+   Loaded before every other stylesheet. Page skins may add
+   component rules, but colors, type, spacing, radii, shadows and
+   motion values must come from here.
+   Breakpoints: 480 (small phone), 640 (phone), 768 (tablet),
+   1024 (small desktop), 1280 (desktop shell max width).
+   ============================================================ */
+:root{
+  /* ----- color: brand ----- */
+  --accent:#3d6bff;
+  --accent-2:#f5b23e;
+  --brand-rgb:61,107,255;
+  --brand-2-rgb:245,178,62;
+  --grad:linear-gradient(135deg,#3d6bff 0%,#38bdf8 58%,#f5b23e 100%);
+
+  /* ----- color: surfaces & text (dark, default) ----- */
+  --bg:#07080d;
+  --bg-2:#0b0d15;
+  --panel:rgba(255,255,255,.045);
+  --panel-strong:rgba(255,255,255,.075);
+  --border:rgba(255,255,255,.09);
+  --border-strong:rgba(255,255,255,.16);
+  --text:#e9edf7;
+  --text-dim:#9aa4bd;
+  --text-faint:#6b7590;
+
+  /* ----- color: semantic aliases for new components ----- */
+  --surface-0:var(--bg);
+  --surface-1:var(--bg-2);
+  --surface-2:var(--panel);
+  --surface-3:var(--panel-strong);
+  --stroke-subtle:var(--border);
+  --stroke-strong:var(--border-strong);
+  --text-1:var(--text);
+  --text-2:var(--text-dim);
+  --text-3:var(--text-faint);
+  --note-error:#fca5a5;
+  --link:#8fa8ff;
+  --focus-ring:rgba(var(--brand-rgb),.55);
+
+  /* ----- color: status ----- */
+  --success:#34d399;
+  --warn:#fbbf24;
+  --danger:#f87171;
+
+  /* ----- typography ----- */
+  --font:"Vazirmatn",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --fs-xs:11px;
+  --fs-sm:12.5px;
+  --fs-base:14px;
+  --fs-md:14.5px;
+  --fs-lg:16px;
+  --fs-xl:20px;
+  --fs-2xl:26px;
+  --lh-tight:1.25;
+  --lh-snug:1.6;
+  --lh-body:1.8;
+  --weight-regular:400;
+  --weight-medium:500;
+  --weight-semibold:600;
+  --weight-bold:700;
+  --weight-heavy:800;
+
+  /* ----- layout & spacing (4px base) ----- */
+  --sp-1:4px;
+  --sp-2:8px;
+  --sp-3:12px;
+  --sp-4:16px;
+  --sp-5:20px;
+  --sp-6:24px;
+  --sp-7:32px;
+  --sp-8:40px;
+  --sp-9:48px;
+  --sp-10:64px;
+  --topbar-h:64px;
+  --side-w:360px;
+  --content-w:1180px;
+  --header-w:1280px;
+
+  /* ----- radii ----- */
+  --r-sm:10px;
+  --r-md:14px;
+  --r-lg:20px;
+  --r-xl:28px;
+  --r-pill:99px;
+
+  /* ----- shadows & elevation ----- */
+  --shadow:0 24px 60px -20px rgba(0,0,0,.8);
+  --shadow-sm:0 8px 22px -12px rgba(0,0,0,.6);
+  --shadow-md:0 16px 40px -16px rgba(0,0,0,.7);
+  --shadow-lg:var(--shadow);
+  --shadow-brand:0 10px 30px -12px rgba(var(--brand-rgb),.9);
+
+  /* ----- icons ----- */
+  --icon-sm:16px;
+  --icon-md:20px;
+  --icon-lg:24px;
+
+  /* ----- motion ----- */
+  --ease-standard:cubic-bezier(.2,.7,.3,1);
+  --dur-fast:150ms;
+  --dur-mid:240ms;
+  --dur-slow:400ms;
+
+  /* ----- layering ----- */
+  --z-header:20;
+  --z-menu:60;
+  --z-modal:100;
+  --z-toast:200;
+}
+
+/* Every component must be able to opt out of motion. Page skins
+   add their own blocks; this is the global floor. */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.01ms!important;
+    scroll-behavior:auto!important;
+  }
+}

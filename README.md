@@ -181,8 +181,10 @@ profile.html            پروفایل کاربر (آواتار، مشخصات،
 room.html               صفحه اتاق
 owner.html              کنسول مخفی مالک سایت (فعال‌سازی با توکن گیت‌هاب + رمز محلی)
 owner/ god/ admin-access/  مسیرهای میان‌بر مخفی به owner.html
+assets/css/design-system.css  توکن‌های واحد طراحی (رنگ، تایپ، فاصله، شعاع، سایه، حرکت)
 assets/css/style.css    استایل کامل
 assets/css/owner.css    استایل کنسول مالک
+docs/architecture.md    نقشهٔ معماری فرانت، بک‌اند، دیتابیس، زمان واقعی و احراز هویت
 assets/data/site-config.json  تنظیمات سراسری منتشرشده (با کنسول مالک کامیت می‌شود)
 assets/js/core.js       ابزارها، اعتبارسنجی لینک، Toast
 assets/js/i18n.js       مترجم فا/EN
