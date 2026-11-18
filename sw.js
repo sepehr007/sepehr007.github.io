@@ -1,4 +1,4 @@
-const CACHE = "wt-v74";
+const CACHE = "wt-v75";
 const SHELL = [
   "./",
   "./index.html",
@@ -29,6 +29,7 @@ const SHELL = [
   "./assets/js/landing.js",
   "./assets/js/profile.js",
   "./assets/js/room.js",
+  "./assets/js/livefeed.js",
   "./assets/js/net.js",
   "./assets/js/player.js",
   "./assets/js/hls.min.js",

@@ -5,6 +5,7 @@ import {
   registerServiceWorker, applyUIPrefs, getPrefs, savePrefs, resetPrefs, ACCENTS, lightenHex, safeReload
 } from "./core.js";
 import { Net } from "./net.js";
+import { LiveFeed } from "./livefeed.js";
 import { Player, parseSubtitles } from "./player.js";
 import { Voice } from "./voice.js";
 import { currentUser, isLocallyBanned } from "./auth.js";
@@ -62,6 +63,7 @@ let userAudio = store.get(USER_AUDIO_KEY, {}) || {};
 let cineExpanded = false;
 let cineUnread = 0;
 let cineMsgs = [];
+let cineFeed = null;
 const MAX_CINE = 40;
 let lastReactAt = 0;
 let cineAutoOpened = false;
@@ -426,6 +428,7 @@ function wireNet() {
     const mine = list.find((m) => m.id === me.id);
     if (mine) { me.role = mine.role; me.nick = mine.nick; if (mine.avatar) me.avatar = mine.avatar; }
     syncAdminTools();
+    paintManagerOptions(roomInfo);
     renderMembers();
     refreshChatAvatars();
     const voices = list.filter((m) => m.voice && m.id !== me.id).map((m) => m.id);
@@ -546,8 +549,29 @@ function wireNet() {
     setTimeout(() => location.replace("./"), 1500);
   });
 
-  net.on("disconnected", () => {
+  let retryTimer = 0;
+  const showLost = () => {
     $("#connLostBar")?.classList.remove("hidden");
+    $("#netLabel").textContent = t("net.lostTitle");
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => {
+      if (navigator.onLine && !net.isReady()) safeReload();
+    }, 5000);
+  };
+  net.on("disconnected", showLost);
+  window.addEventListener("offline", showLost);
+  window.addEventListener("online", () => {
+    if (net.isReady()) {
+      $("#connLostBar")?.classList.add("hidden");
+      toast(t("net.backOnline"), "success", 2400);
+    } else {
+      safeReload();
+    }
+  });
+  net.on("closed", () => {
+    $("#connLostBar")?.classList.add("hidden");
+    toast(t("toast.lobbyClosed"), "info", 3200);
+    setTimeout(() => location.replace("./"), 1400);
   });
 
   net.on("denied", (reason) => {
@@ -899,9 +923,9 @@ function maybeAutoOpenCine() {
   try { if (sessionStorage.getItem(introKey)) return; } catch {}
   if (cineExpanded || !cineOn || !chatEnabled) return;
   if (!flagOn(flagStates, "watch.floatingChat")) return;
-  if (window.matchMedia("(max-width: 640px)").matches) return;
   try { sessionStorage.setItem(introKey, "1"); } catch {}
-  setCineExpanded(true);
+  if (window.matchMedia("(max-width: 640px)").matches) return;
+  toast(getLang() === "fa" ? "چت شناور فعال است؛ پیام‌ها روی فیلم ظاهر می‌شوند." : "Floating chat is on; messages appear over the movie.", "info", 2800);
 }
 
 function showMediaLoading() {
@@ -1829,54 +1853,210 @@ function applyUserAudio(peerId, nickName) {
   if (pref.vol != null) voice.setVolume(peerId, pref.vol);
 }
 
+let sheetMemberId = "";
+
+function isManagerSelf() {
+  return me.role === "owner" || (!!roomInfo?.managerId && roomInfo.managerId === me.id);
+}
+
+function memberById(id) {
+  return members.find((m) => m.id === id) || null;
+}
+
+function toggleLocalMute(id, name) {
+  if (!allow("voice.volume", "کنترل صدای اعضا غیرفعال شده است.")) return;
+  if (!id) return;
+  const next = !userAudioFor(name).mute;
+  voice.setLocalMuted(id, next);
+  saveUserAudio(name, { mute: next });
+  for (const node of peopleList.querySelectorAll(`.person[data-id="${cssEscape(id)}"]`)) {
+    node.classList.toggle("muted-local", next);
+    const btn = node.querySelector("[data-lmute]");
+    if (btn) {
+      btn.classList.toggle("on", next);
+      btn.textContent = next ? "🔇" : "🔊";
+      btn.setAttribute("aria-pressed", String(next));
+    }
+  }
+  const label = t(next ? "people.localUnmute" : "people.localMute");
+  const sheetBtn = $("#psActions [data-sheet='localmute']");
+  if (sheetBtn) {
+    sheetBtn.classList.toggle("on", next);
+    sheetBtn.textContent = `${next ? "🔇" : "🔊"} ${label}`;
+  }
+  toast(t(next ? "toast.mutedForMe" : "toast.unmutedForMe", { name }), "info", 2600);
+  return next;
+}
+
+async function runModAction(action, id) {
+  if (action === "kick" || action === "ban") {
+    const ok = await confirmDialog({
+      title: t(action === "kick" ? "people.kick" : "people.ban"),
+      text: getLang() === "fa" ? "این کار قابل بازگشت نیست." : "This can't be undone.",
+      okLabel: t("common.ok")
+    });
+    if (!ok) return;
+  }
+  net.command("mod", { action, target: id });
+}
+
+function setVolumeFor(id, nick, value) {
+  if (!allow("voice.volume", "کنترل صدای اعضا غیرفعال شده است.")) return;
+  const v = Math.max(0, Math.min(100, Number(value) || 0)) / 100;
+  voice.setVolume(id, v);
+  saveUserAudio(nick, { vol: v });
+  const person = peopleList.querySelector(`.person[data-id="${cssEscape(id)}"] .person-vol`);
+  if (person) person.value = String(Math.round(v * 100));
+  const tile = document.querySelector(`.voice-tile[data-id="${cssEscape(id)}"] .tile-vol`);
+  if (tile) tile.value = String(Math.round(v * 100));
+  const sheetVol = $("#psVol");
+  if (sheetVol) sheetVol.value = String(Math.round(v * 100));
+}
+
+function renderPersonSheet(m) {
+  const actions = $("#psActions");
+  if (!actions || !m) return;
+  actions.innerHTML = "";
+  $("#psName").textContent = m.nick + (m.id === me.id ? (getLang() === "fa" ? " (تو)" : " (you)") : "");
+  $("#psSub").textContent = m.role === "owner" ? t("role.owner") : roomInfo?.managerId === m.id ? t("people.successor") : t(`role.${m.role}`);
+  if (m.id === me.id) return;
+
+  if (flagOn(flagStates, "voice.volume")) {
+    const pref = userAudioFor(m.nick);
+    const muteBtn = el("button", {
+      type: "button", class: `ps-btn${pref.mute ? " on" : ""}`, "data-sheet": "localmute",
+      text: `${pref.mute ? "🔇" : "🔊"} ${t(pref.mute ? "people.localUnmute" : "people.localMute")}`
+    });
+    actions.append(muteBtn);
+    const volWrap = el("label", { class: "ps-vol" });
+    volWrap.append(el("span", { text: t("people.volume") }));
+    const vol = el("input", {
+      id: "psVol", type: "range", min: "0", max: "100", step: "1",
+      value: String(Math.round((pref.vol ?? 1) * 100))
+    });
+    vol.addEventListener("input", (e) => setVolumeFor(m.id, m.nick, e.target.value));
+    volWrap.append(vol);
+    actions.append(volWrap);
+  }
+
+  if (isModSelf() && m.role !== "owner") {
+    actions.append(el("button", { type: "button", class: "ps-btn", "data-sheet": "mod:mute", text: `🔇 ${m.muted ? t("people.unmute") : t("people.mute")}` }));
+    if (me.role === "owner") {
+      actions.append(el("button", { type: "button", class: "ps-btn", "data-sheet": `mod:${m.role === "mod" ? "demote" : "promote"}`, text: `${m.role === "mod" ? "↓" : "↑"} ${m.role === "mod" ? t("people.demote") : t("people.promote")}` }));
+    }
+    actions.append(el("button", { type: "button", class: "ps-btn danger", "data-sheet": "mod:kick", text: `⤫ ${t("people.kick")}` }));
+    actions.append(el("button", { type: "button", class: "ps-btn danger", "data-sheet": "mod:ban", text: `🚫 ${t("people.ban")}` }));
+  }
+
+  if (isManagerSelf() && m.role !== "owner") {
+    const isMgr = roomInfo?.managerId === m.id;
+    actions.append(el("button", {
+      type: "button", class: `ps-btn${isMgr ? " on" : ""}`, "data-sheet": "manager",
+      text: `👑 ${isMgr ? t("people.clearManager") : t("people.makeManager")}`
+    }));
+  }
+}
+
+function openPersonSheet(id) {
+  const m = memberById(id);
+  const sheet = $("#personSheet");
+  if (!m || !sheet) return;
+  sheetMemberId = id;
+  renderPersonSheet(m);
+  sheet.classList.remove("hidden");
+  $("#personSheetBackdrop")?.classList.remove("hidden");
+  requestAnimationFrame(() => sheet.classList.add("open"));
+}
+
+function closePersonSheet() {
+  const sheet = $("#personSheet");
+  if (!sheet) return;
+  sheet.classList.remove("open");
+  $("#personSheetBackdrop")?.classList.add("hidden");
+  setTimeout(() => { if (!sheet.classList.contains("open")) sheet.classList.add("hidden"); }, 180);
+  sheetMemberId = "";
+}
+
+async function handleSheetAction(kind) {
+  const m = memberById(sheetMemberId);
+  if (!m) return;
+  if (kind === "localmute") { toggleLocalMute(m.id, m.nick); renderPersonSheet(m); return; }
+  if (kind === "manager") {
+    const next = roomInfo?.managerId === m.id ? "" : m.id;
+    net.command("settings", { patch: { managerId: next } });
+    if (next) toast(t("toast.managerChanged"), "success");
+    closePersonSheet();
+    return;
+  }
+  if (kind.startsWith("mod:")) {
+    const action = kind.slice(4);
+    closePersonSheet();
+    await runModAction(action, m.id);
+  }
+}
+
+function wirePersonSheet() {
+  const sheet = $("#personSheet");
+  if (!sheet) return;
+  $("#psClose")?.addEventListener("click", closePersonSheet);
+  $("#personSheetBackdrop")?.addEventListener("click", closePersonSheet);
+  $("#psActions").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-sheet]");
+    if (!btn) return;
+    handleSheetAction(btn.dataset.sheet);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sheet.classList.contains("open")) closePersonSheet();
+  });
+}
+
 function wirePeople() {
-  peopleList.addEventListener("click", async (e) => {
+  wirePersonSheet();
+  peopleList.addEventListener("click", (e) => {
+    if (e.target.closest("[data-pmore]")) {
+      openPersonSheet(e.target.closest(".person")?.dataset.id || "");
+      return;
+    }
     const local = e.target.closest("[data-lmute]");
     if (local) {
-      if (!allow("voice.volume", "کنترل صدای اعضا غیرفعال شده است.")) return;
       const person = local.closest(".person");
-      const id = person?.dataset.id;
-      const name = person?.dataset.nick || "";
-      if (!id) return;
-      const next = !userAudioFor(name).mute;
-      voice.setLocalMuted(id, next);
-      saveUserAudio(name, { mute: next });
-      person.classList.toggle("muted-local", next);
-      local.classList.toggle("on", next);
-      local.textContent = next ? "🔇" : "🔊";
-      const label = t(next ? "people.localUnmute" : "people.localMute");
-      local.title = label;
-      local.setAttribute("aria-label", label);
-      local.setAttribute("aria-pressed", String(next));
-      toast(t(next ? "toast.mutedForMe" : "toast.unmutedForMe", { name }), "info", 2600);
+      toggleLocalMute(person?.dataset.id, person?.dataset.nick || "");
       return;
     }
     const btn = e.target.closest("[data-pmod]");
     if (!btn) return;
-    const id = btn.closest(".person").dataset.id;
-    const action = btn.dataset.pmod;
-    if (action === "kick" || action === "ban") {
-      const ok = await confirmDialog({
-        title: t(action === "kick" ? "people.kick" : "people.ban"),
-        text: getLang() === "fa" ? "این کار قابل بازگشت نیست." : "This can't be undone.",
-        okLabel: t("common.ok")
-      });
-      if (!ok) return;
-    }
-    net.command("mod", { action, target: id });
+    runModAction(btn.dataset.pmod, btn.closest(".person").dataset.id);
   });
 
   peopleList.addEventListener("input", (e) => {
     const range = e.target.closest(".person-vol");
     if (!range) return;
-    if (!allow("voice.volume", "کنترل صدای اعضا غیرفعال شده است.")) { e.target.value = String(Math.round((userAudioFor(range.closest(".person")?.dataset.nick).vol ?? 1) * 100)); return; }
     const person = range.closest(".person");
-    const v = Math.max(0, Math.min(100, Number(range.value) || 0)) / 100;
-    voice.setVolume(person.dataset.id, v);
-    saveUserAudio(person.dataset.nick, { vol: v });
-    const tile = document.querySelector(`.voice-tile[data-id="${cssEscape(person.dataset.id)}"] .tile-vol`);
-    if (tile) tile.value = String(Math.round(v * 100));
+    setVolumeFor(person.dataset.id, person.dataset.nick, range.value);
   });
+
+  let pressTimer = 0;
+  let pressStart = null;
+  peopleList.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" || e.target.closest("button, input, a")) return;
+    const person = e.target.closest(".person");
+    if (!person || person.dataset.id === me.id) return;
+    pressStart = { x: e.clientX, y: e.clientY };
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      openPersonSheet(person.dataset.id);
+      navigator.vibrate?.(12);
+      pressStart = null;
+    }, 480);
+  });
+  const cancelPress = () => { clearTimeout(pressTimer); pressStart = null; };
+  peopleList.addEventListener("pointermove", (e) => {
+    if (!pressStart) return;
+    if (Math.abs(e.clientX - pressStart.x) > 10 || Math.abs(e.clientY - pressStart.y) > 10) cancelPress();
+  });
+  peopleList.addEventListener("pointerup", cancelPress);
+  peopleList.addEventListener("pointercancel", cancelPress);
+  peopleList.addEventListener("pointerleave", cancelPress);
 
   const muteAll = () => {
     if (!allow("voice.volume", "کنترل صدای اعضا غیرفعال شده است.")) return;
@@ -1939,9 +2119,13 @@ function renderMembers() {
     const nameRow = el("div", { class: "person-name" });
     nameRow.append(el("span", { text: m.nick + (m.id === me.id ? (getLang() === "fa" ? " (تو)" : " (you)") : "") }));
     if (m.role !== "member") nameRow.append(el("span", { class: `role-badge ${m.role}`, text: t(`role.${m.role}`) }));
+    if (roomInfo?.managerId === m.id && m.role !== "owner") {
+      nameRow.append(el("span", { class: "role-badge manager", text: t("people.successor") }));
+    }
     const sub = el("div", { class: "person-sub", text: m.voice ? (getLang() === "fa" ? "در صدا" : "In voice") : "" });
     info.append(nameRow, sub);
 
+    const tools = el("div", { class: "person-tools" });
     if (m.id !== me.id && flagOn(flagStates, "voice.volume")) {
       const pref = userAudioFor(m.nick);
       const audioRow = el("div", { class: "person-audio" });
@@ -1958,7 +2142,7 @@ function renderMembers() {
         "aria-label": t("people.volume")
       });
       audioRow.append(muteBtn, vol);
-      info.append(audioRow);
+      tools.append(audioRow);
       node.classList.toggle("muted-local", !!pref.mute);
       applyUserAudio(m.id, m.nick);
     }
@@ -1972,7 +2156,16 @@ function renderMembers() {
         actions.append(el("button", { type: "button", "data-pmod": m.role === "mod" ? "demote" : "promote", title: m.role === "mod" ? t("people.demote") : t("people.promote"), text: m.role === "mod" ? "↓" : "↑" }));
       }
     }
-    node.append(avatar, info, actions);
+    if (actions.children.length) tools.append(actions);
+    node.append(avatar, info);
+    if (tools.children.length) node.append(tools);
+    if (m.id !== me.id) {
+      node.append(el("button", {
+        type: "button", class: "person-more", "data-pmore": "1",
+        title: t("people.more"), "aria-label": t("people.more"), "aria-haspopup": "dialog",
+        text: "⋯"
+      }));
+    }
     if (m.voice && !m.muted) node.dataset.voice = "1";
     peopleList.append(node);
   }
@@ -2055,22 +2248,44 @@ function renderQueue(items) {
 
 function canControl() {
   if (me.role === "owner") return true;
-  const control = roomInfo?.control || "mods";
-  if (control === "all") return true;
-  if (control === "mods" && me.role === "mod") return true;
-  return false;
+  if (roomInfo?.managerId && roomInfo.managerId === me.id) return true;
+  return (roomInfo?.control || "mods") === "all";
 }
 
 /* ================= settings ================= */
+let lastManagerSeen = null;
+
+function paintManagerOptions(room) {
+  const sel = $("#optManager");
+  if (!sel || !room) return;
+  const current = room.managerId || "";
+  sel.innerHTML = "";
+  sel.append(el("option", { value: "", text: t("settings.successorNone") }));
+  for (const m of members) {
+    if (m.role === "owner") continue;
+    sel.append(el("option", { value: m.id, text: m.nick + (m.id === me.id ? (getLang() === "fa" ? " (تو)" : " (you)") : "") }));
+  }
+  if (current && !members.some((m) => m.id === current)) {
+    sel.append(el("option", { value: current, text: t("people.successor") }));
+  }
+  sel.value = current;
+}
+
 function applyRoomSettings(room) {
   if (!room) return;
   roomInfo = room;
-  const isOwner = me.role === "owner";
-  $("#optControl").value = room.control || "mods";
+  const manager = isManagerSelf();
+  $("#optControl").value = room.control === "all" ? "all" : "host";
   $("#optLock").checked = !!room.locked;
   $("#optApproval").checked = !!room.approval;
   $("#optSlow").value = String(room.slow || 0);
-  [$("#optControl"), $("#optLock"), $("#optApproval"), $("#optSlow")].forEach((n) => { n.disabled = !isOwner; });
+  paintManagerOptions(room);
+  const locked = !manager;
+  [$("#optControl"), $("#optLock"), $("#optApproval"), $("#optSlow"), $("#optManager")].forEach((n) => { if (n) n.disabled = locked; });
+  if (room.managerId && room.managerId === me.id && lastManagerSeen !== me.id) {
+    toast(t("toast.youAreManager"), "success");
+  }
+  lastManagerSeen = room.managerId || "";
   syncAdminTools();
 }
 
@@ -2182,6 +2397,7 @@ function wireSettings() {
     push({ approval: e.target.checked });
   });
   $("#optSlow").addEventListener("change", (e) => push({ slow: Number(e.target.value) }));
+  $("#optManager")?.addEventListener("change", (e) => push({ managerId: e.target.value }));
   $("#optQuality").addEventListener("change", (e) => {
     if (!allow("watch.quality", "انتخاب کیفیت غیرفعال شده است.")) return;
     player.setLevel(e.target.value);
@@ -2435,6 +2651,8 @@ function wirePrefs() {
   bindRange("#prefChatSize", "#prefChatSizeVal", "chatSize", (v) => String(v.toFixed(1)));
   bindRange("#prefChatAlpha", "#prefChatAlphaVal", "chatAlpha", (v) => `${v}%`);
   bindRange("#prefChatBright", "#prefChatBrightVal", "chatBright", (v) => `${v}%`);
+  bindRange("#prefCineBright", "#prefCineBrightVal", "cineBright", (v) => `${v}%`);
+  bindRange("#prefCineSize", "#prefCineSizeVal", "cineSize", (v) => String(v.toFixed(1)));
   bindRange("#prefGlass", "#prefGlassVal", "glass", (v) => `${v}%`);
   markAccent();
 
@@ -2448,6 +2666,10 @@ function wirePrefs() {
     $("#prefChatAlphaVal").textContent = `${d.chatAlpha}%`;
     $("#prefChatBright").value = String(d.chatBright);
     $("#prefChatBrightVal").textContent = `${d.chatBright}%`;
+    $("#prefCineBright").value = String(d.cineBright);
+    $("#prefCineBrightVal").textContent = `${d.cineBright}%`;
+    $("#prefCineSize").value = String(d.cineSize);
+    $("#prefCineSizeVal").textContent = d.cineSize.toFixed(1);
     $("#prefGlass").value = String(d.glass);
     $("#prefGlassVal").textContent = `${d.glass}%`;
     markAccent();
@@ -2854,6 +3076,11 @@ function pushCine(msg, { quiet = false } = {}) {
     cineUnread = Math.min(99, cineUnread + 1);
     paintCineUnread();
   }
+  const frame = $(".video-frame");
+  const feedAllowed = cineOn && chatEnabled && flagOn(flagStates, "watch.floatingChat");
+  if (feedAllowed && !quiet && fresh && !cineExpanded && !entry.deleted && cineFeed && frame?.classList.contains("has-media")) {
+    cineFeed.push({ name: entry.nick, text: entry.text, mine: msg.by === me.id });
+  }
 }
 
 function renderCine() {
@@ -2870,8 +3097,9 @@ function renderCine() {
       class: `cine-msg${m.by === me.id ? " own" : ""}${m.deleted ? " deleted" : ""}`
     });
     row.append(
-      el("b", { text: m.nick || "?" }),
-      el("span", { text: m.deleted ? t("chat.deleted") : m.text })
+      el("b", { class: "cine-name", text: m.nick || "?" }),
+      el("span", { class: "cine-sep", text: " : " }),
+      el("span", { class: "cine-text", text: m.deleted ? t("chat.deleted") : m.text })
     );
     list.append(row);
   }
@@ -2896,6 +3124,7 @@ function setCineExpanded(on) {
   const ctl = $("#cineCtlBtn");
   ctl?.classList.toggle("active", cineExpanded);
   ctl?.setAttribute("aria-expanded", String(cineExpanded));
+  cineFeed?.setPaused(cineExpanded);
   if (cineExpanded) {
     cineUnread = 0;
     paintCineUnread();
@@ -2916,6 +3145,7 @@ function applyCineChat() {
   box.classList.toggle("hidden", !enabled);
   box.classList.toggle("min", !cineExpanded);
   $("#cineCtlBtn")?.classList.toggle("hidden", !enabled);
+  cineFeed?.setPaused(!enabled || cineExpanded);
   if (enabled) {
     renderCine();
     paintCineUnread();
@@ -2925,6 +3155,8 @@ function applyCineChat() {
 function wireCineChat() {
   const box = $("#cineChat");
   if (!box) return;
+  cineFeed = new LiveFeed($("#cineFeed"), { gap: 1500, hold: 4600, max: 6 });
+  cineFeed.setPaused(cineExpanded);
   $("#cineExpandBtn")?.addEventListener("click", () => setCineExpanded(!cineExpanded));
   $("#cineMinBtn")?.addEventListener("click", () => setCineExpanded(false));
   $("#cineCtlBtn")?.addEventListener("click", () => {
@@ -2941,8 +3173,8 @@ function wireCineChat() {
     scrollChat(true);
   });
   box.querySelector(".cine-head")?.addEventListener("click", (e) => {
-    if (cineExpanded || e.target.closest(".cine-min") || e.target.closest(".cine-title-btn")) return;
-    setCineExpanded(true);
+    if (e.target.closest(".cine-min") || e.target.closest(".cine-title-btn")) return;
+    setCineExpanded(!cineExpanded);
   });
   $("#cineExpandBtn")?.addEventListener("focus", () => {
     if (!cineExpanded) setCineExpanded(true);
@@ -3018,7 +3250,7 @@ function floatReaction(emoji) {
 function sendReaction(emoji) {
   if (!allow("chat.reactions", "واکنش‌ها غیرفعال شده است.")) return;
   const now = Date.now();
-  if (now - lastReactAt < 200) return;
+  if (now - lastReactAt < 600) return;
   lastReactAt = now;
   floatReaction(emoji);
   recordFeatureUse("chat.reactions", { plan: flagContext.plan, role: flagContext.role, room: code });
@@ -3143,12 +3375,18 @@ function wireMisc() {
   }
 
   $("#leaveBtn").addEventListener("click", async () => {
+    const manager = isManagerSelf();
     const ok = await confirmDialog({
-      title: getLang() === "fa" ? "خروج از اتاق" : "Leave room",
-      text: getLang() === "fa" ? "از اتاق خارج می‌شوی." : "You will leave this room.",
+      title: manager ? t("leave.closeTitle") : (getLang() === "fa" ? "خروج از اتاق" : "Leave room"),
+      text: manager ? t("leave.closeText") : (getLang() === "fa" ? "از اتاق خارج می‌شوی." : "You will leave this room."),
       okLabel: getLang() === "fa" ? "خروج" : "Leave"
     });
     if (!ok) return;
+    if (manager) {
+      net.command("closeLobby");
+      setTimeout(() => { cleanup(); location.replace("./"); }, 260);
+      return;
+    }
     cleanup();
     location.replace("./");
   });
@@ -3163,6 +3401,13 @@ function wireMisc() {
       if (!document.activeElement?.matches?.("input, textarea, select")) document.body.classList.remove("kb-open");
     }, 80);
   });
+  const vv = window.visualViewport;
+  if (vv) {
+    vv.addEventListener("resize", () => {
+      const shrunk = window.innerHeight - vv.height > 130;
+      document.body.classList.toggle("kb-open", shrunk);
+    });
+  }
 
   $("#sideBtn")?.addEventListener("click", () => {
     if (chatHidden) return setChatHidden(false);

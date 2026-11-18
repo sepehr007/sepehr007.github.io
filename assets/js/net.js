@@ -204,6 +204,7 @@ export class Net {
       capacity: this.capacity,
       privacy: this.privacy,
       control: "mods",
+      managerId: "",
       locked: false,
       approval: false,
       slow: 0
@@ -523,6 +524,7 @@ export class Net {
       case "queuePlay": return this.#hostQueuePlay(member, msg.id);
       case "settings": return this.#hostSettings(member, msg.patch);
       case "mod": return this.#hostMod(member, msg);
+      case "closeLobby": return this.#hostClose(member);
       case "voice": return this.#hostVoice(member, !!msg.on);
       case "fileRequest": return this.#hostFileSend(conn.peer, msg.id);
       case "syncRequest": return this.#sendTo(conn.peer, { t: "playback", state: this.playback });
@@ -601,6 +603,11 @@ export class Net {
     this.conns.delete(peerId);
     const rec = this.pcs.get(`d:${peerId}`);
     if (rec) { try { rec.pc.close(); } catch {} this.pcs.delete(`d:${peerId}`); }
+    if (this.room.managerId === peerId) {
+      this.room.managerId = "";
+      this.#broadcast({ t: "room", room: this.room });
+      this.emit("room", this.room);
+    }
     this.#broadcastMembers();
     this.emit("voice", { id: peerId, on: false, left: true });
   }
@@ -608,11 +615,16 @@ export class Net {
   canControl(member) {
     if (!member) return false;
     if (member.role === "owner") return true;
+    if (this.room.managerId && member.id === this.room.managerId) return true;
     if (this.room.control === "all") return true;
-    if (this.room.control === "mods" && member.role === "mod") return true;
     return false;
   }
-  isMod(member) { return member?.role === "owner" || member?.role === "mod"; }
+  isManager(member) {
+    return !!member && (member.role === "owner" || (!!this.room.managerId && member.id === this.room.managerId));
+  }
+  isMod(member) {
+    return this.isManager(member) || member?.role === "mod";
+  }
 
   #allow(member, kind, max, windowMs) {
     if (!member) return true;
@@ -637,9 +649,9 @@ export class Net {
   #hostReaction(member, msg) {
     const emoji = String(msg.emoji || "");
     if (!LIVE_REACTIONS.includes(emoji)) return;
-    if (!this.#allow(member, "reaction", 8, 5000)) return;
+    if (!this.#allow(member, "reaction", 6, 8000)) return;
     const now = Date.now();
-    if (now - (member.lastReactionAt || 0) < 150) return;
+    if (now - (member.lastReactionAt || 0) < 400) return;
     member.lastReactionAt = now;
     const out = { id: uid(), emoji, nick: member.nick, at: now, by: member.id };
     this.#broadcast({ t: "reaction", ...out });
@@ -650,6 +662,7 @@ export class Net {
     const text = String(msg.text || "").slice(0, 500).trim();
     if (!text) return;
     const now = Date.now();
+    if (now - (member.lastChatAt || 0) < 350) return;
     if (this.room.slow) {
       const wait = this.room.slow * 1000 - (now - (member.lastChatAt || 0));
       if (wait > 0) { this.#sendTo(member.id, { t: "slow", wait: Math.ceil(wait / 1000) }); return; }
@@ -792,18 +805,31 @@ export class Net {
   }
 
   #hostSettings(member, patch) {
-    if (member.role !== "owner" || !patch) return;
+    if (!this.isManager(member) || !patch) return;
     if (!this.#allow(member, "settings", 10, 3000)) return;
-    const allowed = ["control", "locked", "approval", "capacity", "slow"];
+    const allowed = ["control", "locked", "approval", "capacity", "slow", "managerId"];
     for (const k of allowed) {
       if (!(k in patch)) continue;
       if (k === "capacity") this.room.capacity = Math.min(24, Math.max(2, Number(patch[k]) || 6));
       else if (k === "control") this.room.control = ["host", "mods", "all"].includes(patch[k]) ? patch[k] : this.room.control;
       else if (k === "slow") this.room.slow = [0, 3, 5, 10, 30].includes(Number(patch[k])) ? Number(patch[k]) : this.room.slow;
+      else if (k === "managerId") {
+        const next = String(patch[k] || "");
+        const target = this.members.get(next);
+        if (!next) this.room.managerId = "";
+        else if (target && target.role !== "owner") this.room.managerId = target.id;
+      }
       else this.room[k] = !!patch[k];
     }
     this.#broadcast({ t: "room", room: this.room });
     this.emit("room", this.room);
+  }
+
+  #hostClose(member) {
+    if (!this.isManager(member)) return;
+    if (!this.#allow(member, "close", 2, 10000)) return;
+    this.#broadcast({ t: "closed" });
+    this.emit("closed");
   }
 
   #hostMod(member, msg) {
@@ -811,6 +837,7 @@ export class Net {
     if (!this.#allow(member, "mod", 15, 5000)) return;
     const target = this.members.get(msg.target);
     if (!target || target.role === "owner") return;
+    if (target.id === this.room.managerId && member.role !== "owner") return;
     const action = msg.action;
     if (action === "promote" || action === "demote") {
       if (member.role !== "owner" && action === "promote") return;
@@ -877,6 +904,7 @@ export class Net {
       case "playback": this.emit("playback", msg.state); break;
       case "room": this.roomState = msg.room; this.emit("room", msg.room); break;
       case "queue": this.emit("queue", msg.items); break;
+      case "closed": this.emit("closed"); break;
       case "kicked": this.emit("kicked", msg.reason); break;
       case "denied": this.emit("denied", msg.reason); break;
       case "forceMute": this.emit("forceMute", msg.muted); break;
@@ -1066,6 +1094,7 @@ export class Net {
       queuePlay: () => this.#hostQueuePlay(me, payload.id),
       settings: () => this.#hostSettings(me, payload.patch),
       mod: () => this.#hostMod(me, payload),
+      closeLobby: () => this.#hostClose(me),
       voice: () => this.#hostVoice(me, !!payload.on)
     }[type];
     fn?.();

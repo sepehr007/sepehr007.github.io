@@ -246,6 +246,7 @@
             </button>
           </form>
         </div>
+        <div class="cine-feed" id="cineFeed" aria-live="polite" aria-label="پیام‌های شناور روی فیلم"></div>
       </div>
 
       <button class="chat-fab" id="chatFab" type="button" data-i18n-title="chat.showPanel" title="نمایش چت" aria-label="باز کردن چت">
@@ -380,6 +381,16 @@
             <span class="pref-val" id="prefChatBrightVal">100%</span>
           </div>
           <div class="pref-row">
+            <label for="prefCineBright" data-i18n="prefs.cineBright">روشنایی چت شناور روی فیلم</label>
+            <input type="range" id="prefCineBright" min="40" max="160" step="5" value="100">
+            <span class="pref-val" id="prefCineBrightVal">100%</span>
+          </div>
+          <div class="pref-row">
+            <label for="prefCineSize" data-i18n="prefs.cineSize">اندازهٔ متن چت شناور</label>
+            <input type="range" id="prefCineSize" min="10" max="22" step="0.5" value="14">
+            <span class="pref-val" id="prefCineSizeVal">14</span>
+          </div>
+          <div class="pref-row">
             <label for="prefGlass" data-i18n="prefs.glass">شیشه‌ای بودن پنل‌ها</label>
             <input type="range" id="prefGlass" min="0" max="100" step="2" value="60">
             <span class="pref-val" id="prefGlassVal">60%</span>
@@ -396,10 +407,16 @@
         <div class="setting">
           <label for="optControl" data-i18n="settings.whoControls">چه کسی کنترل پخش دارد؟</label>
           <select id="optControl">
-            <option value="host" data-i18n="settings.hostOnly">فقط میزبان</option>
-            <option value="mods" data-i18n="settings.hostMods">میزبان و مدیران</option>
-            <option value="all" data-i18n="settings.everyone">همه</option>
+            <option value="host" data-i18n="settings.hostOnly">فقط مدیر</option>
+            <option value="all" data-i18n="settings.everyone">مدیر و همهٔ مهمان‌ها</option>
           </select>
+        </div>
+        <div class="setting">
+          <label for="optManager" data-i18n="settings.successor">جانشین مدیر (دسترسی تنظیمات)</label>
+          <select id="optManager">
+            <option value="" data-i18n="settings.successorNone">بدون جانشین</option>
+          </select>
+          <p class="hint" data-i18n="settings.successorHint">جانشین می‌تواند تنظیمات اتاق و پخش را مثل تو تغییر دهد.</p>
         </div>
         <label class="switch-row">
           <span data-i18n="settings.lock">قفل اتاق (ورود جدید ممنوع)</span>
@@ -563,6 +580,16 @@
       <button class="btn btn-primary" id="modalOk" type="button" data-i18n="common.ok">تأیید</button>
     </div>
   </div>
+</div>
+
+<div class="sheet-backdrop hidden" id="personSheetBackdrop"></div>
+<div class="person-sheet hidden" id="personSheet" role="dialog" aria-modal="true" aria-labelledby="psName">
+  <div class="ps-head">
+    <strong id="psName"></strong>
+    <button class="ps-close" id="psClose" type="button" aria-label="بستن">✕</button>
+  </div>
+  <p class="ps-sub" id="psSub"></p>
+  <div class="ps-actions" id="psActions"></div>
 </div>
 
 <div class="toast-wrap" id="toasts" aria-live="polite"></div>

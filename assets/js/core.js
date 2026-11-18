@@ -63,19 +63,32 @@ export function fmtClock(ts) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-let toastTimer = [];
+const toastQueue = [];
+const TOAST_GAP = 1500;
+let toastBusy = false;
 export function toast(message, type = "info", ms = 3200) {
   const wrap = document.getElementById("toasts");
   if (!wrap) return;
+  toastQueue.push({ message, type, ms });
+  if (toastQueue.length > 6) toastQueue.splice(0, toastQueue.length - 6);
+  drainToasts();
+}
+function drainToasts() {
+  if (toastBusy || !toastQueue.length) return;
+  const wrap = document.getElementById("toasts");
+  if (!wrap) { toastQueue.length = 0; return; }
+  const { message, type, ms } = toastQueue.shift();
+  toastBusy = true;
   const node = el("div", { class: `toast ${type === "info" ? "" : type}`, text: message });
   wrap.append(node);
-  const timer = setTimeout(() => {
+  while (wrap.children.length > 3) wrap.firstElementChild.remove();
+  setTimeout(() => {
     node.style.opacity = "0";
     node.style.transform = "translateY(-6px)";
     setTimeout(() => node.remove(), 220);
+    toastBusy = false;
+    setTimeout(drainToasts, TOAST_GAP);
   }, ms);
-  toastTimer.push(timer);
-  while (wrap.children.length > 4) wrap.firstElementChild.remove();
 }
 
 const RELOAD_KEY = "wt.reloadGuard";
@@ -158,7 +171,9 @@ export const PREF_DEFAULTS = {
   chatSize: 13.4,
   chatAlpha: 72,
   chatBright: 100,
-  glass: 60
+  glass: 60,
+  cineBright: 100,
+  cineSize: 14
 };
 
 export function getPrefs() {
@@ -197,6 +212,11 @@ export function applyUIPrefs(prefs = getPrefs()) {
   root.setProperty("--glass-blur", `${Math.round(4 + glass * 0.22)}px`);
   root.setProperty("--glass-alpha", (0.94 - glass * 0.0032).toFixed(2));
   root.setProperty("--glass", String(glass));
+  const cineBright = Math.min(160, Math.max(40, Number(prefs.cineBright) || 100));
+  const cineSize = Math.min(22, Math.max(10, Number(prefs.cineSize) || 14));
+  root.setProperty("--cine-bright", (cineBright / 100).toFixed(2));
+  root.setProperty("--cine-size", `${cineSize}px`);
+  root.setProperty("--cine-alpha", (0.3 + 0.42 * (cineBright / 100)).toFixed(2));
   const video = document.getElementById("video");
   if (video) video.style.filter = prefs.brightness === 100 ? "" : `brightness(${prefs.brightness / 100})`;
 }
