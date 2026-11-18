@@ -1,13 +1,11 @@
 /* ============================================================
-   هم‌تماشا — Design system «آتلیه» (single source of truth)
-   Loaded before every other stylesheet. Page skins may add
-   component rules, but colors, type, spacing, radii, shadows and
-   motion values must come from here.
+   هم‌تماشا — Design system «نِبولا» (single source of truth)
+   Loaded before every other stylesheet. The page skin (nebula.css)
+   and page layouts read colors, type, spacing, radii, shadows and
+   motion from these tokens; personal themes override them inline.
 
-   Direction: warm editorial. Paper and ink, thin rules, sharp
-   corners, one brick accent and one forest accent. No neon, no
-   glow, no purple. Page composition is asymmetric and typographic;
-   page skins (atelier.css) express that using these tokens.
+   Direction: galactic cinema. Deep indigo space, blurple + nitro
+   pink, glass panels, glowing gradient edges, rounded squircles.
 
    Breakpoints: 480 (small phone), 640 (phone), 768 (tablet),
    1024 (small desktop), 1280 (desktop shell max width).
@@ -15,27 +13,33 @@
 :root{
   color-scheme:dark;
 
-  /* ----- color: brand (brick + forest) ----- */
-  --accent:#d97742;
-  --accent-2:#7fb6a0;
-  --accent-strong:#b55f31;
-  --accent-contrast:#fff8f1;
-  --brand-rgb:217,119,66;
-  --brand-2-rgb:127,182,160;
-  --grad:linear-gradient(90deg,#d97742 0%,#e0a05f 100%);
+  /* ----- color: brand (blurple + nitro pink) ----- */
+  --accent:#6c5cff;
+  --accent-2:#ff4fd2;
+  --accent-strong:#5646f0;
+  --accent-contrast:#ffffff;
+  --brand-rgb:108,92,255;
+  --brand-2-rgb:255,79,210;
+  --grad:linear-gradient(135deg,#6c5cff 0%,#ff4fd2 100%);
 
-  /* ----- color: surfaces & text (ink, default) ----- */
-  --bg:#14110e;
-  --bg-2:#1a1613;
-  --panel:#221c17;
-  --panel-strong:#2b241d;
-  --border:#352c24;
-  --border-strong:#4e4133;
-  --text:#f4ede1;
-  --text-dim:#b9ab97;
-  --text-faint:#8a7d6b;
-  --ink:#14110e;
-  --paper:#f6f1e7;
+  /* ----- color: helpers ----- */
+  --nx-cyan:#3be8ff;
+  --nx-green:#3ef0a0;
+  --nx-yellow:#ffd84d;
+  --nx-red:#ff4d6d;
+
+  /* ----- color: surfaces & text (space, default) ----- */
+  --bg:#0c0b1d;
+  --bg-2:#12112a;
+  --panel:#1a1934;
+  --panel-strong:#232244;
+  --border:#2c2a52;
+  --border-strong:#423f74;
+  --text:#f1efff;
+  --text-dim:#b4b0d9;
+  --text-faint:#7f7aa8;
+  --ink:#0c0b1d;
+  --paper:#f4f2ff;
 
   /* ----- color: semantic aliases ----- */
   --surface-0:var(--bg);
@@ -47,32 +51,32 @@
   --text-1:var(--text);
   --text-2:var(--text-dim);
   --text-3:var(--text-faint);
-  --note-error:#e8a196;
-  --link:#e0a05f;
-  --focus-ring:rgba(var(--brand-rgb),.7);
+  --note-error:#ff8fa3;
+  --link:#a99eff;
+  --focus-ring:rgba(var(--brand-rgb),.85);
   --focus-width:2px;
   --focus-offset:3px;
 
   /* ----- color: status & information ----- */
-  --success:#8fbd97;
-  --warn:#d9a441;
-  --danger:#d96a5a;
-  --info:#8bb3cf;
-  --success-bg:rgba(143,189,151,.11);
-  --warn-bg:rgba(217,164,65,.11);
-  --danger-bg:rgba(217,106,90,.11);
-  --info-bg:rgba(139,179,207,.11);
+  --success:#3ef0a0;
+  --warn:#ffd84d;
+  --danger:#ff4d6d;
+  --info:#3be8ff;
+  --success-bg:rgba(62,240,160,.12);
+  --warn-bg:rgba(255,216,77,.12);
+  --danger-bg:rgba(255,77,109,.12);
+  --info-bg:rgba(59,232,255,.12);
 
   /* ----- interaction state layers ----- */
-  --state-hover:rgba(244,237,225,.055);
-  --state-pressed:rgba(244,237,225,.1);
-  --state-selected:rgba(var(--brand-rgb),.15);
-  --state-unavailable:rgba(244,237,225,.03);
+  --state-hover:rgba(241,239,255,.06);
+  --state-pressed:rgba(241,239,255,.11);
+  --state-selected:rgba(var(--brand-rgb),.2);
+  --state-unavailable:rgba(241,239,255,.03);
   --disabled-opacity:.45;
 
   /* ----- typography ----- */
   --font:"Vazirmatn",system-ui,-apple-system,"Segoe UI",sans-serif;
-  --font-display:"Noto Naskh Arabic","Vazirmatn",Georgia,serif;
+  --font-display:"Vazirmatn",system-ui,-apple-system,"Segoe UI",sans-serif;
   --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --fs-xs:11px;
   --fs-sm:12.5px;
@@ -81,8 +85,8 @@
   --fs-lg:16px;
   --fs-xl:20px;
   --fs-2xl:28px;
-  --fs-3xl:38px;
-  --fs-display:clamp(34px,5vw,64px);
+  --fs-3xl:40px;
+  --fs-display:clamp(36px,5.4vw,72px);
   --lh-tight:1.15;
   --lh-snug:1.55;
   --lh-body:1.85;
@@ -91,9 +95,9 @@
   --weight-medium:500;
   --weight-semibold:600;
   --weight-bold:700;
-  --weight-heavy:800;
-  --tracking-label:.14em;
-  --tracking-display:-.02em;
+  --weight-heavy:900;
+  --tracking-label:.06em;
+  --tracking-display:-.01em;
 
   /* ----- layout & spacing (4px base) ----- */
   --sp-1:4px;
@@ -110,38 +114,48 @@
   --side-w:372px;
   --content-w:1200px;
   --header-w:1320px;
+  --rail-w:76px;
 
-  /* ----- radii: print-sharp, pills only for chips ----- */
-  --r-xs:2px;
-  --r-sm:3px;
-  --r-md:5px;
-  --r-lg:8px;
-  --r-xl:12px;
-  --r-pill:99px;
+  /* ----- radii: soft squircles ----- */
+  --r-xs:8px;
+  --r-sm:10px;
+  --r-md:14px;
+  --r-lg:20px;
+  --r-xl:28px;
+  --r-pill:999px;
 
-  /* ----- shadows & elevation: flat, with one offset print shadow ----- */
-  --shadow:0 24px 50px -32px rgba(0,0,0,.65);
-  --shadow-sm:0 10px 24px -18px rgba(0,0,0,.55);
-  --shadow-md:0 18px 40px -26px rgba(0,0,0,.6);
+  /* ----- shadows, glows & elevation ----- */
+  --shadow:0 30px 70px -30px rgba(3,2,15,.85);
+  --shadow-sm:0 10px 26px -14px rgba(3,2,15,.7);
+  --shadow-md:0 20px 46px -22px rgba(3,2,15,.8);
   --shadow-lg:var(--shadow);
-  --shadow-brand:0 10px 26px -18px rgba(var(--brand-rgb),.55);
-  --shadow-offset:6px 6px 0 var(--border-strong);
+  --shadow-brand:0 14px 36px -12px rgba(var(--brand-rgb),.65);
+  --shadow-offset:0 0 0 1px rgba(var(--brand-rgb),.35),0 18px 50px -20px rgba(var(--brand-rgb),.6);
+  --glow:0 0 0 1px rgba(var(--brand-rgb),.4),0 0 28px -4px rgba(var(--brand-rgb),.55);
+  --glow-2:0 0 0 1px rgba(var(--brand-2-rgb),.4),0 0 28px -4px rgba(var(--brand-2-rgb),.5);
   --elev-0:none;
   --elev-1:var(--shadow-sm);
   --elev-2:var(--shadow-md);
   --elev-3:var(--shadow-lg);
+
+  /* ----- glass ----- */
+  --glass-bg:color-mix(in srgb,var(--panel) 62%,transparent);
+  --glass-bg-strong:color-mix(in srgb,var(--panel) 84%,transparent);
+  --glass-edge:rgba(255,255,255,.09);
+  --glass-sheen:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,0) 42%);
 
   /* ----- icons ----- */
   --icon-sm:16px;
   --icon-md:20px;
   --icon-lg:24px;
 
-  /* ----- motion: restrained ----- */
+  /* ----- motion: lively but controllable ----- */
   --ease-standard:cubic-bezier(.2,.7,.3,1);
   --ease-emphasized:cubic-bezier(.22,1,.36,1);
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
   --dur-fast:140ms;
-  --dur-mid:220ms;
-  --dur-slow:360ms;
+  --dur-mid:240ms;
+  --dur-slow:420ms;
 
   /* ----- layering ----- */
   --z-base:0;
@@ -156,44 +170,47 @@
   --z-toast:200;
 }
 
-/* ----- light theme: paper ----- */
+/* ----- light theme: frost ----- */
 html[data-theme="light"]{
   color-scheme:light;
-  --accent:#a84924;
-  --accent-2:#2e6b58;
-  --accent-strong:#8a3a1c;
-  --accent-contrast:#fffaf3;
-  --brand-rgb:168,73,36;
-  --brand-2-rgb:46,107,88;
-  --grad:linear-gradient(90deg,#a84924 0%,#c07a3c 100%);
-  --bg:#f5f0e6;
-  --bg-2:#ece4d5;
-  --panel:#fffbf3;
-  --panel-strong:#f1e9da;
-  --border:#ded3c0;
-  --border-strong:#bfb19a;
-  --text:#1b1712;
-  --text-dim:#5f5546;
-  --text-faint:#857864;
-  --note-error:#a63b2b;
-  --link:#a84924;
-  --success:#2f6f4a;
-  --warn:#9a6a12;
-  --danger:#b23b2e;
-  --info:#2c5f8a;
-  --success-bg:rgba(47,111,74,.09);
-  --warn-bg:rgba(154,106,18,.1);
-  --danger-bg:rgba(178,59,46,.08);
-  --info-bg:rgba(44,95,138,.08);
-  --state-hover:rgba(27,23,18,.05);
-  --state-pressed:rgba(27,23,18,.09);
-  --state-selected:rgba(var(--brand-rgb),.12);
-  --state-unavailable:rgba(27,23,18,.03);
-  --shadow:0 22px 44px -30px rgba(60,45,25,.28);
-  --shadow-sm:0 8px 20px -16px rgba(60,45,25,.3);
-  --shadow-md:0 16px 34px -22px rgba(60,45,25,.3);
-  --shadow-brand:0 10px 24px -16px rgba(var(--brand-rgb),.4);
-  --shadow-offset:6px 6px 0 #cdbfa7;
+  --accent:#5b4cf0;
+  --accent-2:#d9389f;
+  --accent-strong:#4536d6;
+  --accent-contrast:#ffffff;
+  --brand-rgb:91,76,240;
+  --brand-2-rgb:217,56,159;
+  --grad:linear-gradient(135deg,#5b4cf0 0%,#d9389f 100%);
+  --bg:#f4f2ff;
+  --bg-2:#ebe8fc;
+  --panel:#ffffff;
+  --panel-strong:#f1eefe;
+  --border:#dedaf5;
+  --border-strong:#c3bdea;
+  --text:#17152e;
+  --text-dim:#4f4b72;
+  --text-faint:#7a759c;
+  --note-error:#c2183f;
+  --link:#4c3de0;
+  --success:#0d9c63;
+  --warn:#a87a00;
+  --danger:#d91c45;
+  --info:#0789a8;
+  --success-bg:rgba(13,156,99,.1);
+  --warn-bg:rgba(168,122,0,.1);
+  --danger-bg:rgba(217,28,69,.08);
+  --info-bg:rgba(7,137,168,.09);
+  --state-hover:rgba(23,21,46,.05);
+  --state-pressed:rgba(23,21,46,.09);
+  --state-selected:rgba(var(--brand-rgb),.13);
+  --state-unavailable:rgba(23,21,46,.03);
+  --shadow:0 26px 56px -30px rgba(52,40,140,.32);
+  --shadow-sm:0 8px 22px -14px rgba(52,40,140,.28);
+  --shadow-md:0 16px 38px -22px rgba(52,40,140,.32);
+  --shadow-brand:0 14px 30px -14px rgba(var(--brand-rgb),.5);
+  --glass-bg:color-mix(in srgb,var(--panel) 72%,transparent);
+  --glass-bg-strong:color-mix(in srgb,var(--panel) 90%,transparent);
+  --glass-edge:rgba(91,76,240,.14);
+  --glass-sheen:linear-gradient(180deg,rgba(255,255,255,.7),rgba(255,255,255,0) 45%);
 }
 
 /* ----- global interaction states ----- */
@@ -208,10 +225,8 @@ html[data-theme="light"]{
 }
 :where(button,input,select,textarea)[aria-busy="true"],
 :where([aria-busy="true"]){cursor:progress}
-::selection{background:rgba(var(--brand-rgb),.3);color:var(--text)}
+::selection{background:rgba(var(--brand-rgb),.38);color:var(--text)}
 
-/* Every component must be able to opt out of motion. Page skins
-   add their own blocks; this is the global floor. */
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{
     animation-duration:.01ms!important;

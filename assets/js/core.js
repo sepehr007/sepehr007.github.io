@@ -165,8 +165,8 @@ export function validateMediaUrl(raw) {
 /* ---------- personal appearance ---------- */
 export const PREF_DEFAULTS = {
   theme: "dark",
-  accent: "#d97742",
-  accent2: "#7fb6a0",
+  accent: "#6c5cff",
+  accent2: "#ff4fd2",
   bgColor: "",
   textColor: "",
   brightness: 100,
@@ -178,13 +178,18 @@ export const PREF_DEFAULTS = {
   cineSize: 14
 };
 
-/* Users who never picked a color still carry the old blue/violet defaults —
-   move them to the Atelier palette once, without touching custom choices. */
+/* Accounts still carrying an earlier skin default move to the Nebula
+   palette once; any other custom color is left alone. */
+const PALETTE_VERSION = 4;
 const LEGACY_ACCENTS = {
-  "#7c5cff": "#d97742",
-  "#22d3ee": "#7fb6a0",
-  "#3d6bff": "#d97742",
-  "#f5b23e": "#7fb6a0"
+  "#d97742": "#6c5cff",
+  "#a84924": "#5b4cf0",
+  "#7fb6a0": "#ff4fd2",
+  "#2e6b58": "#d9389f",
+  "#7c5cff": "#6c5cff",
+  "#22d3ee": "#ff4fd2",
+  "#3d6bff": "#6c5cff",
+  "#f5b23e": "#ff4fd2"
 };
 
 /* Appearance is per account: a theme chosen here must never leak into
@@ -208,13 +213,13 @@ export function hasPersonalTheme() {
 }
 
 export const THEME_PRESETS = [
-  { id: "atelier", fa: "سالن", en: "Atelier", theme: "dark", accent: "#d97742", accent2: "#7fb6a0" },
-  { id: "ink", fa: "مرکب", en: "Ink", theme: "dark", accent: "#e0895a", accent2: "#b9ab97" },
-  { id: "forest", fa: "جنگل", en: "Forest", theme: "dark", accent: "#7fb6a0", accent2: "#d9a441" },
-  { id: "brass", fa: "برنجی", en: "Brass", theme: "dark", accent: "#d9a441", accent2: "#d96a5a" },
-  { id: "paper", fa: "کاغذ", en: "Paper", theme: "light", accent: "#a84924", accent2: "#2e6b58" },
-  { id: "sage", fa: "مریم‌گلی", en: "Sage", theme: "light", accent: "#2e6b58", accent2: "#b4632f" },
-  { id: "sand", fa: "شنی", en: "Sand", theme: "light", accent: "#b4632f", accent2: "#4d7a68" }
+  { id: "nebula", fa: "سحابی", en: "Nebula", theme: "dark", accent: "#6c5cff", accent2: "#ff4fd2" },
+  { id: "aurora", fa: "شفق", en: "Aurora", theme: "dark", accent: "#3be8ff", accent2: "#3ef0a0" },
+  { id: "sunset", fa: "غروب", en: "Sunset", theme: "dark", accent: "#ff6b4a", accent2: "#ffd84d" },
+  { id: "emerald", fa: "زمرد", en: "Emerald", theme: "dark", accent: "#2fd88f", accent2: "#3be8ff" },
+  { id: "neon", fa: "نئون", en: "Neon", theme: "dark", accent: "#ff3d8b", accent2: "#8a5cff" },
+  { id: "frost", fa: "یخی", en: "Frost", theme: "light", accent: "#5b4cf0", accent2: "#d9389f" },
+  { id: "blossom", fa: "شکوفه", en: "Blossom", theme: "light", accent: "#d9389f", accent2: "#ff7a45" }
 ];
 
 export function normalizeHex(raw) {
@@ -308,7 +313,7 @@ export function restorePreviousTheme() {
     accent2: normalizeHex(prev.accent2),
     bgColor: normalizeHex(prev.bgColor) || "",
     textColor: normalizeHex(prev.textColor) || "",
-    palette: 3
+    palette: PALETTE_VERSION
   };
   store.set(prefsKey(), next);
   applyUIPrefs(next);
@@ -332,13 +337,13 @@ export function getPrefs() {
     const legacy = store.get(LEGACY_PREFS_KEY, null);
     if (legacy && typeof legacy === "object" && !store.get("wt.prefs.migrated", false)) {
       saved = legacy;
-      store.set(key, { ...legacy, palette: 3 });
+      store.set(key, { ...legacy });
       store.del(LEGACY_PREFS_KEY);
       store.set("wt.prefs.migrated", true);
     }
   }
   const merged = { ...PREF_DEFAULTS, ...(saved && typeof saved === "object" ? saved : {}) };
-  if (saved && saved.palette !== 3) {
+  if (saved && saved.palette !== PALETTE_VERSION) {
     if (LEGACY_ACCENTS[merged.accent]) merged.accent = LEGACY_ACCENTS[merged.accent];
     if (LEGACY_ACCENTS[merged.accent2]) merged.accent2 = LEGACY_ACCENTS[merged.accent2];
   }
@@ -352,7 +357,7 @@ export function savePrefs(patch) {
   if ("bgColor" in clean) clean.bgColor = clean.bgColor ? normalizeHex(clean.bgColor) || "" : "";
   if ("textColor" in clean) clean.textColor = clean.textColor ? normalizeHex(clean.textColor) || "" : "";
   const current = getPrefs();
-  const next = { ...current, ...clean, palette: 3 };
+  const next = { ...current, ...clean, palette: PALETTE_VERSION };
   const themeChanged = ["theme", "accent", "accent2", "bgColor", "textColor"].some(
     (k) => k in clean && clean[k] !== current[k]
   );
@@ -395,10 +400,10 @@ export function applyUIPrefs(prefs = getPrefs()) {
   const theme = prefs.theme === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = theme;
   const light = theme === "light";
-  const accent = normalizeHex(prefs.accent) || (light ? "#a84924" : "#d97742");
-  const accent2 = normalizeHex(prefs.accent2) || (light ? "#2e6b58" : "#7fb6a0");
-  const bg = normalizeHex(prefs.bgColor) || (light ? "#f5f0e6" : "#14110e");
-  const text = normalizeHex(prefs.textColor) || (light ? "#1b1712" : "#f4ede1");
+  const accent = normalizeHex(prefs.accent) || (light ? "#5b4cf0" : "#6c5cff");
+  const accent2 = normalizeHex(prefs.accent2) || (light ? "#d9389f" : "#ff4fd2");
+  const bg = normalizeHex(prefs.bgColor) || (light ? "#f4f2ff" : "#0c0b1d");
+  const text = normalizeHex(prefs.textColor) || (light ? "#17152e" : "#f1efff");
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = bg;
   const root = document.documentElement.style;
@@ -409,7 +414,7 @@ export function applyUIPrefs(prefs = getPrefs()) {
   const rgb2 = hexToRgbTriplet(accent2);
   if (rgb1) root.setProperty("--brand-rgb", rgb1);
   if (rgb2) root.setProperty("--brand-2-rgb", rgb2);
-  root.setProperty("--grad", `linear-gradient(90deg,${accent} 0%,${mixHex(accent, "#ffffff", 0.22)} 100%)`);
+  root.setProperty("--grad", `linear-gradient(135deg,${accent} 0%,${accent2} 100%)`);
   const panelBase = light ? "#ffffff" : text;
   root.setProperty("--bg", bg);
   root.setProperty("--bg-2", mixHex(bg, panelBase, light ? 0.03 : 0.025));
@@ -447,12 +452,12 @@ export function lightenHex(hex, amount = 0.35) {
 }
 
 export const ACCENTS = [
-  { a: "#d97742", b: "#7fb6a0" },
-  { a: "#e0895a", b: "#b9ab97" },
-  { a: "#7fb6a0", b: "#d9a441" },
-  { a: "#d9a441", b: "#d96a5a" },
-  { a: "#a84924", b: "#2e6b58" },
-  { a: "#2e6b58", b: "#b4632f" }
+  { a: "#6c5cff", b: "#ff4fd2" },
+  { a: "#3be8ff", b: "#3ef0a0" },
+  { a: "#ff6b4a", b: "#ffd84d" },
+  { a: "#2fd88f", b: "#3be8ff" },
+  { a: "#ff3d8b", b: "#8a5cff" },
+  { a: "#5b4cf0", b: "#d9389f" }
 ];
 
 export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";export function makeCode(len = 6) {

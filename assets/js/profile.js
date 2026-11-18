@@ -731,7 +731,7 @@ function wireAppearance() {
     if (bgInput && document.activeElement !== bgInput) bgInput.value = prefs.bgColor || "";
     if (textInput && document.activeElement !== textInput) textInput.value = prefs.textColor || "";
     const darkMode = prefs.theme !== "light";
-    if (bgInput) bgInput.placeholder = darkMode ? "#14110e" : "#f5f0e6";
+    if (bgInput) bgInput.placeholder = darkMode ? "#0c0b1d" : "#f4f2ff";
     if (textInput) textInput.placeholder = darkMode ? "#f4ede1" : "#1b1712";
     const saved = listUserThemes().find((x) => x.id === cur);
     const preset = THEME_PRESETS.find((p) => p.id === cur);

@@ -3,18 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#14110e">
+<meta name="theme-color" content="#0c0b1d">
 <title>پروفایل — هم‌تماشا</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300..900&family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/css/design-system.css">
 <link rel="stylesheet" href="assets/css/style.css">
 <link rel="stylesheet" href="assets/css/profile-v8.css">
-<link rel="stylesheet" href="assets/css/atelier.css">
+<link rel="stylesheet" href="assets/css/nebula.css">
 <link rel="stylesheet" href="assets/css/device-compat.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23d97742'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%236c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
 </head>
 <body class="page-profile">
@@ -25,6 +25,14 @@
   <span class="aurora a3"></span>
   <div class="grid-overlay"></div>
 </div>
+
+<nav class="nx-rail" aria-label="هم‌تماشا">
+  <a class="nx-rail-item nx-rail-brand" href="./" aria-label="خانه" data-i18n-aria="common.home"><svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg></a>
+  <span class="nx-rail-sep" aria-hidden="true"></span>
+  <a class="nx-rail-item" href="social.html" aria-label="شبکه" data-i18n-aria="social.nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 5 18.5V20"/><circle cx="11" cy="8" r="3.5"/><path d="M20 20v-1.2a3 3 0 0 0-2.2-2.9M15.5 4.7a3.5 3.5 0 0 1 0 6.6"/></svg></a>
+  <a class="nx-rail-item" href="profile.html" aria-current="page" aria-label="پروفایل" data-i18n-aria="menu.profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></a>
+  <a class="nx-rail-item nx-rail-add" href="index.html#create" aria-label="ساخت لابی" data-i18n-aria="v8.createCta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></a>
+</nav>
 
 <header class="site-header">
   <a class="brand" href="./">
@@ -246,17 +254,17 @@
             <div class="hex-row">
               <label class="hex-field">
                 <span data-i18n="profile.hexAccent">کد رنگ لهجه</span>
-                <input id="accentHex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#d97742">
+                <input id="accentHex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#6c5cff">
               </label>
               <label class="hex-field">
                 <span data-i18n="profile.hexAccent2">کد رنگ دوم</span>
-                <input id="accent2Hex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#7fb6a0">
+                <input id="accent2Hex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#ff4fd2">
               </label>
             </div>
             <div class="hex-row">
               <label class="hex-field">
                 <span data-i18n="profile.hexBg">کد رنگ پس‌زمینه</span>
-                <input id="bgColorHex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#14110e">
+                <input id="bgColorHex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#0c0b1d">
               </label>
               <label class="hex-field">
                 <span data-i18n="profile.hexText">کد رنگ متن</span>
@@ -297,5 +305,6 @@
 
 <div class="toast-wrap" id="toasts" aria-live="polite"></div>
 <script type="module" src="assets/js/profile.js"></script>
+<script type="module" src="assets/js/fx.js"></script>
 </body>
 </html>
