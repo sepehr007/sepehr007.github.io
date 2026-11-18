@@ -3,6 +3,9 @@ import { Order } from "../models/Order.js";
 import { Subscription } from "../models/Subscription.js";
 import { dbReady } from "../db.js";
 import { requireAuth } from "./auth.js";
+import { ensureStore } from "../userStore.js";
+import { sqlPlans, sqlSubscriptionState, sqlCreateOrder } from "../stores/billing.js";
+import { audit } from "../audit.js";
 
 const DEFAULT_PLANS = [
   {
@@ -38,10 +41,20 @@ async function ensurePlans() {
 }
 
 export default async function billingRoutes(app) {
-  app.get("/plans", async () => ({ ok: true, plans: await ensurePlans() }));
+  app.get("/plans", async (req, reply) => {
+    if (!dbReady()) {
+      if (!(await ensureStore())) return fail(reply, 503, "db_unavailable", "Database is not connected.");
+      return { ok: true, plans: await sqlPlans() };
+    }
+    return { ok: true, plans: await ensurePlans() };
+  });
 
   app.get("/me", { preHandler: requireAuth }, async (req, reply) => {
-    if (!dbReady()) return fail(reply, 503, "db_unavailable", "Database is not connected.");
+    if (!dbReady()) {
+      if (!(await ensureStore())) return fail(reply, 503, "db_unavailable", "Database is not connected.");
+      const state = await sqlSubscriptionState(req.auth.userId);
+      return { ok: true, ...state };
+    }
     const userId = req.auth.userId;
     const now = new Date();
     const active = await Subscription.findOne({
@@ -67,8 +80,20 @@ export default async function billingRoutes(app) {
   });
 
   app.post("/orders", { preHandler: requireAuth }, async (req, reply) => {
-    if (!dbReady()) return fail(reply, 503, "db_unavailable", "Database is not connected.");
     const slug = String(req.body?.planId || req.body?.planSlug || "").trim().toLowerCase();
+    if (!dbReady()) {
+      if (!(await ensureStore())) return fail(reply, 503, "db_unavailable", "Database is not connected.");
+      const plans = await sqlPlans();
+      const plan = plans.find((item) => item.slug === slug);
+      if (!plan) return fail(reply, 400, "unknown_plan", "That plan does not exist.");
+      const result = await sqlCreateOrder({ userId: req.auth.userId, plan });
+      await audit("billing.order", req, {
+        targetType: "plan",
+        targetId: plan.id,
+        meta: { amount: plan.price, currency: plan.currency, duplicate: result.duplicate }
+      });
+      return { ok: true, duplicate: result.duplicate, order: result.order };
+    }
     const plans = await ensurePlans();
     const plan = plans.find((item) => item.slug === slug);
     if (!plan) return fail(reply, 400, "unknown_plan", "That plan does not exist.");
@@ -89,6 +114,11 @@ export default async function billingRoutes(app) {
       cycle: plan.cycle,
       status: "pending",
       orderId: order._id
+    });
+    await audit("billing.order", req, {
+      targetType: "plan",
+      targetId: plan.slug,
+      meta: { amount: plan.price, currency: plan.currency, duplicate: false }
     });
     return { ok: true, order };
   });

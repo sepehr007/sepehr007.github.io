@@ -185,6 +185,11 @@ assets/css/design-system.css  توکن‌های واحد طراحی (رنگ، ت
 assets/css/style.css    استایل کامل
 assets/css/owner.css    استایل کنسول مالک
 docs/architecture.md    نقشهٔ معماری فرانت، بک‌اند، دیتابیس، زمان واقعی و احراز هویت
+docs/database.md        ساختار جدول‌ها، ایندکس‌ها، مهاجرت، پشتیبان‌گیری و نگهداری داده
+server/                 بک‌اند Fastify: احراز هویت، لابی، مالی، اتاق و WebSocket
+server/database/        اسکیمای ~۴۰ جدول، مهاجرت نسخه‌دار، تراکنش، پشتیبان و خروجی
+server/stores/          کوئری‌های SQLite برای لابی، اتاق/پیام و مالی
+server/routes/admin.js  API دیتابیس و حسابرسی مخصوص مالک
 assets/data/site-config.json  تنظیمات سراسری منتشرشده (با کنسول مالک کامیت می‌شود)
 assets/js/core.js       ابزارها، اعتبارسنجی لینک، Toast
 assets/js/i18n.js       مترجم فا/EN

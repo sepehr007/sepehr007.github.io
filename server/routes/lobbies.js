@@ -4,6 +4,9 @@ import { Room } from "../models/Room.js";
 import { User } from "../models/User.js";
 import { dbReady } from "../db.js";
 import { requireAuth } from "./auth.js";
+import { ensureStore } from "../userStore.js";
+import { sqlListLobbies, sqlActiveLobby, sqlCreateLobby, sqlCloseLobby, sqlTouchLobby } from "../stores/lobbies.js";
+import { audit } from "../audit.js";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_RE = /^[A-Z0-9-]{4,16}$/;
@@ -65,7 +68,10 @@ async function syncRoom(lobby, userId) {
 
 export default async function lobbyRoutes(app) {
   app.get("/", { preHandler: requireAuth }, async (req, reply) => {
-    if (!dbReady()) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+    if (!dbReady()) {
+      if (!(await ensureStore())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+      return { ok: true, lobbies: await sqlListLobbies(req.auth.userId) };
+    }
     const lobbies = await Lobby.find({ owner: req.auth.userId })
       .sort({ createdAt: -1 })
       .limit(25)
@@ -74,7 +80,10 @@ export default async function lobbyRoutes(app) {
   });
 
   app.get("/active", { preHandler: requireAuth }, async (req, reply) => {
-    if (!dbReady()) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+    if (!dbReady()) {
+      if (!(await ensureStore())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+      return { ok: true, lobby: await sqlActiveLobby(req.auth.userId) };
+    }
     await Lobby.updateMany(
       { owner: req.auth.userId, active: true, expiresAt: { $lte: new Date() } },
       { $set: { active: false, closedAt: new Date(), closeReason: "expired" } }
@@ -86,15 +95,40 @@ export default async function lobbyRoutes(app) {
   });
 
   app.post("/", { preHandler: requireAuth }, async (req, reply) => {
-    if (!dbReady()) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
     const body = req.body && typeof req.body === "object" ? req.body : {};
     let code = cleanText(body.code, 16).toUpperCase();
     if (code && !CODE_RE.test(code)) return fail(reply, 400, "invalid_code", "Lobby code is invalid.");
-    if (!code) code = await uniqueCode();
     const name = cleanText(body.name, 60) || "لابی من";
     const capacity = Math.max(2, Math.min(24, Number(body.capacity) || 6));
     const privacy = body.privacy === "password" ? "password" : "public";
 
+    if (!dbReady()) {
+      if (!(await ensureStore())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+      let lobby;
+      try {
+        lobby = await sqlCreateLobby({
+          code,
+          name,
+          capacity,
+          privacy,
+          userId: req.auth.userId,
+          ownerUsername: ""
+        });
+      } catch (err) {
+        if (String(err?.message || "").includes("UNIQUE")) {
+          return fail(reply, 409, "already_exists", "That lobby code or an active lobby already exists.");
+        }
+        throw err;
+      }
+      await audit("lobby.create", req, {
+        targetType: "lobby",
+        targetId: lobby.code,
+        meta: { capacity, privacy }
+      });
+      return reply.code(201).send({ ok: true, lobby });
+    }
+
+    if (!code) code = await uniqueCode();
     await closeActiveLobbies(req.auth.userId, "replaced");
     let lobby;
     try {
@@ -116,13 +150,23 @@ export default async function lobbyRoutes(app) {
       throw err;
     }
     await syncRoom(lobby, req.auth.userId);
+    await audit("lobby.create", req, {
+      targetType: "lobby",
+      targetId: lobby.code,
+      meta: { capacity, privacy }
+    });
     return reply.code(201).send({ ok: true, lobby });
   });
 
   app.patch("/:code/close", { preHandler: requireAuth }, async (req, reply) => {
-    if (!dbReady()) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
     const code = cleanText(req.params.code, 16).toUpperCase();
     const reason = cleanText(req.body?.reason, 40) || "closed";
+    if (!dbReady()) {
+      if (!(await ensureStore())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+      const lobby = await sqlCloseLobby(code, req.auth.userId, reason);
+      await audit("lobby.close", req, { targetType: "lobby", targetId: code, meta: { reason } });
+      return { ok: true, lobby };
+    }
     const lobby = await Lobby.findOneAndUpdate(
       { code, owner: req.auth.userId, active: true },
       { $set: { active: false, closedAt: new Date(), closeReason: reason } },
@@ -130,12 +174,16 @@ export default async function lobbyRoutes(app) {
     );
     if (!lobby) return { ok: true, lobby: null };
     await Room.updateMany({ roomCode: code, isActive: true }, { $set: { isActive: false } });
+    await audit("lobby.close", req, { targetType: "lobby", targetId: code, meta: { reason } });
     return { ok: true, lobby };
   });
 
   app.post("/:code/touch", { preHandler: requireAuth }, async (req, reply) => {
-    if (!dbReady()) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
     const code = cleanText(req.params.code, 16).toUpperCase();
+    if (!dbReady()) {
+      if (!(await ensureStore())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+      return { ok: true, lobby: await sqlTouchLobby(code, req.auth.userId) };
+    }
     const now = new Date();
     const lobby = await Lobby.findOneAndUpdate(
       { code, owner: req.auth.userId, active: true },

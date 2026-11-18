@@ -1,19 +1,9 @@
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { User } from "./models/User.js";
 import { EmailToken } from "./models/EmailToken.js";
 import { Setting } from "./models/Setting.js";
 import { dbReady } from "./db.js";
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = process.env.DATA_DIR || path.join(HERE, "data");
-const SQLITE_FILE = process.env.SQLITE_FILE || path.join(DATA_DIR, "wt.sqlite");
-
-let sqlite = null;
-let sqliteTried = false;
-let sqliteError = "";
+import { getDatabase, databaseState, transaction } from "./database/index.js";
 
 function toUser(row) {
   if (!row) return null;
@@ -61,85 +51,27 @@ function fromSql(row) {
   });
 }
 
-async function getSqlite() {
-  if (sqlite) return sqlite;
-  if (sqliteTried) return null;
-  sqliteTried = true;
-  try {
-    const { DatabaseSync } = await import("node:sqlite");
-    fs.mkdirSync(path.dirname(SQLITE_FILE), { recursive: true });
-    const db = new DatabaseSync(SQLITE_FILE);
-    db.exec(`
-      PRAGMA journal_mode = WAL;
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL,
-        username_lower TEXT NOT NULL UNIQUE,
-        email TEXT NOT NULL UNIQUE,
-        email_verified INTEGER DEFAULT 0,
-        email_verified_at INTEGER,
-        phone TEXT DEFAULT '',
-        password_hash TEXT NOT NULL,
-        recovery_hash TEXT DEFAULT '',
-        nick TEXT DEFAULT '',
-        birthdate TEXT DEFAULT '',
-        city TEXT DEFAULT '',
-        bio TEXT DEFAULT '',
-        avatar TEXT DEFAULT '',
-        role TEXT DEFAULT 'user',
-        created_at INTEGER NOT NULL,
-        last_login_at INTEGER
-      );
-      CREATE TABLE IF NOT EXISTS email_tokens (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        code_hash TEXT DEFAULT '',
-        link_hash TEXT DEFAULT '',
-        expires_at INTEGER NOT NULL,
-        attempts INTEGER NOT NULL DEFAULT 0,
-        consumed_at INTEGER,
-        created_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens(user_id, kind, created_at);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_email_tokens_link ON email_tokens(link_hash) WHERE link_hash <> '';
-      CREATE TABLE IF NOT EXISTS app_settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-    `);
-    // Older databases created before email verification existed.
-    const columns = new Set(db.prepare("PRAGMA table_info(users)").all().map((c) => c.name));
-    if (!columns.has("email_verified")) db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0");
-    if (!columns.has("email_verified_at")) db.exec("ALTER TABLE users ADD COLUMN email_verified_at INTEGER");
-    if (!columns.has("phone")) db.exec("ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''");
-    sqlite = db;
-    return sqlite;
-  } catch (err) {
-    sqliteError = err.message;
-    console.error("[store] sqlite unavailable:", err.message);
-    return null;
-  }
-}
-
 export function storeMode() {
   if (dbReady()) return "mongodb";
-  if (sqlite) return "sqlite";
-  if (sqliteTried) return "unavailable";
+  const state = databaseState();
+  if (state.ready) return "sqlite";
+  if (state.mode === "unavailable") return "unavailable";
   return "pending";
 }
 
 export function storeState() {
+  const state = databaseState();
   return {
     mode: storeMode(),
-    file: sqlite ? SQLITE_FILE : "",
-    error: sqliteError
+    file: state.file,
+    error: state.error,
+    schemaVersion: state.version
   };
 }
 
 export async function ensureStore() {
   if (dbReady()) return true;
-  return Boolean(await getSqlite());
+  return Boolean(await getDatabase());
 }
 
 export async function findUsers(query) {
@@ -150,7 +82,7 @@ export async function findUsers(query) {
     if (email) filter.email = email;
     return (await User.find(filter).select("+passwordHash +recoveryHash").lean()).map(toUser);
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return [];
   const rows = [];
   if (usernameLower) {
@@ -171,7 +103,7 @@ export async function findUsersByPhone(phone) {
   if (dbReady()) {
     return (await User.find({ phone }).select("+passwordHash +recoveryHash").lean()).map(toUser);
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return [];
   return db.prepare("SELECT * FROM users WHERE phone = ?").all(phone).map(fromSql);
 }
@@ -183,7 +115,7 @@ export async function getAppSetting(key) {
     const doc = await Setting.findOne({ key: name }).lean();
     return doc?.value ?? null;
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return null;
   const row = db.prepare("SELECT value FROM app_settings WHERE key = ?").get(name);
   return row ? row.value : null;
@@ -196,7 +128,7 @@ export async function setAppSetting(key, value) {
     await Setting.updateOne({ key: name }, { $set: { value: String(value ?? "") } }, { upsert: true });
     return true;
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return false;
   db.prepare(
     "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
@@ -210,7 +142,7 @@ export async function findUserById(id) {
     if (!String(id).match(/^[a-f0-9]{24}$/i)) return null;
     return toUser(await User.findById(id).select("+passwordHash +recoveryHash").lean());
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return null;
   return fromSql(db.prepare("SELECT * FROM users WHERE id = ?").get(String(id)));
 }
@@ -237,30 +169,43 @@ export async function createUser(data) {
     });
     return toUser({ ...doc.toObject(), _id: doc._id });
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) throw new Error("store_unavailable");
   const id = crypto.randomUUID();
-  db.prepare(
-    `INSERT INTO users (id, username, username_lower, email, email_verified, email_verified_at, phone, password_hash, recovery_hash, nick, birthdate, city, bio, avatar, role, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    id,
-    data.username,
-    data.usernameLower,
-    data.email,
-    data.emailVerified ? 1 : 0,
-    data.emailVerifiedAt ? new Date(data.emailVerifiedAt).getTime() : null,
-    data.phone || "",
-    data.passwordHash,
-    data.recoveryHash || "",
-    data.nick || data.username,
-    data.birthdate || "",
-    data.city || "",
-    data.bio || "",
-    data.avatar || "",
-    data.role || "user",
-    now
-  );
+  const role = data.role || "user";
+  transaction((conn) => {
+    conn
+      .prepare(
+        `INSERT INTO users
+         (id, username, username_lower, email, email_verified, email_verified_at, phone, password_hash,
+          recovery_hash, nick, birthdate, city, bio, avatar, role, status, locale, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'fa', ?, ?)`
+      )
+      .run(
+        id,
+        data.username,
+        data.usernameLower,
+        data.email,
+        data.emailVerified ? 1 : 0,
+        data.emailVerifiedAt ? new Date(data.emailVerifiedAt).getTime() : null,
+        data.phone || "",
+        data.passwordHash,
+        data.recoveryHash || "",
+        data.nick || data.username,
+        data.birthdate || "",
+        data.city || "",
+        data.bio || "",
+        data.avatar || "",
+        role,
+        now,
+        now
+      );
+    conn.prepare("INSERT OR IGNORE INTO profiles (user_id, updated_at) VALUES (?, ?)").run(id, now);
+    const roleExists = conn.prepare("SELECT 1 AS ok FROM roles WHERE id = ?").get(role);
+    if (roleExists) {
+      conn.prepare("INSERT OR IGNORE INTO user_roles (user_id, role_id, granted_at) VALUES (?, ?, ?)").run(id, role, now);
+    }
+  });
   return findUserById(id);
 }
 
@@ -300,11 +245,30 @@ export async function updateUser(id, patch) {
     await User.updateOne({ _id: id }, { $set: update });
     return findUserById(id);
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) throw new Error("store_unavailable");
+  const now = Date.now();
   const sets = Object.keys(clean).map((key) => `${PATCH_COLUMNS[key]} = ?`).join(", ");
-  db.prepare(`UPDATE users SET ${sets} WHERE id = ?`).run(...Object.values(clean), String(id));
+  transaction((conn) => {
+    conn.prepare(`UPDATE users SET ${sets}, updated_at = ? WHERE id = ?`).run(...Object.values(clean), now, String(id));
+    if (clean.role && conn.prepare("SELECT 1 AS ok FROM roles WHERE id = ?").get(clean.role)) {
+      conn.prepare("DELETE FROM user_roles WHERE user_id = ?").run(String(id));
+      conn.prepare("INSERT OR IGNORE INTO user_roles (user_id, role_id, granted_at) VALUES (?, ?, ?)").run(
+        String(id),
+        clean.role,
+        now
+      );
+    }
+    conn.prepare("UPDATE profiles SET updated_at = ? WHERE user_id = ?").run(now, String(id));
+  });
   return findUserById(id);
+}
+
+export async function countUsers() {
+  if (dbReady()) return User.estimatedDocumentCount();
+  const db = await getDatabase();
+  if (!db) return 0;
+  return Number(db.prepare("SELECT COUNT(*) AS n FROM users").get()?.n || 0);
 }
 
 function fromTokenSql(row) {
@@ -351,7 +315,7 @@ export async function createEmailToken({ userId, kind, codeHash, linkHash, expir
     });
     return fromTokenDoc(doc.toObject());
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) throw new Error("store_unavailable");
   db.prepare(
     `INSERT INTO email_tokens (id, user_id, kind, code_hash, link_hash, expires_at, attempts, consumed_at, created_at)
@@ -375,7 +339,7 @@ export async function deleteEmailTokens(userId, kind) {
     await EmailToken.deleteMany({ userId, kind });
     return;
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return;
   db.prepare("DELETE FROM email_tokens WHERE user_id = ? AND kind = ?").run(String(userId), kind);
 }
@@ -394,7 +358,7 @@ export async function findActiveEmailToken(userId, kind) {
       .lean();
     return fromTokenDoc(doc);
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return null;
   return fromTokenSql(
     db
@@ -420,7 +384,7 @@ export async function findEmailTokenByLink(linkHash, kind) {
       .lean();
     return fromTokenDoc(doc);
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return null;
   return fromTokenSql(
     db
@@ -438,7 +402,7 @@ export async function bumpEmailTokenAttempts(id) {
     const doc = await EmailToken.findByIdAndUpdate(id, { $inc: { attempts: 1 } }, { new: true }).lean();
     return doc ? Number(doc.attempts || 0) : 0;
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return 0;
   db.prepare("UPDATE email_tokens SET attempts = attempts + 1 WHERE id = ?").run(String(id));
   const row = db.prepare("SELECT attempts FROM email_tokens WHERE id = ?").get(String(id));
@@ -451,7 +415,7 @@ export async function consumeEmailToken(id) {
     await EmailToken.updateOne({ _id: id }, { $set: { consumedAt: new Date(now) } });
     return;
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return;
   db.prepare("UPDATE email_tokens SET consumed_at = ? WHERE id = ?").run(now, String(id));
 }
@@ -462,7 +426,7 @@ export async function purgeEmailTokens() {
     await EmailToken.deleteMany({ expiresAt: { $lt: new Date(now) } });
     return;
   }
-  const db = await getSqlite();
+  const db = await getDatabase();
   if (!db) return;
   db.prepare("DELETE FROM email_tokens WHERE expires_at < ?").run(now);
 }

@@ -21,16 +21,18 @@
 ## بک‌اند
 
 - **سرور:** `server/index.js` — CORS، محدودیت نرخ، WebSocket (`/ws`)، مسیرهای REST.
-- **مسیرها:** `/api/auth/*` (ثبت‌نام، ورود، تأیید ایمیل، بازیابی، پروفایل، اتصال ایمیل/پیامک مالک)، `/api/lobbies/*`، `/api/billing/*`، `/api/features`، `/api/health`.
-- **حافظهٔ نشست:** Redis در صورت وجود، وگرنه حافظهٔ فرآیند (`server/redis.js`). JWT با `jti` که با خروج یا تغییر رمز باطل می‌شود.
+- **مسیرها:** `/api/auth/*` (ثبت‌نام، ورود، تأیید ایمیل، بازیابی، پروفایل، اتصال ایمیل/پیامک مالک)، `/api/lobbies/*`، `/api/billing/*`، `/api/admin/*` (دیتابیس و حسابرسی، فقط مالک)، `/api/features`، `/api/health`.
+- **حافظهٔ نشست:** Redis در صورت وجود، وگرنه حافظهٔ فرآیند (`server/redis.js`)؛ در حالت SQLite نشست در جدول `sessions` هم ذخیره می‌شود تا ری‌استارت سرور کاربر را بیرون نیندازد. JWT با `jti` که با خروج یا تغییر رمز باطل می‌شود.
 - **تنظیمات:** `server/settings.js` — DB-first، متغیرهای env فقط وقتی دیتابیس غیرفعال است؛ رازها هرگز به مرورگر برنمی‌گردند و فقط فلگ `passSet/apiKeySet/twilioTokenSet` برمی‌گردد.
 - **ایمیل/پیامک:** `server/mailer.js` (nodemailer + outbox JSONL) و `server/sms.js` (کاوه‌نگار/Twilio/وبهوک + outbox JSONL).
+- **حسابرسی:** `server/audit.js` — ثبت عملیات حساس در `audit_logs` با سانسور خودکار کلیدهای حساس.
 
 ## دیتابیس
 
-- **SQLite درون‌ساخت (`node:sqlite`)** وقتی `MONGO_URI` تنظیم نشده باشد — فایل `server/data/wt.sqlite` (قابل تغییر با `DATA_DIR`).
-- **MongoDB/Mongoose** وقتی `MONGO_URI` داده شود.
-- مدل‌ها/جدول‌ها: `User`، `Setting` (app_settings)، `EmailToken`، `Lobby`، `Room`، `Message`، `Plan`، `Order`، `Subscription`.
+- **SQLite درون‌ساخت (`node:sqlite`)** منبع حقیقت پیش‌فرض است — فایل `server/data/wt.sqlite` (قابل تغییر با `DATA_DIR`/`SQLITE_FILE`).
+- **MongoDB/Mongoose** وقتی `MONGO_URI` در دسترس باشد؛ مسیر قبلی دست‌نخورده می‌ماند.
+- **لایهٔ مشترک:** `server/database/schema.js` (اسکیمای ~۴۰ جدول + مهاجرت‌های نسخه‌دار)، `server/database/index.js` (اتصال، تراکنش، پشتیبان، خروجی، نگهداری)، `server/userStore.js`، `server/sessionStore.js`، و `server/stores/*` برای لابی/اتاق/مالی.
+- جزئیات کامل ساختار، ایندکس‌ها، پشتیبان‌گیری و سیاست نگهداری در `docs/database.md`.
 
 ## زمان واقعی
 

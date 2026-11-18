@@ -13,8 +13,13 @@ import { smsState } from "./sms.js";
 import authRoutes from "./routes/auth.js";
 import lobbyRoutes from "./routes/lobbies.js";
 import billingRoutes from "./routes/billing.js";
+import adminRoutes from "./routes/admin.js";
+import { startMaintenance } from "./database/index.js";
 import { Room } from "./models/Room.js";
 import { Message } from "./models/Message.js";
+import { PlaybackState } from "./models/PlaybackState.js";
+import { ensureStore } from "./userStore.js";
+import { sqlFindRoomByCode, sqlRecentMessages, sqlAddMessage, sqlSavePlaybackState } from "./stores/rooms.js";
 
 const PORT = Number(process.env.PORT || 3001);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -38,6 +43,7 @@ function cleanName(value) {
 
 function registerRealtime(app) {
   const rooms = new Map();
+  const playbackSavedAt = new Map();
 
   const send = (ws, payload) => {
     if (ws.readyState === 1) {
@@ -71,6 +77,7 @@ function registerRealtime(app) {
       if (set.size === 0) rooms.delete(room);
     }
     client.room = "";
+    client.roomId = "";
   };
 
   const roomFeature = async () => {
@@ -90,6 +97,7 @@ function registerRealtime(app) {
       id: crypto.randomUUID().slice(0, 8),
       name: "مهمان",
       room: "",
+      roomId: "",
       hits: [],
       ws
     };
@@ -141,6 +149,7 @@ function registerRealtime(app) {
           if (dbReady()) {
             const roomDoc = await Room.findOne({ roomCode: room }).lean();
             if (roomDoc) {
+              client.roomId = String(roomDoc._id);
               const history = await Message.find({ roomId: roomDoc._id })
                 .sort({ createdAt: -1 })
                 .limit(50)
@@ -150,6 +159,23 @@ function registerRealtime(app) {
                 room,
                 messages: history.reverse().map((m) => ({
                   id: String(m._id),
+                  username: m.username,
+                  content: m.content,
+                  type: m.type,
+                  createdAt: m.createdAt
+                }))
+              });
+            }
+          } else if (await ensureStore()) {
+            const roomDoc = await sqlFindRoomByCode(room);
+            if (roomDoc) {
+              client.roomId = roomDoc.id;
+              const history = await sqlRecentMessages(roomDoc.id, 50);
+              send(ws, {
+                type: "history",
+                room,
+                messages: history.map((m) => ({
+                  id: m.id,
                   username: m.username,
                   content: m.content,
                   type: m.type,
@@ -201,20 +227,22 @@ function registerRealtime(app) {
           };
           broadcast(client.room, { type: "chat", message });
 
-          if (dbReady()) {
-            Room.findOne({ roomCode: client.room })
-              .select("_id")
-              .lean()
-              .then((roomDoc) => {
-                if (!roomDoc) return null;
-                return Message.create({
-                  roomId: roomDoc._id,
-                  username: client.name,
-                  content,
-                  type: "text"
-                });
-              })
-              .catch(() => {});
+          if (client.roomId) {
+            if (dbReady()) {
+              Message.create({
+                roomId: client.roomId,
+                username: client.name,
+                content,
+                type: "text"
+              }).catch(() => {});
+            } else {
+              sqlAddMessage({
+                roomId: client.roomId,
+                username: client.name,
+                content,
+                type: "text"
+              }).catch(() => {});
+            }
           }
           return undefined;
         }
@@ -234,6 +262,34 @@ function registerRealtime(app) {
             from: client.id,
             at: Date.now()
           };
+          if (client.roomId) {
+            const now = Date.now();
+            const last = playbackSavedAt.get(client.roomId) || 0;
+            if (payload.action !== "state" || now - last > 900) {
+              playbackSavedAt.set(client.roomId, now);
+              if (dbReady()) {
+                PlaybackState.updateOne(
+                  { roomCode: client.room },
+                  {
+                    $set: {
+                      position: payload.time,
+                      paused: payload.paused,
+                      rate: payload.rate,
+                      updatedAt: new Date()
+                    }
+                  },
+                  { upsert: true }
+                ).catch(() => {});
+              } else {
+                sqlSavePlaybackState({
+                  roomId: client.roomId,
+                  position: payload.time,
+                  paused: payload.paused,
+                  rate: payload.rate
+                }).catch(() => {});
+              }
+            }
+          }
           return broadcast(client.room, payload, client);
         }
 
@@ -300,6 +356,17 @@ export async function buildServer() {
     options: { maxPayload: 512 * 1024 }
   });
 
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
+    if (!body || !String(body).trim()) return done(null, {});
+    try {
+      done(null, JSON.parse(body));
+    } catch {
+      const err = new Error("Request body is not valid JSON.");
+      err.statusCode = 400;
+      done(err);
+    }
+  });
+
   const limiter = createRateLimiter({
     max: Number(process.env.RATE_LIMIT_MAX || 50),
     windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60000),
@@ -323,6 +390,7 @@ export async function buildServer() {
   await app.register(authRoutes, { prefix: "/api/auth" });
   await app.register(lobbyRoutes, { prefix: "/api/lobbies" });
   await app.register(billingRoutes, { prefix: "/api/billing" });
+  await app.register(adminRoutes, { prefix: "/api/admin" });
 
   app.get("/api/features", async () => {
     const state = await loadFeatureState();
@@ -365,7 +433,13 @@ async function start() {
   }
 
   connectRedis().catch(() => {});
-  connectDB().catch(() => {});
+  connectDB()
+    .catch(() => {})
+    .finally(() => {
+      if (!dbReady()) {
+        startMaintenance(app.log).catch((err) => app.log.warn(`[db] maintenance unavailable: ${err.message}`));
+      }
+    });
 
   let closing = false;
   const shutdown = async (signal) => {

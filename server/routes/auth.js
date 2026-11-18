@@ -19,6 +19,8 @@ import {
 import { sendVerificationMail, sendResetMail, sendTestMail, mailMode, mailState, applyMailSettings } from "../mailer.js";
 import { sendResetSms, sendTestSms, smsMode, smsState } from "../sms.js";
 import { loadConnections, saveConnections, safeConnections } from "../settings.js";
+import { saveDbSession, getDbSession, touchDbSession, revokeDbSession, revokeDbUserSessions } from "../sessionStore.js";
+import { audit } from "../audit.js";
 import {
   saveSession,
   getSession,
@@ -247,6 +249,11 @@ async function storeReady() {
   return ensureStore();
 }
 
+async function revokeAllSessions(userId) {
+  await revokeUserSessions(userId);
+  await revokeDbUserSessions(userId);
+}
+
 export async function issueToken(user, req) {
   const jti = crypto.randomUUID();
   const userId = String(user.id);
@@ -274,6 +281,14 @@ export async function issueToken(user, req) {
     },
     JWT_TTL_SECONDS
   );
+  await saveDbSession({
+    jti,
+    userId,
+    role: user.role || "user",
+    ip: req.ip || "",
+    userAgent: cleanString(req.headers["user-agent"], 220),
+    expiresAt: Date.now() + JWT_TTL_SECONDS * 1000
+  });
   return { token, jti, expiresIn: JWT_TTL_SECONDS };
 }
 
@@ -295,7 +310,16 @@ export async function requireAuth(req, reply) {
   if (!payload?.jti || !payload?.sub) {
     return fail(reply, 401, "invalid_token", "Session expired or invalid. Please log in again.");
   }
-  const session = await getSession(payload.jti);
+  let session = await getSession(payload.jti);
+  if (!session || String(session.userId) !== String(payload.sub)) {
+    const durable = await getDbSession(payload.jti);
+    if (durable && String(durable.userId) === String(payload.sub)) {
+      session = durable;
+      const ttl = Math.max(60, Math.floor((durable.expiresAt - Date.now()) / 1000));
+      await saveSession(payload.jti, durable, ttl).catch(() => {});
+      await touchDbSession(payload.jti).catch(() => {});
+    }
+  }
   if (!session || String(session.userId) !== String(payload.sub)) {
     return fail(reply, 401, "session_revoked", "This session was logged out. Please log in again.");
   }
@@ -371,6 +395,13 @@ export default async function authRoutes(app) {
         verification = { sent: false, mode: mailMode(), email: maskEmail(user.email), error: "send_failed" };
       }
       const issued = await issueToken(user, req);
+      await audit("auth.register", req, {
+        targetType: "user",
+        targetId: user.id,
+        actorId: user.id,
+        actorRole: user.role || "user",
+        meta: { emailVerified: Boolean(user.emailVerified), hasPhone: Boolean(user.phone) }
+      });
       return reply.code(201).send({
         token: issued.token,
         tokenType: "Bearer",
@@ -406,6 +437,9 @@ export default async function authRoutes(app) {
     const user = rows[0] || null;
     const valid = user ? await bcrypt.compare(password, user.passwordHash) : false;
     if (!user || !valid) {
+      await audit("auth.login_failed", req, {
+        meta: { identifierType: identifier.includes("@") ? "email" : "username", accountFound: Boolean(user) }
+      });
       return fail(reply, 401, "invalid_credentials", "Email/username or password is incorrect.");
     }
 
@@ -437,6 +471,12 @@ export default async function authRoutes(app) {
     const issued = await issueToken(user, req);
     const safe = publicUser(user);
     await cacheSet(`user:${safe.id}`, safe, USER_CACHE_TTL);
+    await audit("auth.login", req, {
+      targetType: "user",
+      targetId: user.id,
+      actorId: user.id,
+      actorRole: user.role || "user"
+    });
 
     return {
       token: issued.token,
@@ -457,6 +497,7 @@ export default async function authRoutes(app) {
     const user = await findUserById(req.auth.userId);
     if (!user) {
       await revokeSession(req.auth.jti);
+      await revokeDbSession(req.auth.jti);
       return fail(reply, 401, "user_missing", "Account not found. Please log in again.");
     }
     const safe = publicUser(user);
@@ -550,9 +591,10 @@ export default async function authRoutes(app) {
     if (!valid) return fail(reply, 403, "wrong_password", "Current password is incorrect.");
 
     await updateUser(user.id, { passwordHash: await bcrypt.hash(next, BCRYPT_ROUNDS) });
-    await revokeUserSessions(user.id);
+    await revokeAllSessions(user.id);
     const issued = await issueToken(user, req);
     await cacheDel(`user:${user.id}`);
+    await audit("auth.password_change", req, { targetType: "user", targetId: user.id });
     return { ok: true, token: issued.token, expiresIn: issued.expiresIn };
   });
 
@@ -584,9 +626,15 @@ export default async function authRoutes(app) {
       passwordHash: await bcrypt.hash(next, BCRYPT_ROUNDS),
       recoveryHash: await bcrypt.hash(normalizeCode(recoveryCode), RECOVERY_ROUNDS)
     });
-    await revokeUserSessions(user.id);
+    await revokeAllSessions(user.id);
     await cacheDel(`user:${user.id}`);
     const issued = await issueToken(updated, req);
+    await audit("auth.recover", req, {
+      targetType: "user",
+      targetId: user.id,
+      actorId: user.id,
+      actorRole: user.role || "user"
+    });
     return {
       ok: true,
       token: issued.token,
@@ -606,6 +654,7 @@ export default async function authRoutes(app) {
     if (!valid) return fail(reply, 403, "wrong_password", "Current password is incorrect.");
     const recoveryCode = newRecoveryCode();
     await updateUser(user.id, { recoveryHash: await bcrypt.hash(normalizeCode(recoveryCode), RECOVERY_ROUNDS) });
+    await audit("auth.recovery_code_rotate", req, { targetType: "user", targetId: user.id });
     return { ok: true, recoveryCode };
   });
 
@@ -688,6 +737,7 @@ export default async function authRoutes(app) {
     const safe = publicUser(updated);
     await cacheDel(`user:${safe.id}`);
     await cacheSet(`user:${safe.id}`, safe, USER_CACHE_TTL);
+    await audit("auth.email_verified", req, { targetType: "user", targetId: user.id, meta: { via: "code" } });
     if (authenticated) return { ok: true, user: safe };
     const issued = await issueToken(updated, req);
     return {
@@ -713,6 +763,7 @@ export default async function authRoutes(app) {
     const updated = await updateUser(user.id, { emailVerified: true, emailVerifiedAt: new Date() });
     await cacheDel(`user:${user.id}`);
     const issued = await issueToken(updated, req);
+    await audit("auth.email_verified", req, { targetType: "user", targetId: user.id, meta: { via: "link" } });
     return {
       ok: true,
       token: issued.token,
@@ -829,9 +880,16 @@ export default async function authRoutes(app) {
       emailVerifiedAt: user.emailVerifiedAt || new Date()
     });
     await consumeEmailToken(record.id);
-    await revokeUserSessions(user.id);
+    await revokeAllSessions(user.id);
     await cacheDel(`user:${user.id}`);
     const issued = await issueToken(updated, req);
+    await audit("auth.password_reset", req, {
+      targetType: "user",
+      targetId: user.id,
+      actorId: user.id,
+      actorRole: user.role || "user",
+      meta: { via: linkToken ? "link" : "code" }
+    });
     return {
       ok: true,
       token: issued.token,
@@ -844,7 +902,9 @@ export default async function authRoutes(app) {
 
   app.post("/logout", { preHandler: [requireAuth] }, async (req) => {
     await revokeSession(req.auth.jti);
+    await revokeDbSession(req.auth.jti);
     await cacheDel(`user:${req.auth.userId}`);
+    await audit("auth.logout", req, { targetType: "session", targetId: req.auth.jti });
     return { ok: true };
   });
 
@@ -897,6 +957,14 @@ export default async function authRoutes(app) {
     const saved = await saveConnections({ mail: mail || undefined, sms: sms || undefined });
     if (!saved.ok) return fail(reply, 503, "store_unavailable", "Could not save the connection settings.");
     applyMailSettings();
+    await audit("owner.connections.update", req, {
+      targetType: "settings",
+      targetId: "connections",
+      meta: {
+        mail: { enabled: Boolean(mail?.enabled), host: Boolean(mail?.host) },
+        sms: { enabled: Boolean(sms?.enabled), provider: sms?.provider || "" }
+      }
+    });
     return {
       ok: true,
       connections: safeConnections(),
@@ -912,12 +980,20 @@ export default async function authRoutes(app) {
       const to = cleanString(body.to, 160).toLowerCase();
       if (!EMAIL_RE.test(to)) return fail(reply, 400, "invalid_email", "Enter a valid email address.");
       const result = await sendTestMail({ to });
+      await audit("owner.connections.test", req, {
+        targetType: "mail",
+        meta: { ok: Boolean(result.ok), mode: result.mode || "" }
+      });
       return { ok: Boolean(result.ok), mode: result.mode || "", error: result.error || "" };
     }
     if (kind === "sms") {
       const phone = normalizePhone(cleanString(body.to, 20));
       if (!phone) return fail(reply, 400, "invalid_phone", "Phone must be a valid Iranian mobile number like 09121234567.");
       const result = await sendTestSms({ to: phone });
+      await audit("owner.connections.test", req, {
+        targetType: "sms",
+        meta: { ok: Boolean(result.ok), mode: result.mode || "" }
+      });
       return { ok: Boolean(result.ok), mode: result.mode || "", error: result.error || "" };
     }
     return fail(reply, 400, "invalid_kind", "Test kind must be mail or sms.");
