@@ -2908,15 +2908,34 @@ function floatReaction(emoji) {
   node.style.setProperty("--x", `${12 + Math.random() * 76}%`);
   node.style.setProperty("--dx", `${Math.round((Math.random() - 0.5) * 90)}px`);
   frame.append(node);
+  // Safety net for Windows/Edge: if OS motion settings shortens the CSS
+  // animation, replay the float with the Web Animations API so it never
+  // sticks invisible at opacity 0.
+  requestAnimationFrame(() => {
+    if (!node.isConnected) return;
+    const [css] = node.getAnimations ? node.getAnimations() : [];
+    const dur = css?.effect?.getTiming?.().duration;
+    if (css && !(dur > 300)) {
+      try { css.cancel(); } catch {}
+      node.animate(
+        [
+          { opacity: 0, transform: "translate(-50%,14px) scale(.9)" },
+          { opacity: 1, transform: "translate(-50%,0) scale(1)", offset: 0.12 },
+          { opacity: 1, transform: "translate(-50%,-6px) scale(1)", offset: 0.78 },
+          { opacity: 0, transform: "translate(-50%,-18px) scale(1.05)" }
+        ],
+        { duration: 2200, easing: "ease-out", fill: "forwards" }
+      ).onfinish = () => node.remove();
+    }
+  });
   setTimeout(() => node.remove(), 2400);
 }
 
 function sendReaction(emoji) {
   if (!allow("chat.reactions", "واکنش‌ها غیرفعال شده است.")) return;
   const now = Date.now();
-  if (now - lastReactAt < 450) { closeReactTray(); return; }
+  if (now - lastReactAt < 200) return;
   lastReactAt = now;
-  closeReactTray();
   floatReaction(emoji);
   recordFeatureUse("chat.reactions", { plan: flagContext.plan, role: flagContext.role, room: code });
   net.command("reaction", { emoji });
@@ -2953,7 +2972,18 @@ function wireReactions() {
   dock.addEventListener("pointerleave", (e) => {
     if (e.pointerType === "touch") return;
     clearTimeout(hoverTimer);
-    closeTimer = setTimeout(closeReactTray, 260);
+    closeTimer = setTimeout(closeReactTray, 350);
+  });
+  tray.addEventListener("pointerenter", (e) => {
+    if (e.pointerType === "touch") return;
+    clearTimeout(closeTimer);
+    clearTimeout(hoverTimer);
+    openReactTray();
+  });
+  tray.addEventListener("pointerleave", (e) => {
+    if (e.pointerType === "touch") return;
+    clearTimeout(hoverTimer);
+    closeTimer = setTimeout(closeReactTray, 350);
   });
   document.addEventListener("pointerdown", (e) => {
     if (!tray.classList.contains("open")) return;

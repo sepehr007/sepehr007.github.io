@@ -635,7 +635,7 @@ export class Net {
     if (!LIVE_REACTIONS.includes(emoji)) return;
     if (!this.#allow(member, "reaction", 8, 5000)) return;
     const now = Date.now();
-    if (now - (member.lastReactionAt || 0) < 400) return;
+    if (now - (member.lastReactionAt || 0) < 150) return;
     member.lastReactionAt = now;
     const out = { id: uid(), emoji, nick: member.nick, at: now, by: member.id };
     this.#broadcast({ t: "reaction", ...out });

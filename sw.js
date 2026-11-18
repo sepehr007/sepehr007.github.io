@@ -1,4 +1,4 @@
-const CACHE = "wt-v70";
+const CACHE = "wt-v71";
 const SHELL = [
   "./",
   "./index.html",
@@ -109,6 +109,24 @@ self.addEventListener("fetch", (event) => {
           return res;
         })
         .catch(() => caches.match(req).then((r) => r || caches.match("./index.html")))
+    );
+    return;
+  }
+
+  if (
+    req.destination === "script" || req.destination === "style" ||
+    /\.(?:js|css)$/i.test(url.pathname)
+  ) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => caches.match(req))
     );
     return;
   }
