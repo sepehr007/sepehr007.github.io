@@ -96,7 +96,7 @@
 }
 .gate-tabs button:hover { color: #dfe4f2; }
 .gate-tabs button.active {
-  background: linear-gradient(135deg, rgba(var(--brand-rgb), .9), rgba(99, 74, 214, .9));
+  background: linear-gradient(135deg, rgba(var(--brand-rgb), .9), rgba(56, 189, 248, .9));
   color: #fff;
   box-shadow: 0 8px 24px rgba(var(--brand-rgb), .35);
 }
@@ -954,7 +954,7 @@ html[data-theme="light"] .prov-card,
 html[data-theme="light"] .pb-sec { border-color: rgba(15,23,42,.1); background: #fff; }
 html[data-theme="light"] .ent-num { border-color: rgba(15,23,42,.15); background: rgba(15,23,42,.03); color: #0b1224; }
 html[data-theme="light"] .ow-chip { border-color: rgba(15,23,42,.14); background: rgba(15,23,42,.03); }
-html[data-theme="light"] .ow-chip.active { border-color: rgba(var(--brand-rgb),.5); background: rgba(var(--brand-rgb),.12); color: #5b3fd6; }
+html[data-theme="light"] .ow-chip.active { border-color: rgba(var(--brand-rgb),.5); background: rgba(var(--brand-rgb),.12); color: #2450c9; }
 html[data-theme="light"] .ow-grid { stroke: rgba(15,23,42,.08); }
 html[data-theme="light"] .ow-axis { fill: rgba(15,23,42,.45); }
 html[data-theme="light"] .ow-donut-total { fill: #0b1224; }

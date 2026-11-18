@@ -447,7 +447,7 @@ html[data-theme="light"] .chat-fab{background:rgba(255,255,255,.92);color:#11182
 .role-badge.mod{background:rgba(var(--brand-2-rgb),.14);color:var(--accent-2)}
 .msg-time{font-size:10.5px;color:var(--text-faint);font-variant-numeric:tabular-nums}
 .msg-text{font-size:var(--chat-font-size,var(--chat-size,13.4px));line-height:1.75;color:#cfd7e8;word-break:break-word;white-space:pre-wrap;filter:brightness(var(--chat-text-brightness,var(--chat-bright,1)))}
-.msg-text .mention{color:#a78bfa;background:rgba(var(--brand-rgb),.14);border-radius:5px;padding:0 3px}
+.msg-text .mention{color:#9db8ff;background:rgba(var(--brand-rgb),.14);border-radius:5px;padding:0 3px}
 .msg-text .chat-link{color:var(--accent-2);text-decoration:underline;text-underline-offset:2px;word-break:break-all}
 .msg-text .chat-link:hover{color:var(--accent)}
 .msg-text.deleted{font-style:italic;color:var(--text-faint);text-decoration:line-through}
@@ -914,7 +914,7 @@ html[data-theme="light"] .sidebar{background:rgba(255,255,255,.9)}
 html[data-theme="light"] .msg:hover{background:rgba(15,23,42,.04)}
 html[data-theme="light"] .msg.own .msg-head .nick{color:var(--accent)}
 html[data-theme="light"] .msg-text{color:#303a4d}
-html[data-theme="light"] .msg-text .mention{color:#6d28d9;background:rgba(var(--brand-rgb),.12)}
+html[data-theme="light"] .msg-text .mention{color:#2450c9;background:rgba(var(--brand-rgb),.12)}
 html[data-theme="light"] .msg-text .chat-link{color:var(--accent)}
 html[data-theme="light"] .msg-actions{background:#fff;box-shadow:0 10px 26px rgba(15,23,42,.16)}
 html[data-theme="light"] .msg-actions button:hover{background:rgba(15,23,42,.07)}
@@ -1070,7 +1070,7 @@ html[data-theme="light"] .plan-card-public { border-color: rgba(15,23,42,.1); ba
 .plan-badge { font-size: 10.5px; font-weight: 800; padding: 3px 9px; border-radius: 999px; }
 .plan-badge.hot { background: rgba(255,82,140,.16); color: #ff7ba3; }
 .plan-badge.rec { background: rgba(var(--brand-2-rgb),.14); color: #fcd68a; }
-.plan-badge.custom { background: rgba(var(--brand-rgb),.16); color: #b7a5ff; }
+.plan-badge.custom { background: rgba(var(--brand-rgb),.16); color: #9db8ff; }
 .plan-ico { font-style: normal; margin-inline-end: 6px; }
 .plan-trial { margin: 0; font-size: 12px; font-weight: 700; color: #7ce7a2; }
 .price-old { display: block; margin-bottom: 2px; font-size: 12px; opacity: .55; text-decoration: line-through; }
