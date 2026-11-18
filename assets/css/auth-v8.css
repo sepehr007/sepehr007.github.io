@@ -92,3 +92,40 @@ html[data-theme="light"] .recovery-code{color:#0f172a;background:rgba(255,255,25
 #recStep2 .link-btn + .link-btn,
 #recStepRecovery .link-btn + .link-btn,
 #resetForm .link-btn + .link-btn { margin-top: 6px; }
+
+/* channel switch + code countdown */
+.auth-seg {
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 12px;
+  background: rgba(4, 6, 12, .5);
+  border: 1px solid rgba(255, 255, 255, .09);
+  margin-bottom: 14px;
+}
+.auth-seg button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 8px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background .18s ease, color .18s ease;
+}
+.auth-seg button.active {
+  background: linear-gradient(135deg, rgba(var(--brand-rgb), .9), rgba(var(--brand-2-rgb), .8));
+  color: #fff;
+}
+html[data-theme="light"] .auth-seg { background: rgba(15, 23, 42, .04); border-color: rgba(15, 23, 42, .1); }
+.code-timer {
+  margin: -4px 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-align: center;
+}
+.code-timer.expired { color: #f87171; }

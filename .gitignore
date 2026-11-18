@@ -3,4 +3,5 @@ _sample.*
 _bad.*
 *.log
 server/data/
+server/data-*/
 server/.env

@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { User } from "./models/User.js";
 import { EmailToken } from "./models/EmailToken.js";
+import { Setting } from "./models/Setting.js";
 import { dbReady } from "./db.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,7 @@ function toUser(row) {
     email: row.email || "",
     emailVerified: Boolean(row.emailVerified),
     emailVerifiedAt: row.emailVerifiedAt ? new Date(row.emailVerifiedAt) : null,
+    phone: row.phone || "",
     passwordHash: row.passwordHash || "",
     recoveryHash: row.recoveryHash || "",
     nick: row.nick || row.username || "",
@@ -45,6 +47,7 @@ function fromSql(row) {
     email: row.email,
     emailVerified: row.email_verified,
     emailVerifiedAt: row.email_verified_at,
+    phone: row.phone,
     passwordHash: row.password_hash,
     recoveryHash: row.recovery_hash,
     nick: row.nick,
@@ -75,6 +78,7 @@ async function getSqlite() {
         email TEXT NOT NULL UNIQUE,
         email_verified INTEGER DEFAULT 0,
         email_verified_at INTEGER,
+        phone TEXT DEFAULT '',
         password_hash TEXT NOT NULL,
         recovery_hash TEXT DEFAULT '',
         nick TEXT DEFAULT '',
@@ -99,11 +103,16 @@ async function getSqlite() {
       );
       CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens(user_id, kind, created_at);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_email_tokens_link ON email_tokens(link_hash) WHERE link_hash <> '';
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `);
     // Older databases created before email verification existed.
     const columns = new Set(db.prepare("PRAGMA table_info(users)").all().map((c) => c.name));
     if (!columns.has("email_verified")) db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0");
     if (!columns.has("email_verified_at")) db.exec("ALTER TABLE users ADD COLUMN email_verified_at INTEGER");
+    if (!columns.has("phone")) db.exec("ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''");
     sqlite = db;
     return sqlite;
   } catch (err) {
@@ -150,8 +159,49 @@ export async function findUsers(query) {
   if (email) {
     rows.push(...db.prepare("SELECT * FROM users WHERE email = ?").all(email));
   }
+  if (query?.phone) {
+    rows.push(...db.prepare("SELECT * FROM users WHERE phone = ?").all(query.phone));
+  }
   const seen = new Set();
   return rows.filter((r) => (seen.has(r.id) ? false : seen.add(r.id))).map(fromSql);
+}
+
+export async function findUsersByPhone(phone) {
+  if (!phone) return [];
+  if (dbReady()) {
+    return (await User.find({ phone }).select("+passwordHash +recoveryHash").lean()).map(toUser);
+  }
+  const db = await getSqlite();
+  if (!db) return [];
+  return db.prepare("SELECT * FROM users WHERE phone = ?").all(phone).map(fromSql);
+}
+
+export async function getAppSetting(key) {
+  const name = String(key || "");
+  if (!name) return null;
+  if (dbReady()) {
+    const doc = await Setting.findOne({ key: name }).lean();
+    return doc?.value ?? null;
+  }
+  const db = await getSqlite();
+  if (!db) return null;
+  const row = db.prepare("SELECT value FROM app_settings WHERE key = ?").get(name);
+  return row ? row.value : null;
+}
+
+export async function setAppSetting(key, value) {
+  const name = String(key || "");
+  if (!name) return false;
+  if (dbReady()) {
+    await Setting.updateOne({ key: name }, { $set: { value: String(value ?? "") } }, { upsert: true });
+    return true;
+  }
+  const db = await getSqlite();
+  if (!db) return false;
+  db.prepare(
+    "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  ).run(name, String(value ?? ""));
+  return true;
 }
 
 export async function findUserById(id) {
@@ -174,6 +224,7 @@ export async function createUser(data) {
       email: data.email,
       emailVerified: Boolean(data.emailVerified),
       emailVerifiedAt: data.emailVerifiedAt ? new Date(data.emailVerifiedAt) : null,
+      phone: data.phone || "",
       passwordHash: data.passwordHash,
       recoveryHash: data.recoveryHash || "",
       nick: data.nick || data.username,
@@ -190,8 +241,8 @@ export async function createUser(data) {
   if (!db) throw new Error("store_unavailable");
   const id = crypto.randomUUID();
   db.prepare(
-    `INSERT INTO users (id, username, username_lower, email, email_verified, email_verified_at, password_hash, recovery_hash, nick, birthdate, city, bio, avatar, role, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO users (id, username, username_lower, email, email_verified, email_verified_at, phone, password_hash, recovery_hash, nick, birthdate, city, bio, avatar, role, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     data.username,
@@ -199,6 +250,7 @@ export async function createUser(data) {
     data.email,
     data.emailVerified ? 1 : 0,
     data.emailVerifiedAt ? new Date(data.emailVerifiedAt).getTime() : null,
+    data.phone || "",
     data.passwordHash,
     data.recoveryHash || "",
     data.nick || data.username,
@@ -218,6 +270,7 @@ const PATCH_COLUMNS = {
   email: "email",
   emailVerified: "email_verified",
   emailVerifiedAt: "email_verified_at",
+  phone: "phone",
   passwordHash: "password_hash",
   recoveryHash: "recovery_hash",
   nick: "nick",

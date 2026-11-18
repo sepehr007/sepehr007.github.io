@@ -1,4 +1,5 @@
 import { el, store, toast } from "./core.js";
+import { apiFetch } from "./api.js";
 import {
   CONFIG_REGISTRY, NAV_GROUPS, PAGE_DEFS, pageDef, configMeta,
   CONFIG_CATEGORIES, DEFAULT_ROLES, PERMISSION_SCOPES, PERMISSIONS, FEATURE_DEFS
@@ -1877,30 +1878,275 @@ export function createCenter(ctx) {
   };
   renderers.integrations = (section) => {
     section.replaceChildren();
-    const wrap = card("یکپارچه‌سازی", "وضعیت اتصال‌های فعلی و پایهٔ اتصال سرویس‌های آینده.");
-    const { wrap: tbl, tbody } = table(["سرویس", "وضعیت", "توضیح"], []);
+    let token = "";
+    try { token = sessionStorage.getItem("wt.ownerJwt") || ""; } catch {}
     let base = "";
     try { base = ctx.getApiBase(); } catch {}
-    const rows = [
-      ["API بک‌اند", base ? "تنظیم‌شده" : "تنظیم نشده", base || "assets/data/runtime-config.json"],
-      ["Signaling (ntfy)", "فعال", "همگام‌سازی اتاق‌ها P2P"],
-      ["GitHub Pages", "فعال", "میزبانی استاتیک"],
-      ["درگاه پرداخت", "غیرفعال", "پس از اتصال بک‌اند"],
-      ["ایمیل/اعلان", "غیرفعال", "نیازمند سرویس بیرونی"]
-    ];
-    for (const r of rows) {
-      const tr = el("tr");
-      r.forEach((c, i) => {
-        if (i === 1) {
-          const td = el("td");
-          td.append(tag(c, /فعال|تنظیم‌شده/.test(c) ? "ok" : "bad"));
-          tr.append(td);
-        } else tr.append(el("td", { text: c }));
-      });
-      tbody.append(tr);
+
+    if (!token) {
+      const warn = card("اتصال ایمیل و پیامک", "برای مدیریت SMTP و درگاه پیامک، کنسول باید روی سرور با حساب مالک وارد شده باشد.");
+      const p = el("p", { class: "ohint" });
+      p.textContent = base
+        ? `آدرس سرور: ${base} — اما نشست سروری مالک پیدا نشد. یک بار از کنسول خارج شو و دوباره با رمز مالک وارد شو.`
+        : "آدرس سرور تنظیم نشده؛ سایت هنوز به بک‌اند وصل نیست.";
+      warn.append(p);
+      section.append(warn);
+      section.append(honesty("کلیدهای SMTP و پیامک فقط روی سرور ذخیره می‌شوند و هرگز به مرورگر برنمی‌گردند."));
+      return;
     }
-    wrap.append(tbl);
-    section.append(wrap);
+
+    const field = (label, input, span2 = false) => {
+      const lab = el("label", { class: `ofield${span2 ? " span2" : ""}` });
+      lab.append(el("span", { text: label }), input);
+      return lab;
+    };
+    const textInput = (type, attrs = {}) => el("input", { type, dir: type === "checkbox" ? null : "ltr", autocomplete: "off", ...attrs });
+    const checkField = (label, input) => {
+      const lab = el("label", { class: "ofield" });
+      lab.append(el("span", { text: label }), el("label", {}, [input, " فعال"]));
+      return lab;
+    };
+    const statusText = (node, text, ok) => {
+      node.textContent = text;
+      node.classList.toggle("ok", Boolean(ok));
+    };
+
+    /* ----- mail ----- */
+    const mailCard = card("اتصال ایمیل (SMTP)", "کد تأیید ایمیل و لینک تعیین رمز از همین اتصال ارسال می‌شوند. اگر خالی بماند، نسخهٔ بدون سرور فقط فایل outbox می‌سازد.");
+    const mEnabled = el("input", { type: "checkbox" });
+    const mHost = textInput("text", { placeholder: "smtp.gmail.com" });
+    const mPort = textInput("number", { min: "1", max: "65535", placeholder: "587" });
+    const mSecure = el("input", { type: "checkbox" });
+    const mUser = textInput("text", { placeholder: "you@gmail.com" });
+    const mPass = textInput("password", { placeholder: "رمز SMTP" });
+    const mFrom = textInput("text", { placeholder: "هم‌تماشا <no-reply@example.com>" });
+    const mailGrid = el("div", { class: "form-grid" });
+    mailGrid.append(
+      checkField("وضعیت", mEnabled),
+      field("رمزنگاری SSL/TLS", mSecure),
+      field("هاست", mHost),
+      field("پورت", mPort),
+      field("نام کاربری", mUser),
+      field("رمز عبور", mPass),
+      field("فرستنده", mFrom, true)
+    );
+    const mailActions = el("div", { class: "ov-actions" });
+    const mailSave = el("button", { type: "button", class: "btn btn-primary btn-sm", text: "ذخیره اتصال ایمیل" });
+    const mailClear = el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "پاک کردن رمز SMTP" });
+    mailActions.append(mailSave, mailClear);
+    const mailStatus = el("p", { class: "ohint" });
+    const mailTestRow = el("div", { class: "form-grid ow-mt" });
+    const mTestTo = textInput("email", { placeholder: "you@example.com" });
+    const mTestBtn = el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "ارسال ایمیل آزمایشی" });
+    mailTestRow.append(field("ایمیل آزمایشی", mTestTo), field(" ", mTestBtn));
+    mailCard.append(mailGrid, mailActions, mailStatus, mailTestRow);
+
+    /* ----- sms ----- */
+    const smsCard = card("اتصال پیامک", "برای بازیابی رمز با پیامک، یک درگاه یا دستگاه SMS وصل کن. بدون اتصال، پیامک فقط در فایل outbox ذخیره می‌شود.");
+    const sEnabled = el("input", { type: "checkbox" });
+    const sProvider = el("select");
+    for (const [value, text] of [["", "— انتخاب کن —"], ["kavenegar", "کاوه‌نگار"], ["twilio", "Twilio"], ["webhook", "وب‌هوک اختصاصی"]]) {
+      sProvider.append(el("option", { value, text }));
+    }
+    const sApiKey = textInput("password", { placeholder: "API key" });
+    const sSender = textInput("text", { placeholder: "شماره یا عنوان فرستنده" });
+    const sSid = textInput("text", { placeholder: "ACxxxxxxxx" });
+    const sToken = textInput("password", { placeholder: "auth token" });
+    const sTwFrom = textInput("text", { placeholder: "+1…" });
+    const sUrl = textInput("text", { placeholder: "https://example.com/sms" });
+    const sWebKey = textInput("password", { placeholder: "کلید اختیاری" });
+
+    const kavBox = el("div", { class: "form-grid ow-mt" });
+    kavBox.append(field("کلید API کاوه‌نگار", sApiKey), field("شماره فرستنده", sSender));
+    const twiBox = el("div", { class: "form-grid ow-mt" });
+    twiBox.append(field("Account SID", sSid), field("Auth token", sToken), field("شماره فرستنده", sTwFrom));
+    const webBox = el("div", { class: "form-grid ow-mt" });
+    webBox.append(field("آدرس وب‌هوک", sUrl), field("کلید اختیاری", sWebKey));
+    kavBox.hidden = true;
+    twiBox.hidden = true;
+    webBox.hidden = true;
+
+    const smsGrid = el("div", { class: "form-grid" });
+    smsGrid.append(checkField("وضعیت", sEnabled), field("درگاه", sProvider));
+    const smsActions = el("div", { class: "ov-actions" });
+    const smsSave = el("button", { type: "button", class: "btn btn-primary btn-sm", text: "ذخیره اتصال پیامک" });
+    const smsClear = el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "پاک کردن کلیدها" });
+    smsActions.append(smsSave, smsClear);
+    const smsStatus = el("p", { class: "ohint" });
+    const smsTestRow = el("div", { class: "form-grid ow-mt" });
+    const sTestTo = textInput("tel", { placeholder: "09121234567", inputmode: "tel" });
+    const sTestBtn = el("button", { type: "button", class: "btn btn-secondary btn-sm", text: "ارسال پیامک آزمایشی" });
+    smsTestRow.append(field("شماره آزمایشی", sTestTo), field(" ", sTestBtn));
+    smsCard.append(smsGrid, kavBox, twiBox, webBox, smsActions, smsStatus, smsTestRow);
+
+    const paintProvider = () => {
+      kavBox.hidden = sProvider.value !== "kavenegar";
+      twiBox.hidden = sProvider.value !== "twilio";
+      webBox.hidden = sProvider.value !== "webhook";
+    };
+    sProvider.addEventListener("change", paintProvider);
+
+    let latest = null;
+    const paint = (conn, eff) => {
+      latest = conn || null;
+      const m = conn?.mail;
+      if (m) {
+        mEnabled.checked = Boolean(m.enabled);
+        mHost.value = m.host || "";
+        mPort.value = m.port || 587;
+        mSecure.checked = Boolean(m.secure);
+        mUser.value = m.user || "";
+        mFrom.value = m.from || "";
+        mPass.value = "";
+        mPass.placeholder = m.passSet ? "رمز ذخیره شده — برای تغییر بنویس" : "رمز SMTP";
+      }
+      const s = conn?.sms;
+      if (s) {
+        sEnabled.checked = Boolean(s.enabled);
+        sProvider.value = s.provider || "";
+        sSender.value = s.sender || "";
+        sSid.value = s.twilioSid || "";
+        sTwFrom.value = s.twilioFrom || "";
+        sUrl.value = s.webhookUrl || "";
+        sApiKey.value = "";
+        sToken.value = "";
+        sWebKey.value = "";
+        sApiKey.placeholder = s.apiKeySet ? "کلید ذخیره شده — برای تغییر بنویس" : "API key";
+        sToken.placeholder = s.twilioTokenSet ? "توکن ذخیره شده — برای تغییر بنویس" : "auth token";
+      }
+      paintProvider();
+      const mm = eff?.mail || {};
+      statusText(mailStatus, mm.mode === "smtp"
+        ? `وضعیت: SMTP فعال${mm.host ? ` (${mm.host})` : ""}${mm.error ? ` — آخرین خطا: ${mm.error}` : ""}`
+        : "وضعیت: outbox — ایمیل فقط در فایل سرور ذخیره می‌شود و به کاربر نمی‌رسد.", mm.mode === "smtp");
+      const ss = eff?.sms || {};
+      statusText(smsStatus, ss.mode && ss.mode !== "outbox"
+        ? `وضعیت: ${ss.mode}${ss.sender ? ` — فرستنده ${ss.sender}` : ""}${ss.error ? ` — آخرین خطا: ${ss.error}` : ""}`
+        : "وضعیت: outbox — پیامک فقط در فایل سرور ذخیره می‌شود و به گوشی نمی‌رسد.", ss.mode && ss.mode !== "outbox");
+    };
+
+    const put = (body) => apiFetch("/auth/owner/connections", { token, auth: false, method: "PUT", body, timeoutMs: 12000 });
+
+    mailSave.addEventListener("click", async () => {
+      mailSave.disabled = true;
+      try {
+        const res = await put({
+          mail: {
+            enabled: mEnabled.checked,
+            host: mHost.value.trim(),
+            port: Number(mPort.value) || 587,
+            secure: mSecure.checked,
+            user: mUser.value.trim(),
+            pass: mPass.value,
+            from: mFrom.value.trim()
+          }
+        });
+        paint(res.connections, res.effective);
+        toast("اتصال ایمیل ذخیره شد.", "success");
+      } catch (err) {
+        toast(err?.payload?.message || "ذخیره نشد؛ ارتباط با سرور را بررسی کن.", "error");
+      } finally {
+        mailSave.disabled = false;
+      }
+    });
+
+    mailClear.addEventListener("click", async () => {
+      mailClear.disabled = true;
+      try {
+        const res = await put({ mail: { clear: ["pass"] } });
+        paint(res.connections, res.effective);
+        toast("رمز SMTP پاک شد.", "success");
+      } catch {
+        toast("پاک کردن انجام نشد.", "error");
+      } finally {
+        mailClear.disabled = false;
+      }
+    });
+
+    mTestBtn.addEventListener("click", async () => {
+      const to = mTestTo.value.trim();
+      mTestBtn.disabled = true;
+      try {
+        const res = await apiFetch("/auth/owner/connections/test", {
+          token, auth: false, method: "POST", body: { kind: "mail", to }, timeoutMs: 25000
+        });
+        if (res.ok) toast(`ایمیل آزمایشی ارسال شد (${res.mode || "smtp"}).`, "success");
+        else toast(`ارسال نشد: ${res.error || "خطای نامشخص"}`, "error");
+      } catch (err) {
+        toast(err?.payload?.message || "ارسال آزمایشی ناموفق بود.", "error");
+      } finally {
+        mTestBtn.disabled = false;
+      }
+    });
+
+    smsSave.addEventListener("click", async () => {
+      smsSave.disabled = true;
+      try {
+        const res = await put({
+          sms: {
+            enabled: sEnabled.checked,
+            provider: sProvider.value,
+            apiKey: sApiKey.value,
+            sender: sSender.value.trim(),
+            webhookUrl: sUrl.value.trim(),
+            twilioSid: sSid.value.trim(),
+            twilioToken: sToken.value,
+            twilioFrom: sTwFrom.value.trim()
+          }
+        });
+        paint(res.connections, res.effective);
+        toast("اتصال پیامک ذخیره شد.", "success");
+      } catch (err) {
+        toast(err?.payload?.message || "ذخیره نشد؛ تنظیمات درگاه را بررسی کن.", "error");
+      } finally {
+        smsSave.disabled = false;
+      }
+    });
+
+    smsClear.addEventListener("click", async () => {
+      smsClear.disabled = true;
+      try {
+        const res = await put({ sms: { clear: ["apiKey", "twilioToken"] } });
+        paint(res.connections, res.effective);
+        toast("کلیدهای پیامک پاک شد.", "success");
+      } catch {
+        toast("پاک کردن انجام نشد.", "error");
+      } finally {
+        smsClear.disabled = false;
+      }
+    });
+
+    sTestBtn.addEventListener("click", async () => {
+      const to = sTestTo.value.trim();
+      sTestBtn.disabled = true;
+      try {
+        const res = await apiFetch("/auth/owner/connections/test", {
+          token, auth: false, method: "POST", body: { kind: "sms", to }, timeoutMs: 25000
+        });
+        if (res.ok) toast(`پیامک آزمایشی ارسال شد (${res.mode || "درگاه"}).`, "success");
+        else toast(`ارسال نشد: ${res.error || "خطای نامشخص"}`, "error");
+      } catch (err) {
+        toast(err?.payload?.message || "ارسال آزمایشی ناموفق بود.", "error");
+      } finally {
+        sTestBtn.disabled = false;
+      }
+    });
+
+    section.append(mailCard, smsCard);
+    section.append(honesty("کلیدهای SMTP و پیامک فقط روی سرور ذخیره می‌شوند و هرگز به مرورگر برنمی‌گردند. این فرم فقط با نشست سروری مالک کار می‌کند؛ اگر Pages استاتیک است، باید API جداگانه بالا باشد."));
+
+    (async () => {
+      try {
+        const res = await apiFetch("/auth/owner/connections", { token, auth: false, timeoutMs: 12000 });
+        paint(res.connections, res.effective);
+      } catch (err) {
+        const note = err?.status === 401 || err?.status === 403
+          ? "نشست سروری مالک منقضی شده؛ از کنسول خارج و دوباره وارد شو."
+          : "ارتباط با سرور برقرار نشد.";
+        statusText(mailStatus, note, false);
+        statusText(smsStatus, note, false);
+      }
+    })();
   };
 
   /* ----- foundation pages ----- */

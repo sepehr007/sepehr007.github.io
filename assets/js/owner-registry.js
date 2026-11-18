@@ -164,7 +164,7 @@ export const PAGE_DEFS = [
   page("system", null, "سیستم", "⚙", "system", "سیستم", "وضعیت API، شبکه و محیط اجرا.", "core", "system سیستم"),
   page("automation", null, "خودکارسازی", "⚙", "system", "خودکارسازی", "پایهٔ قواعد خودکار و رویدادمحور.", "dynamic", "automation خودکار"),
   page("storage", null, "فضای ذخیره", "▤", "system", "فضای ذخیره", "پایهٔ سهمیه و فایل‌های ابری.", "dynamic", "storage ذخیره"),
-  page("integrations", null, "یکپارچه‌سازی", "⇄", "system", "یکپارچه‌سازی", "پایهٔ اتصال سرویس‌های بیرونی.", "dynamic", "integrations اتصال"),
+  page("integrations", null, "ایمیل و پیامک", "⇄", "system", "ایمیل و پیامک", "اتصال SMTP و درگاه پیامک برای کدهای ورود و بازیابی.", "dynamic", "integrations اتصال ایمیل پیامک sms smtp"),
   page("backups", null, "پشتیبان‌گیری", "⤓", "system", "پشتیبان‌گیری", "دانلود و بازگردانی تنظیمات و دادهٔ محلی.", "dynamic", "backups پشتیبان"),
   page("maintenance", null, "تعمیرات", "⚠", "system", "تعمیرات", "قفل موقت سایت و پیام تعمیرات.", "dynamic", "maintenance تعمیر"),
   page("publish", null, "انتشار", "↑", "system", "انتشار تغییرات", "بازبینی، پیش‌نمایش و خروجی تنظیمات.", "core", "publish انتشار")

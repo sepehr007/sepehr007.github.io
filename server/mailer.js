@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import nodemailer from "nodemailer";
+import { loadConnections, connections } from "./settings.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(HERE, "data");
@@ -11,41 +12,79 @@ const SITE_NAME = "هم‌تماشا";
 
 let transport = null;
 let transportMode = "";
+let transportKey = "";
 let lastError = "";
 
-function buildTransport() {
-  if (transport) return transport;
+function envMail() {
   const host = String(process.env.SMTP_HOST || "").trim();
-  if (!host) {
-    transportMode = "outbox";
-    return null;
-  }
+  if (!host) return null;
   const port = Number(process.env.SMTP_PORT || 587);
-  transport = nodemailer.createTransport({
+  return {
     host,
     port,
     secure: String(process.env.SMTP_SECURE || "").toLowerCase() === "true" || port === 465,
-    auth:
-      process.env.SMTP_USER || process.env.SMTP_PASS
-        ? { user: process.env.SMTP_USER || "", pass: process.env.SMTP_PASS || "" }
-        : undefined,
-    connectionTimeout: 12_000,
-    greetingTimeout: 12_000,
-    socketTimeout: 20_000
-  });
-  transportMode = "smtp";
-  return transport;
+    user: process.env.SMTP_USER || "",
+    pass: process.env.SMTP_PASS || "",
+    from: FROM
+  };
+}
+
+function effectiveMail() {
+  const saved = connections().mail;
+  if (saved?.enabled && saved.host) {
+    return {
+      host: saved.host,
+      port: Number(saved.port) || 587,
+      secure: Boolean(saved.secure) || Number(saved.port) === 465,
+      user: saved.user || "",
+      pass: saved.pass || "",
+      from: saved.from || FROM
+    };
+  }
+  return envMail();
+}
+
+export function applyMailSettings() {
+  transport = null;
+  transportKey = "";
+  transportMode = "";
+}
+
+function activeTransport() {
+  const cfg = effectiveMail();
+  if (!cfg) {
+    transport = null;
+    transportKey = "";
+    transportMode = "outbox";
+    return { mode: "outbox", cfg: null };
+  }
+  const key = JSON.stringify([cfg.host, cfg.port, cfg.secure, cfg.user, cfg.pass]);
+  if (!transport || key !== transportKey) {
+    transport = nodemailer.createTransport({
+      host: cfg.host,
+      port: cfg.port,
+      secure: cfg.secure,
+      auth: cfg.user || cfg.pass ? { user: cfg.user, pass: cfg.pass } : undefined,
+      connectionTimeout: 12_000,
+      greetingTimeout: 12_000,
+      socketTimeout: 20_000
+    });
+    transportKey = key;
+    transportMode = "smtp";
+  }
+  return { mode: "smtp", cfg };
 }
 
 export function mailMode() {
-  if (!transportMode) buildTransport();
-  return transportMode;
+  return effectiveMail() ? "smtp" : "outbox";
 }
 
 export function mailState() {
+  const cfg = effectiveMail();
   return {
-    mode: mailMode(),
-    from: FROM,
+    mode: cfg ? "smtp" : "outbox",
+    from: cfg?.from || FROM,
+    host: cfg?.host || "",
     error: lastError
   };
 }
@@ -84,10 +123,11 @@ function layout({ title, intro, code, link, cta, note }) {
 }
 
 async function deliver({ to, subject, text, html }) {
-  const active = buildTransport();
-  if (active) {
+  await loadConnections();
+  const { mode, cfg } = activeTransport();
+  if (mode === "smtp") {
     try {
-      const info = await active.sendMail({ from: FROM, to, subject, text, html });
+      const info = await transport.sendMail({ from: cfg.from || FROM, to, subject, text, html });
       lastError = "";
       return { ok: true, mode: "smtp", id: info.messageId || "" };
     } catch (err) {
@@ -143,6 +183,19 @@ export async function sendResetMail({ to, username, code, link, minutes }) {
       link,
       cta: "تعیین رمز جدید",
       note: `این کد تا ${minutes} دقیقه معتبر است. بعد از تغییر رمز، همهٔ نشست‌های قبلی بسته می‌شوند.`
+    })
+  });
+}
+
+export async function sendTestMail({ to }) {
+  return deliver({
+    to,
+    subject: `آزمایش اتصال ایمیل ${SITE_NAME}`,
+    text: "این یک ایمیل آزمایشی از کنسول مالک هم‌تماشا است. اگر آن را دیدی، SMTP درست وصل شده.",
+    html: layout({
+      title: "اتصال ایمیل برقرار است",
+      intro: "این یک پیام آزمایشی از کنسول مالک هم‌تماشا است. اگر این ایمیل را دریافت کردی، SMTP درست وصل شده و کدهای ورود هم ارسال می‌شوند.",
+      note: "اگر این پیام را انتظار نداشتی، تنظیمات SMTP را در کنسول مالک بررسی کن."
     })
   });
 }

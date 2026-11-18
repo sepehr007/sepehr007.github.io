@@ -224,11 +224,11 @@ export function apiHealth() {
 }
 
 export const authApi = {
-  register({ username, email, password, avatar, nick }) {
+  register({ username, email, phone, password, avatar, nick }) {
     return apiFetch("/auth/register", {
       method: "POST",
       auth: false,
-      body: { username, email, password, avatar, nick }
+      body: { username, email, phone, password, avatar, nick }
     });
   },
   login({ identifier, email, username, password }) {
@@ -281,14 +281,18 @@ export const authApi = {
       return res;
     });
   },
-  forgotPassword({ email }) {
-    return apiFetch("/auth/password/forgot", { method: "POST", auth: false, body: { email } });
+  forgotPassword({ email, phone }) {
+    return apiFetch("/auth/password/forgot", {
+      method: "POST",
+      auth: false,
+      body: phone ? { phone } : { email }
+    });
   },
-  resetPassword({ token, email, code, password }) {
+  resetPassword({ token, email, phone, code, password }) {
     return apiFetch("/auth/password/reset", {
       method: "POST",
       auth: false,
-      body: token ? { token, password } : { email, code, password }
+      body: token ? { token, password } : phone ? { phone, code, password } : { email, code, password }
     }).then((res) => {
       if (res?.token) apiSetToken(res.token);
       return res;

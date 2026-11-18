@@ -5,6 +5,7 @@ import {
   createUser,
   findUserById,
   findUsers,
+  findUsersByPhone,
   updateUser,
   ensureStore,
   createEmailToken,
@@ -15,7 +16,9 @@ import {
   consumeEmailToken,
   purgeEmailTokens
 } from "../userStore.js";
-import { sendVerificationMail, sendResetMail, mailMode } from "../mailer.js";
+import { sendVerificationMail, sendResetMail, sendTestMail, mailMode, mailState, applyMailSettings } from "../mailer.js";
+import { sendResetSms, sendTestSms, smsMode, smsState } from "../sms.js";
+import { loadConnections, saveConnections, safeConnections } from "../settings.js";
 import {
   saveSession,
   getSession,
@@ -35,6 +38,7 @@ const RECOVERY_ROUNDS = 10;
 const USER_CACHE_TTL = 120;
 const USERNAME_RE = /^[\p{L}\p{N}_-]{3,24}$/u;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const PHONE_RE = /^09\d{9}$/;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const VERIFY_TTL_MINUTES = 30;
 const RESET_TTL_MINUTES = 15;
@@ -50,6 +54,8 @@ const verifySendLimit = createRateLimiter({ max: 6, windowMs: 60_000, prefix: "w
 const verifyConfirmLimit = createRateLimiter({ max: 20, windowMs: 60_000, prefix: "wt:rl:verifyconfirm:" });
 const forgotLimit = createRateLimiter({ max: 6, windowMs: 60_000, prefix: "wt:rl:forgot:" });
 const resetLimit = createRateLimiter({ max: 12, windowMs: 60_000, prefix: "wt:rl:reset:" });
+const connectionsLimit = createRateLimiter({ max: 20, windowMs: 60_000, prefix: "wt:rl:connections:" });
+const connectionsTestLimit = createRateLimiter({ max: 6, windowMs: 60_000, prefix: "wt:rl:constest:" });
 
 const mailCooldowns = new Map();
 
@@ -78,6 +84,23 @@ function maskEmail(email) {
   return `${head}${"*".repeat(Math.max(1, Math.min(4, name.length - 1)))}@${domain}`;
 }
 
+function normalizePhone(raw) {
+  let digits = String(raw ?? "")
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/\D/g, "");
+  if (digits.startsWith("0098")) digits = `0${digits.slice(4)}`;
+  else if (digits.startsWith("98") && digits.length === 12) digits = `0${digits.slice(2)}`;
+  else if (digits.length === 10 && digits.startsWith("9")) digits = `0${digits}`;
+  return PHONE_RE.test(digits) ? digits : "";
+}
+
+function maskPhone(phone) {
+  const p = String(phone || "");
+  if (!/^09\d{9}$/.test(p)) return "";
+  return `${p.slice(0, 4)}***${p.slice(-4)}`;
+}
+
 function newNumericCode() {
   return String(crypto.randomInt(0, 100000000)).padStart(8, "0");
 }
@@ -98,43 +121,50 @@ function appOrigin(req) {
   return "http://localhost:4789";
 }
 
-async function issueEmailToken(user, kind, req) {
+async function issueEmailToken(user, kind, req, channel = "email") {
   const minutes = kind === "reset" ? RESET_TTL_MINUTES : VERIFY_TTL_MINUTES;
+  const useSms = channel === "sms" && kind === "reset";
   const code = newNumericCode();
-  const linkToken = newLinkToken();
+  const linkToken = useSms ? "" : newLinkToken();
   await deleteEmailTokens(user.id, kind);
   const record = await createEmailToken({
     userId: user.id,
     kind,
     codeHash: await bcrypt.hash(code, CODE_HASH_ROUNDS),
-    linkHash: hashLinkToken(linkToken),
+    linkHash: linkToken ? hashLinkToken(linkToken) : "",
     expiresAt: Date.now() + minutes * 60_000
   });
   purgeEmailTokens().catch(() => {});
   const base = appOrigin(req);
   const link =
-    kind === "reset"
-      ? `${base}/auth.html?reset=${encodeURIComponent(linkToken)}`
-      : `${base}/auth.html?verify=${encodeURIComponent(linkToken)}`;
-  const delivery =
-    kind === "reset"
+    useSms
+      ? ""
+      : kind === "reset"
+        ? `${base}/auth.html?reset=${encodeURIComponent(linkToken)}`
+        : `${base}/auth.html?verify=${encodeURIComponent(linkToken)}`;
+  const delivery = useSms
+    ? await sendResetSms({ to: user.phone, code, minutes })
+    : kind === "reset"
       ? await sendResetMail({ to: user.email, username: user.nick || user.username, code, link, minutes })
       : await sendVerificationMail({ to: user.email, username: user.nick || user.username, code, link, minutes });
-  return { record, delivery, code, link, minutes };
+  return { record, delivery, code, link, minutes, channel: useSms ? "sms" : "email" };
 }
 
 function publicDelivery(user, issued) {
-  const delivery = issued.delivery || { ok: false, mode: mailMode(), error: "unknown" };
+  const delivery = issued.delivery || { ok: false, mode: "", error: "unknown" };
+  const channel = issued.channel || "email";
   const payload = {
     sent: Boolean(delivery.ok),
     mode: delivery.mode || "",
-    email: maskEmail(user.email),
+    channel,
+    email: channel === "email" ? maskEmail(user.email) : "",
+    phone: channel === "sms" ? maskPhone(user.phone) : "",
     minutes: issued.minutes
   };
   if (!delivery.ok) payload.error = delivery.error || "send_failed";
   if (delivery.ok && delivery.mode === "outbox" && devSecretsAllowed()) {
     payload.previewCode = issued.code;
-    payload.previewLink = issued.link;
+    if (issued.link) payload.previewLink = issued.link;
   }
   return payload;
 }
@@ -155,6 +185,7 @@ function publicUser(user) {
     id: String(user.id),
     username: user.username,
     email: user.email,
+    phone: user.phone || "",
     role: user.role || "user",
     avatar: user.avatar || "",
     nick: user.nick || user.username,
@@ -284,6 +315,8 @@ export default async function authRoutes(app) {
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const username = cleanString(body.username, 24);
     const email = cleanString(body.email, 160).toLowerCase();
+    const phoneRaw = cleanString(body.phone, 20);
+    const phone = phoneRaw ? normalizePhone(phoneRaw) : "";
     const password = String(body.password ?? "");
     const nick = cleanNick(body.nick, username);
     const birthdate = cleanString(body.birthdate, 10);
@@ -296,6 +329,9 @@ export default async function authRoutes(app) {
     }
     if (!EMAIL_RE.test(email)) {
       return fail(reply, 400, "invalid_email", "Enter a valid email address.");
+    }
+    if (phoneRaw && !phone) {
+      return fail(reply, 400, "invalid_phone", "Phone must be a valid Iranian mobile number like 09121234567.");
     }
     if (password.length < 8 || password.length > 128) {
       return fail(reply, 400, "invalid_password", "Password must be between 8 and 128 characters.");
@@ -317,6 +353,7 @@ export default async function authRoutes(app) {
         username,
         usernameLower,
         email,
+        phone,
         passwordHash: await bcrypt.hash(password, BCRYPT_ROUNDS),
         recoveryHash: await bcrypt.hash(normalizeCode(recoveryCode), RECOVERY_ROUNDS),
         nick,
@@ -472,6 +509,16 @@ export default async function authRoutes(app) {
       }
     }
 
+    if (body.phone !== undefined) {
+      const raw = cleanString(body.phone, 20);
+      if (raw) {
+        const phone = normalizePhone(raw);
+        if (!phone) return fail(reply, 400, "invalid_phone", "Phone must be a valid Iranian mobile number like 09121234567.");
+        patch.phone = phone;
+      } else {
+        patch.phone = "";
+      }
+    }
     if (!Object.keys(patch).length) return fail(reply, 400, "nothing_to_update", "No profile fields were sent.");
     let user = await updateUser(req.auth.userId, patch);
     if (!user) return fail(reply, 404, "user_missing", "Account not found.");
@@ -678,17 +725,41 @@ export default async function authRoutes(app) {
   app.post("/password/forgot", { preHandler: [forgotLimit] }, async (req, reply) => {
     if (!(await storeReady())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
     const body = req.body && typeof req.body === "object" ? req.body : {};
+    const phoneRaw = cleanString(body.phone, 20);
     const email = cleanString(body.email, 160).toLowerCase();
+
+    if (phoneRaw) {
+      const phone = normalizePhone(phoneRaw);
+      if (!phone) return fail(reply, 400, "invalid_phone", "Phone must be a valid Iranian mobile number like 09121234567.");
+      const rows = await findUsersByPhone(phone);
+      const user = rows.length === 1 ? rows[0] : null;
+      const masked = { phone: maskPhone(phone), minutes: RESET_TTL_MINUTES, channel: "sms" };
+      if (!user || !user.phone) return { ok: true, sent: true, ...masked };
+      if (!takeCooldown(`forgot:phone:${phone}`, 60_000)) {
+        return { ok: true, sent: true, cooldown: true, ...masked };
+      }
+      try {
+        const delivery = publicDelivery(user, await issueEmailToken(user, "reset", req, "sms"));
+        if (!delivery.sent) {
+          return fail(reply, 502, "sms_failed", "The SMS could not be sent right now. Try again in a minute.");
+        }
+        return { ok: true, ...delivery };
+      } catch (err) {
+        req.log.error({ err }, "reset sms failed");
+        return fail(reply, 502, "sms_failed", "The SMS could not be sent right now. Try again in a minute.");
+      }
+    }
+
     if (!EMAIL_RE.test(email)) return fail(reply, 400, "invalid_email", "Enter a valid email address.");
 
     const rows = await findUsers({ email });
     const user = rows[0] || null;
     if (!user) {
       // Same answer for unknown emails so accounts cannot be probed.
-      return { ok: true, sent: true, email: maskEmail(email), minutes: RESET_TTL_MINUTES };
+      return { ok: true, sent: true, channel: "email", email: maskEmail(email), minutes: RESET_TTL_MINUTES };
     }
     if (!takeCooldown(`forgot:${email}`, 60_000)) {
-      return { ok: true, sent: true, cooldown: true, email: maskEmail(email), minutes: RESET_TTL_MINUTES };
+      return { ok: true, sent: true, cooldown: true, channel: "email", email: maskEmail(email), minutes: RESET_TTL_MINUTES };
     }
     try {
       const delivery = publicDelivery(user, await issueEmailToken(user, "reset", req));
@@ -707,6 +778,7 @@ export default async function authRoutes(app) {
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const linkToken = String(body.token ?? "").trim();
     const email = cleanString(body.email, 160).toLowerCase();
+    const phoneRaw = cleanString(body.phone, 20);
     const code = String(body.code ?? "").replace(/\D/g, "");
     const next = String(body.password ?? "");
     if (next.length < 8 || next.length > 128) {
@@ -715,17 +787,28 @@ export default async function authRoutes(app) {
 
     let record = null;
     let user = null;
+    let checkCode = false;
     if (linkToken) {
       record = await findEmailTokenByLink(hashLinkToken(linkToken), "reset");
       if (!record) return fail(reply, 400, "link_expired", "This reset link expired or was already used.");
       user = await findUserById(record.userId);
     } else {
-      if (!EMAIL_RE.test(email)) return fail(reply, 400, "invalid_email", "Enter the email of your account.");
       if (!/^\d{8}$/.test(code)) return fail(reply, 400, "invalid_code", "The code must be 8 digits.");
-      const rows = await findUsers({ email });
-      user = rows[0] || null;
+      if (phoneRaw) {
+        const phone = normalizePhone(phoneRaw);
+        if (!phone) return fail(reply, 400, "invalid_phone", "Phone must be a valid Iranian mobile number like 09121234567.");
+        const rows = await findUsersByPhone(phone);
+        user = rows.length === 1 ? rows[0] : null;
+      } else {
+        if (!EMAIL_RE.test(email)) return fail(reply, 400, "invalid_email", "Enter the email of your account.");
+        const rows = await findUsers({ email });
+        user = rows[0] || null;
+      }
       record = user ? await findActiveEmailToken(user.id, "reset") : null;
       if (!user || !record) return fail(reply, 400, "code_expired", "The code expired. Request a new one.");
+      checkCode = true;
+    }
+    if (checkCode) {
       const valid = await bcrypt.compare(code, record.codeHash || "");
       if (!valid) {
         const attempts = await bumpEmailTokenAttempts(record.id);
@@ -763,5 +846,80 @@ export default async function authRoutes(app) {
     await revokeSession(req.auth.jti);
     await cacheDel(`user:${req.auth.userId}`);
     return { ok: true };
+  });
+
+  /* ---------- owner: email + SMS connections ---------- */
+  async function ownerOnly(req, reply) {
+    await requireAuth(req, reply);
+    if (reply.sent) return false;
+    if (!["owner", "super_owner"].includes(req.auth.role)) {
+      fail(reply, 403, "forbidden", "Only the site owner can manage connections.");
+      return false;
+    }
+    return true;
+  }
+
+  app.get("/owner/connections", { preHandler: [connectionsLimit] }, async (req, reply) => {
+    if (!(await ownerOnly(req, reply))) return undefined;
+    await loadConnections(true);
+    return {
+      ok: true,
+      connections: safeConnections(),
+      effective: { mail: mailState(), sms: smsState() }
+    };
+  });
+
+  app.put("/owner/connections", { preHandler: [connectionsLimit] }, async (req, reply) => {
+    if (!(await ownerOnly(req, reply))) return undefined;
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const mail = body.mail && typeof body.mail === "object" ? body.mail : null;
+    const sms = body.sms && typeof body.sms === "object" ? body.sms : null;
+    if (mail?.enabled) {
+      if (!cleanString(mail.host, 200)) return fail(reply, 400, "invalid_host", "SMTP host is required when email is enabled.");
+      const port = Number(mail.port);
+      if (!Number.isFinite(port) || port < 1 || port > 65535) return fail(reply, 400, "invalid_port", "SMTP port must be between 1 and 65535.");
+    }
+    if (sms?.enabled) {
+      const provider = String(sms.provider || "").trim();
+      if (!["kavenegar", "twilio", "webhook"].includes(provider)) {
+        return fail(reply, 400, "invalid_provider", "Pick an SMS provider: kavenegar, twilio or webhook.");
+      }
+      if (provider === "kavenegar" && !String(sms.apiKey || "").trim()) {
+        return fail(reply, 400, "missing_api_key", "Kavenegar API key is required.");
+      }
+      if (provider === "twilio" && (!String(sms.twilioSid || "").trim() || !String(sms.twilioToken || "").trim())) {
+        return fail(reply, 400, "missing_twilio", "Twilio SID and auth token are required.");
+      }
+      if (provider === "webhook" && !/^https?:\/\//i.test(String(sms.webhookUrl || "").trim())) {
+        return fail(reply, 400, "invalid_webhook", "Webhook URL must start with http:// or https://.");
+      }
+    }
+    const saved = await saveConnections({ mail: mail || undefined, sms: sms || undefined });
+    if (!saved.ok) return fail(reply, 503, "store_unavailable", "Could not save the connection settings.");
+    applyMailSettings();
+    return {
+      ok: true,
+      connections: safeConnections(),
+      effective: { mail: mailState(), sms: smsState() }
+    };
+  });
+
+  app.post("/owner/connections/test", { preHandler: [connectionsTestLimit] }, async (req, reply) => {
+    if (!(await ownerOnly(req, reply))) return undefined;
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const kind = String(body.kind || "").trim();
+    if (kind === "mail") {
+      const to = cleanString(body.to, 160).toLowerCase();
+      if (!EMAIL_RE.test(to)) return fail(reply, 400, "invalid_email", "Enter a valid email address.");
+      const result = await sendTestMail({ to });
+      return { ok: Boolean(result.ok), mode: result.mode || "", error: result.error || "" };
+    }
+    if (kind === "sms") {
+      const phone = normalizePhone(cleanString(body.to, 20));
+      if (!phone) return fail(reply, 400, "invalid_phone", "Phone must be a valid Iranian mobile number like 09121234567.");
+      const result = await sendTestSms({ to: phone });
+      return { ok: Boolean(result.ok), mode: result.mode || "", error: result.error || "" };
+    }
+    return fail(reply, 400, "invalid_kind", "Test kind must be mail or sms.");
   });
 }

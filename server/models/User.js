@@ -34,6 +34,12 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    phone: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 20
+    },
     passwordHash: {
       type: String,
       required: true,

@@ -87,10 +87,6 @@
     <p class="auth-notice hidden" id="authNotice" role="status"></p>
 
     <form id="authForm" autocomplete="on">
-      <label class="field" id="nameField">
-        <span data-i18n="auth.name">اسم واقعی</span>
-        <input id="name" type="text" maxlength="24" autocomplete="name" data-i18n-ph="auth.namePh" placeholder="مثلاً علی رضایی">
-      </label>
       <label class="field">
         <span id="usernameLabel" data-i18n="auth.username">نام کاربری</span>
         <input id="username" type="text" maxlength="160" dir="ltr" autocomplete="username" spellcheck="false" data-i18n-ph="auth.usernamePh" placeholder="ali_2026">
@@ -98,6 +94,11 @@
       <label class="field hidden" id="emailField">
         <span data-i18n="auth.email">ایمیل</span>
         <input id="email" type="email" maxlength="160" dir="ltr" autocomplete="email" spellcheck="false" data-i18n-ph="auth.emailPh" placeholder="you@example.com">
+      </label>
+      <label class="field hidden" id="phoneField">
+        <span data-i18n="auth.phone">شماره موبایل</span>
+        <input id="phone" type="tel" maxlength="16" dir="ltr" inputmode="tel" autocomplete="tel" spellcheck="false" data-i18n-ph="auth.phonePh" placeholder="09121234567">
+        <p class="hint" data-i18n="auth.phoneHint">اختیاری؛ برای بازیابی رمز با پیامک به کار می‌آید.</p>
       </label>
       <label class="field">
         <span data-i18n="auth.password">رمز عبور</span>
@@ -136,6 +137,7 @@
         <span data-i18n="auth.verifyCode">کد ۸ رقمی ایمیل</span>
         <input id="verifyCode" class="code-input" type="text" inputmode="numeric" maxlength="8" dir="ltr" autocomplete="one-time-code" placeholder="12345678">
       </label>
+      <p class="code-timer" id="verifyTimer" hidden></p>
       <button class="btn btn-primary btn-block btn-lg" id="verifySubmit" type="submit" data-i18n="auth.verifyCta">تأیید ایمیل</button>
       <p class="auth-error" id="verifyError" role="alert"></p>
       <button class="link-btn" id="verifyResend" type="button" data-i18n="auth.verifyResend">ارسال دوبارهٔ کد</button>
@@ -161,12 +163,20 @@
 
     <form id="recoverForm" class="hidden" autocomplete="on">
       <div id="recStep1">
-        <label class="field">
+        <div class="auth-seg" role="tablist" id="recChannelTabs">
+          <button class="active" type="button" data-channel="email" data-i18n="auth.emailChannel">ایمیل</button>
+          <button type="button" data-channel="sms" data-i18n="auth.smsChannel">پیامک</button>
+        </div>
+        <label class="field" id="recEmailField">
           <span data-i18n="auth.email">ایمیل</span>
           <input id="recEmail" type="email" maxlength="160" dir="ltr" autocomplete="email" data-i18n-ph="auth.emailPh" placeholder="you@example.com">
         </label>
-        <p class="hint" data-i18n="auth.forgotEmailHint">کد ۸ رقمی به این ایمیل می‌رسد؛ با آن رمز تازه می‌گذاری.</p>
-        <button class="btn btn-primary btn-block btn-lg" id="recSendCode" type="button" data-i18n="auth.sendCode">ارسال کد به ایمیل</button>
+        <label class="field hidden" id="recPhoneField">
+          <span data-i18n="auth.phone">شماره موبایل</span>
+          <input id="recPhone" type="tel" maxlength="16" dir="ltr" inputmode="tel" autocomplete="tel" data-i18n-ph="auth.phonePh" placeholder="09121234567">
+        </label>
+        <p class="hint" id="recSendHint" data-i18n="auth.forgotEmailHint">کد ۸ رقمی به این ایمیل می‌رسد؛ با آن رمز تازه می‌گذاری.</p>
+        <button class="btn btn-primary btn-block btn-lg" id="recSendCode" type="button" data-i18n="auth.sendCodeEmail">ارسال کد به ایمیل</button>
         <p class="form-msg" id="recStep1Msg" role="status"></p>
         <p class="auth-error" id="recStep1Error" role="alert"></p>
         <button class="link-btn" id="recToRecovery" type="button" data-i18n="auth.useRecoveryCode">کد بازیابی دارم</button>
@@ -176,9 +186,10 @@
       <div id="recStep2" class="hidden">
         <p class="hint" id="recSentHint"></p>
         <label class="field">
-          <span data-i18n="auth.resetCode">کد ۸ رقمی ایمیل</span>
+          <span data-i18n="auth.code8">کد ۸ رقمی</span>
           <input id="recCode" class="code-input" type="text" inputmode="numeric" maxlength="8" dir="ltr" autocomplete="one-time-code" placeholder="12345678">
         </label>
+        <p class="code-timer" id="recTimer" hidden></p>
         <label class="field">
           <span data-i18n="auth.newPassword">رمز جدید</span>
           <input id="recPassword" type="password" maxlength="64" autocomplete="new-password">
@@ -201,7 +212,7 @@
         <button class="btn btn-primary btn-block btn-lg" id="recSubmit" type="submit" data-i18n="auth.resetCta">تعیین رمز جدید</button>
         <p class="auth-error" id="recError" role="alert"></p>
         <button class="link-btn" id="recResend" type="button" data-i18n="auth.resendCode">ارسال دوبارهٔ کد</button>
-        <button class="link-btn" id="recEmailAgain" type="button" data-i18n="auth.changeEmail">ایمیل دیگری بنویسم</button>
+        <button class="link-btn" id="recEmailAgain" type="button" data-i18n="auth.changeEmail">ایمیل یا شماره را عوض کن</button>
         <button class="link-btn" id="recoverBack2" type="button" data-i18n="auth.back">بازگشت به ورود</button>
       </div>
 
@@ -214,10 +225,6 @@
           <span data-i18n="auth.recoverCode">کد بازیابی</span>
           <input id="recRecoveryCode" type="text" maxlength="20" dir="ltr" autocomplete="one-time-code" spellcheck="false" data-i18n-ph="auth.recoverCodePh" placeholder="XXXX-XXXX-XXXX">
           <p class="hint" data-i18n="auth.recoverCodeHint">همان کدی که هنگام ساخت حساب گرفتی.</p>
-        </label>
-        <label class="field">
-          <span data-i18n="auth.recoverNameLabel">اسم واقعی (فقط حساب‌های قدیمی)</span>
-          <input id="recName" type="text" maxlength="24" autocomplete="name" data-i18n-ph="auth.namePh" placeholder="مثلاً علی رضایی">
         </label>
         <label class="field">
           <span data-i18n="auth.newPassword">رمز جدید</span>

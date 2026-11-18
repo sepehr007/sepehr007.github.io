@@ -70,6 +70,7 @@ async function boot(me) {
   }
   profile = getProfile(me.username);
   if (profile && remoteProfile?.email) profile.email = remoteProfile.email;
+  if (profile && remoteProfile?.phone) profile.phone = remoteProfile.phone;
   if (profile && !profile.email && me.email) profile.email = me.email;
   if (!profile) {
     location.replace("auth.html?next=profile.html&force=1");
@@ -110,6 +111,8 @@ function fillForm() {
   $("#pUsername").value = profile.username;
   const mail = $("#pEmail");
   if (mail) mail.value = profile.email || remoteProfile?.email || "";
+  const phone = $("#pPhone");
+  if (phone) phone.value = profile.phone || remoteProfile?.phone || "";
   $("#pBirth").value = profile.birthdate || "";
   $("#pCity").value = profile.city || "";
   $("#pBio").value = profile.bio || "";
@@ -245,20 +248,26 @@ function wireAccount() {
     clearMsg(out);
     const nick = $("#pNick").value;
     const username = $("#pUsername").value.trim().toLowerCase();
+    const phone = $("#pPhone")?.value || "";
 
     saving = true;
     let res;
     try {
-      res = saveProfile({ nick, birthdate: profile.birthdate, city: profile.city, bio: profile.bio });
+      res = saveProfile({ nick, phone, birthdate: profile.birthdate, city: profile.city, bio: profile.bio });
     } catch {
       saving = false;
       return msg(out, t("profile.session"));
     }
     saving = false;
     if (!res.ok) {
-      return msg(out, res.error === "name" ? t("profile.invalidNick") : res.error === "birthdate" ? t("profile.invalidBirth") : t("profile.saveFailed"));
+      const key = res.error === "name" ? "profile.invalidNick"
+        : res.error === "birthdate" ? "profile.invalidBirth"
+        : res.error === "phone" ? "profile.invalidPhone"
+        : "profile.saveFailed";
+      return msg(out, t(key));
     }
     profile.nick = res.nick;
+    if (phone !== undefined) profile.phone = res.phone;
     if (username !== profile.username) {
       saving = true;
       const ures = await changeUsername(username);

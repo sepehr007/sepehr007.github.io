@@ -3,7 +3,7 @@ import {
   $, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt,
   createLimiter, confirmDialog, copyText
 } from "./core.js";
-import { currentUser, mountUserChip, isRealName } from "./auth.js";
+import { currentUser, mountUserChip, isDisplayName } from "./auth.js";
 import { seedAccountsFromLocal } from "./db.js";
 import {
   createLobby, getActiveLobby, closeLobby, touchLobby, lobbyStats,
@@ -410,7 +410,7 @@ $("#createBtn").addEventListener("click", async () => {
   if (!flagOn(flagStates, "rooms.create")) return toast(getLangIsFa() ? "ساخت اتاق غیرفعال شده است." : "Room creation is disabled.", "error");
   const nick = createNick.value.trim().slice(0, 20);
   if (!nick) return toast(t("toast.nameRequired"), "error");
-  if (!isRealName(nick)) return toast(t("toast.realName"), "error");
+  if (!isDisplayName(nick)) return toast(t("toast.realName"), "error");
   const privacy = privacyInput.value;
   if (privacy === "password" && !(flagOn(flagStates, "rooms.private") && flagOn(flagStates, "rooms.password"))) {
     return toast(getLangIsFa() ? "اتاق رمزدار غیرفعال شده است." : "Password rooms are disabled.", "error");
@@ -468,7 +468,7 @@ function joinRoom() {
   if (!flagOn(flagStates, "rooms.join")) return toast(getLangIsFa() ? "ورود به اتاق غیرفعال شده است." : "Joining rooms is disabled.", "error");
   const nick = joinNick.value.trim().slice(0, 20);
   if (!nick) return toast(t("toast.nameRequired"), "error");
-  if (!isRealName(nick)) return toast(t("toast.realName"), "error");
+  if (!isDisplayName(nick)) return toast(t("toast.realName"), "error");
   const raw = joinCode.value.trim();
   if (!raw) return toast(t("toast.roomRequired"), "error");
 

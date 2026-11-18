@@ -114,6 +114,7 @@ function writeApiUser(user) {
     id: user.id || "",
     username: user.username,
     email: user.email || "",
+    phone: user.phone || "",
     role: user.role || "user",
     avatar: prof.avatar || user.avatar || "",
     nick: user.nick || prof.nick || "",
@@ -142,6 +143,17 @@ function readLocalSession() {
 }
 function emailLooksValid(raw) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(raw || "").trim());
+}
+function normalizePhone(raw) {
+  let digits = normalizeDigits(String(raw || "")).replace(/\D/g, "");
+  if (digits.startsWith("0098")) digits = `0${digits.slice(4)}`;
+  else if (digits.startsWith("98") && digits.length === 12) digits = `0${digits.slice(2)}`;
+  else if (digits.length === 10 && digits.startsWith("9")) digits = `0${digits}`;
+  return /^09\d{9}$/.test(digits) ? digits : "";
+}
+function maskPhoneClient(phone) {
+  const p = String(phone || "");
+  return /^09\d{9}$/.test(p) ? `${p.slice(0, 4)}***${p.slice(-4)}` : p;
 }
 function backendUnavailable(err) {
   if (!err) return true;
@@ -223,12 +235,11 @@ export function normalizeName(raw) {
   return String(raw || "").replace(/\s+/g, " ").trim();
 }
 
-export function isRealName(raw) {
+export function isDisplayName(raw) {
   const name = normalizeName(raw);
   if (name.length < 3 || name.length > 24) return false;
-  if (!/^[\p{L}][\p{L} \u200c]*$/u.test(name)) return false;
-  const letters = [...name].filter((ch) => /\p{L}/u.test(ch)).length;
-  return letters >= 3;
+  if (!/^[\p{L}\p{N}][\p{L}\p{N} _\-\u200c]*$/u.test(name)) return false;
+  return /\p{L}/u.test(name);
 }
 
 export function isUsername(raw) {
@@ -311,6 +322,7 @@ function remoteUser() {
     createdAt: Number.isFinite(created) && created > 0 ? created : null,
     friends: Array.isArray(rec?.friends) ? [...rec.friends] : [],
     email: remote.email || rec?.email || "",
+    phone: remote.phone || rec?.phone || "",
     role: remote.role || "user",
     emailVerified: Boolean(remote.emailVerified)
   };
@@ -349,6 +361,7 @@ export function getProfile(username) {
     birthdate: rec.profile?.birthdate || "",
     bio: rec.profile?.bio || "",
     email: rec.email || "",
+    phone: rec.phone || "",
     createdAt: rec.createdAt || null,
     friends: Array.isArray(rec.friends) ? [...rec.friends] : [],
     hasPassword: !!rec.hash
@@ -387,26 +400,33 @@ function validBirthdate(raw) {
   return year >= 1900 && t <= Date.now();
 }
 
-export function saveProfile({ nick, birthdate, city, bio }) {
+export function saveProfile({ nick, birthdate, city, bio, phone }) {
   const { users, rec, key } = requireSessionUser();
   const cleanNick = normalizeName(nick);
-  if (!isRealName(cleanNick)) return { ok: false, error: "name" };
+  if (!isDisplayName(cleanNick)) return { ok: false, error: "name" };
   if (!validBirthdate(birthdate)) return { ok: false, error: "birthdate" };
+  let nextPhone = rec.phone || "";
+  if (phone !== undefined) {
+    const raw = String(phone || "").trim();
+    if (raw && !normalizePhone(raw)) return { ok: false, error: "phone" };
+    nextPhone = raw ? normalizePhone(raw) : "";
+  }
   const profile = {
     ...(rec.profile || {}),
     birthdate: String(birthdate || "").trim(),
     city: cleanText(city, 40),
     bio: cleanText(bio, 160)
   };
-  users[key] = { ...rec, nick: cleanNick, profile };
+  users[key] = { ...rec, nick: cleanNick, phone: nextPhone, profile };
   writeUsers(users);
   syncProfileToServer({
     nick: cleanNick,
+    phone: nextPhone,
     birthdate: profile.birthdate,
     city: profile.city,
     bio: profile.bio
   });
-  return { ok: true, nick: cleanNick };
+  return { ok: true, nick: cleanNick, phone: nextPhone };
 }
 
 export async function changeUsername(raw) {
@@ -566,17 +586,18 @@ function clearThrottle(u) {
   writeThrottle(map);
 }
 
-export async function register({ name, username, email, password }) {
-  const nick = normalizeName(name);
+export async function register({ username, email, phone, password }) {
   const u = String(username || "").trim().toLowerCase();
   const mail = String(email || "").trim().toLowerCase();
+  const phoneRaw = String(phone || "").trim();
+  const mobile = phoneRaw ? normalizePhone(phoneRaw) : "";
   if (locallyBanned(u)) {
     logModeration("loginFail", `تلاش ثبت‌نام حساب مسدود @${u}`);
     return { ok: false, error: "blocked" };
   }
-  if (!isRealName(nick)) return { ok: false, error: "name" };
   if (!isUsername(u)) return { ok: false, error: "username" };
   if (!emailLooksValid(mail)) return { ok: false, error: "email" };
+  if (phoneRaw && !mobile) return { ok: false, error: "phone" };
   if (!isPassword(password)) return { ok: false, error: "password" };
   let apiErr = null;
   try {
@@ -584,12 +605,12 @@ export async function register({ name, username, email, password }) {
       method: "POST",
       auth: false,
       timeoutMs: 12000,
-      body: { username: u, email: mail, password, nick }
+      body: { username: u, email: mail, phone: mobile, password }
     });
     if (res?.token && res.user) {
       apiSetToken(res.token);
       writeApiUser(res.user);
-      const key = await mirrorApiAccount(res.user, { password, nick, force: true });
+      const key = await mirrorApiAccount(res.user, { password, force: true });
       if (key) {
         saveSession(key);
         if (res.recoveryCode) {
@@ -603,7 +624,7 @@ export async function register({ name, username, email, password }) {
       clearThrottle(u);
       return {
         ok: true,
-        nick,
+        nick: u,
         remote: true,
         recoveryCode: res.recoveryCode || "",
         verification: res.verification || null,
@@ -614,7 +635,7 @@ export async function register({ name, username, email, password }) {
   if (apiErr && !backendUnavailable(apiErr)) {
     if (apiErr.status === 429) return { ok: false, error: "rate" };
     const code = apiErr.payload?.error || "";
-    const map = { invalid_username: "username", invalid_email: "email", invalid_password: "password", already_exists: "exists" };
+    const map = { invalid_username: "username", invalid_email: "email", invalid_phone: "phone", invalid_password: "password", already_exists: "exists" };
     return { ok: false, error: map[code] || "server" };
   }
   const users = readUsers();
@@ -624,13 +645,13 @@ export async function register({ name, username, email, password }) {
   try { hashValue = await hashPassword(password, salt); }
   catch { return { ok: false, error: "secure" }; }
   const recoveryCode = makeRecoveryCode();
-  let record = { u, nick, salt, hash: hashValue, email: mail, createdAt: Date.now(), profile: {}, friends: [] };
+  let record = { u, nick: u, salt, hash: hashValue, email: mail, phone: mobile, createdAt: Date.now(), profile: {}, friends: [] };
   try { record = await attachRecovery(record, recoveryCode); }
   catch { return { ok: false, error: "secure" }; }
   users[u] = record;
   writeUsers(users);
   saveSession(u);
-  return { ok: true, nick, recoveryCode };
+  return { ok: true, nick: u, recoveryCode };
 }
 
 export async function login({ username, password }) {
@@ -694,17 +715,16 @@ export async function login({ username, password }) {
   return { ok: true, nick: rec.nick };
 }
 
-export async function recover({ username, name, code, password }) {
+export async function recover({ username, code, password }) {
   const identifier = String(username || "").trim();
   const u = identifier.toLowerCase();
-  const nick = normalizeName(name);
   const recoveryCode = normalizeRecoveryCode(code);
   if (locallyBanned(u)) return { ok: false, error: "blocked" };
   const wait = lockedFor(u);
   if (wait) return { ok: false, error: "locked", wait };
   if (!identifier) return { ok: false, error: "credentials" };
   if (!isPassword(password)) return { ok: false, error: "password" };
-  if (!recoveryCode && !isRealName(nick)) return { ok: false, error: "credentials" };
+  if (!recoveryCode) return { ok: false, error: "credentials" };
 
   if (recoveryCode) {
     let apiErr = null;
@@ -736,9 +756,8 @@ export async function recover({ username, name, code, password }) {
   const users = readUsers();
   const rec = users[u];
   if (!rec) { noteFailure(u); return { ok: false, error: "credentials" }; }
-  const legacyOk = !rec.recHash && isRealName(nick) && normalizeName(rec.nick) === nick;
-  const codeOk = recoveryCode ? await matchesRecovery(rec, recoveryCode) : false;
-  if (!legacyOk && !codeOk) { noteFailure(u); return { ok: false, error: "credentials" }; }
+  const codeOk = await matchesRecovery(rec, recoveryCode);
+  if (!codeOk) { noteFailure(u); return { ok: false, error: "credentials" }; }
   const salt = randHex(16);
   let hashValue;
   try { hashValue = await hashPassword(password, salt); }
@@ -795,6 +814,8 @@ function mailError(err, fallback = "server") {
   if (code === "code_expired" || code === "link_expired" || code === "invalid_link") return "expired";
   if (code === "invalid_password") return "password";
   if (code === "mail_failed") return "mail";
+  if (code === "invalid_phone") return "phone";
+  if (code === "sms_failed") return "sms";
   return fallback;
 }
 
@@ -854,16 +875,24 @@ export async function verifyEmailWithLink(token) {
   }
 }
 
-export async function requestPasswordCode(email) {
+export async function requestPasswordCode({ email = "", phone = "" } = {}) {
+  const channel = phone ? "sms" : "email";
   const mail = String(email || "").trim().toLowerCase();
-  if (!emailLooksValid(mail)) return { ok: false, error: "email" };
+  const mobile = channel === "sms" ? normalizePhone(phone) : "";
+  if (channel === "sms" ? !mobile : !emailLooksValid(mail)) {
+    return { ok: false, error: channel === "sms" ? "phone" : "email" };
+  }
   try {
-    const res = await authApi.forgotPassword({ email: mail });
+    const res = await authApi.forgotPassword(channel === "sms" ? { phone: mobile } : { email: mail });
     return {
       ok: true,
+      channel,
       sent: res?.sent !== false,
-      email: mail,
-      maskedEmail: res?.email || "",
+      email: channel === "email" ? mail : "",
+      phone: channel === "sms" ? mobile : "",
+      maskedEmail: channel === "email" ? res?.email || "" : "",
+      maskedPhone: channel === "sms" ? res?.phone || maskPhoneClient(mobile) : "",
+      minutes: Number(res?.minutes || 0),
       cooldown: Boolean(res?.cooldown)
     };
   } catch (err) {
@@ -879,6 +908,20 @@ export async function resetPasswordWithEmail({ email, code, password }) {
   if (!isPassword(password)) return { ok: false, error: "password" };
   try {
     const res = await authApi.resetPassword({ email: mail, code: digits, password });
+    return await adoptResetSession(res, password);
+  } catch (err) {
+    return { ok: false, error: mailError(err) };
+  }
+}
+
+export async function resetPasswordWithPhone({ phone, code, password }) {
+  const mobile = normalizePhone(phone);
+  const digits = String(code || "").replace(/\D/g, "");
+  if (!mobile) return { ok: false, error: "phone" };
+  if (!/^\d{8}$/.test(digits)) return { ok: false, error: "code" };
+  if (!isPassword(password)) return { ok: false, error: "password" };
+  try {
+    const res = await authApi.resetPassword({ phone: mobile, code: digits, password });
     return await adoptResetSession(res, password);
   } catch (err) {
     return { ok: false, error: mailError(err) };
@@ -956,12 +999,15 @@ export async function initAuthPage() {
   let verifyDone = null;
   let resetToken = new URLSearchParams(location.search).get("reset") || "";
   let resetEmail = "";
+  let resetPhone = "";
+  let resetChannel = "email";
+  let recoverChannel = "email";
   let recoverStep = "email";
 
   const nextRaw = new URLSearchParams(location.search).get("next") || "";
   const next = safeNext(nextRaw);
 
-  const nameField = $("#nameField");
+  const phoneField = $("#phoneField");
   const confirmField = $("#confirmField");
   const captchaField = $("#captchaField");
   const errLine = $("#authError");
@@ -1006,9 +1052,45 @@ export async function initAuthPage() {
     if (inp) inp.value = "";
   }
 
+  const timers = new WeakMap();
+  function stopCodeTimer(node) {
+    if (!node) return;
+    const id = timers.get(node);
+    if (id) clearInterval(id);
+    timers.delete(node);
+    node.hidden = true;
+    node.classList.remove("expired");
+  }
+  function startCodeTimer(node, minutes, onExpire) {
+    if (!node) return;
+    stopCodeTimer(node);
+    const total = Math.max(1, Math.round(Number(minutes) || 0)) * 60000;
+    const end = Date.now() + total;
+    node.hidden = false;
+    node.classList.remove("expired");
+    const tick = () => {
+      const left = Math.max(0, end - Date.now());
+      if (!left) {
+        clearInterval(timers.get(node));
+        timers.delete(node);
+        node.classList.add("expired");
+        node.textContent = t("auth.codeExpired");
+        onExpire?.();
+        return;
+      }
+      const m = Math.floor(left / 60000);
+      const s = Math.floor((left % 60000) / 1000);
+      node.textContent = t("auth.codeValidFor", { time: `${m}:${String(s).padStart(2, "0")}` });
+    };
+    tick();
+    timers.set(node, setInterval(tick, 1000));
+  }
+
   function setMode(m) {
     mode = m;
     recovering = false;
+    stopCodeTimer($("#verifyTimer"));
+    stopCodeTimer($("#recTimer"));
     for (const id of ["verifyForm", "resetForm", "recoverForm", "recoveryReveal", "mailResult"]) {
       document.getElementById(id)?.classList.add("hidden");
     }
@@ -1016,7 +1098,7 @@ export async function initAuthPage() {
     const fa = document.documentElement.lang === "fa";
     $("#tabLogin")?.classList.toggle("active", m === "login");
     $("#tabRegister")?.classList.toggle("active", m === "register");
-    nameField?.classList.toggle("hidden", m === "login");
+    phoneField?.classList.toggle("hidden", m === "login");
     confirmField?.classList.toggle("hidden", m === "login");
     captchaField?.classList.toggle("hidden", m === "login");
     $("#emailField")?.classList.toggle("hidden", m === "login");
@@ -1037,8 +1119,11 @@ export async function initAuthPage() {
 
   function showRecoveryPanel(code, done) {
     const box = $("#recoveryReveal");
-    $("#authForm")?.classList.add("hidden");
-    $("#recoverForm")?.classList.add("hidden");
+    for (const id of ["authForm", "verifyForm", "resetForm", "recoverForm", "mailResult"]) {
+      document.getElementById(id)?.classList.add("hidden");
+    }
+    stopCodeTimer($("#verifyTimer"));
+    stopCodeTimer($("#recTimer"));
     document.querySelector(".auth-tabs")?.classList.add("hidden");
     if (!box) { (done || (() => location.replace(next)))(); return; }
     lastRecoveryCode = code;
@@ -1063,6 +1148,19 @@ export async function initAuthPage() {
     $("#rcCode")?.scrollIntoView({ block: "center" });
   }
 
+  function setRecoverChannel(channel) {
+    recoverChannel = channel === "sms" ? "sms" : "email";
+    for (const btn of document.querySelectorAll("#recChannelTabs button")) {
+      btn.classList.toggle("active", btn.dataset.channel === recoverChannel);
+    }
+    $("#recEmailField")?.classList.toggle("hidden", recoverChannel === "sms");
+    $("#recPhoneField")?.classList.toggle("hidden", recoverChannel !== "sms");
+    const hint = $("#recSendHint");
+    if (hint) hint.textContent = t(recoverChannel === "sms" ? "auth.forgotPhoneHint" : "auth.forgotEmailHint");
+    const btn = $("#recSendCode");
+    if (btn) btn.textContent = t(recoverChannel === "sms" ? "auth.sendCodeSms" : "auth.sendCodeEmail");
+  }
+
   function showRecoverStep(step) {
     recoverStep = step;
     $("#recStep1")?.classList.toggle("hidden", step !== "email");
@@ -1078,11 +1176,12 @@ export async function initAuthPage() {
       $("#recUsername")?.focus();
     } else {
       $("#recStep1Error").textContent = "";
-      $("#recEmail")?.focus();
+      setRecoverChannel(recoverChannel);
+      (recoverChannel === "sms" ? $("#recPhone") : $("#recEmail"))?.focus();
     }
   }
 
-  function showVerify(email, done, { required = false, identifier = "" } = {}) {
+  function showVerify(email, done, { required = false, identifier = "", minutes = 0 } = {}) {
     recovering = false;
     verifyIdentifier = identifier;
     $("#verifyLater")?.classList.toggle("hidden", Boolean(required));
@@ -1100,6 +1199,8 @@ export async function initAuthPage() {
     $("#verifyError").textContent = "";
     const inp = $("#verifyCode");
     if (inp) { inp.value = ""; inp.focus(); }
+    if (minutes) startCodeTimer($("#verifyTimer"), minutes);
+    else stopCodeTimer($("#verifyTimer"));
   }
 
   function showReset() {
@@ -1145,9 +1246,13 @@ export async function initAuthPage() {
     $("#authSub").textContent = t("auth.forgotSub");
     $("#recStep1Msg").textContent = "";
     $("#recSentHint").textContent = "";
+    stopCodeTimer($("#recTimer"));
+    resetChannel = "email";
+    resetPhone = "";
     const loginId = $("#username")?.value.trim() || "";
     const mailInput = $("#recEmail");
     if (mailInput && emailLooksValid(loginId)) mailInput.value = loginId;
+    setRecoverChannel("email");
     showRecoverStep("email");
   }
 
@@ -1165,6 +1270,8 @@ export async function initAuthPage() {
     const fa = document.documentElement.lang === "fa";
     const map = {
       email: fa ? "ایمیل معتبر وارد کن." : "Enter a valid email.",
+      phone: fa ? "شماره موبایل معتبر وارد کن؛ مثلاً 09121234567." : "Enter a valid mobile number, e.g. 09121234567.",
+      sms: fa ? "ارسال پیامک ممکن نشد؛ چند لحظه بعد دوباره تلاش کن." : "The SMS could not be sent. Try again shortly.",
       code: fa ? "کد ۸ رقمی درست نیست." : "That 8-digit code is not correct.",
       expired: fa ? "این کد یا لینک منقضی شده؛ کد تازه بگیر." : "This code or link expired. Request a new one.",
       rate: fa ? "درخواست‌های زیادی فرستادی؛ کمی صبر کن." : "Too many attempts; wait a moment.",
@@ -1277,9 +1384,22 @@ export async function initAuthPage() {
   $("#recoverBack3")?.addEventListener("click", () => { closeRecover(); setMode("login"); });
   $("#recCaptchaRefresh")?.addEventListener("click", drawRecCaptcha);
   $("#recLegacyCaptchaRefresh")?.addEventListener("click", drawLegacyCaptcha);
+  for (const btn of document.querySelectorAll("#recChannelTabs button")) {
+    btn.addEventListener("click", () => {
+      if (recoverChannel === btn.dataset.channel) return;
+      $("#recStep1Error").textContent = "";
+      $("#recStep1Msg").textContent = "";
+      setRecoverChannel(btn.dataset.channel);
+      (btn.dataset.channel === "sms" ? $("#recPhone") : $("#recEmail"))?.focus();
+    });
+  }
   $("#recToRecovery")?.addEventListener("click", () => showRecoverStep("recovery"));
   $("#recToEmail")?.addEventListener("click", () => showRecoverStep("email"));
-  $("#recEmailAgain")?.addEventListener("click", () => { $("#recSentHint").textContent = ""; showRecoverStep("email"); });
+  $("#recEmailAgain")?.addEventListener("click", () => {
+    stopCodeTimer($("#recTimer"));
+    $("#recSentHint").textContent = "";
+    showRecoverStep("email");
+  });
 
   $("#resetNewCode")?.addEventListener("click", () => {
     resetToken = "";
@@ -1287,19 +1407,34 @@ export async function initAuthPage() {
   });
   $("#resetToLogin")?.addEventListener("click", () => { resetToken = ""; setMode("login"); });
 
-  async function sendResetCode(email) {
+  async function sendResetCode() {
+    const fa = document.documentElement.lang === "fa";
     const err = (m) => { $("#recStep1Error").textContent = m; };
     const info = (m) => { $("#recStep1Msg").textContent = m; };
-    if (!emailLooksValid(email)) return err(document.documentElement.lang === "fa" ? "ایمیل معتبر وارد کن." : "Enter a valid email.");
+    const smsChannel = recoverChannel === "sms";
+    const raw = smsChannel ? $("#recPhone")?.value : $("#recEmail")?.value;
+    const value = String(raw || "").trim();
+    if (smsChannel ? !normalizePhone(value) : !emailLooksValid(value)) {
+      return err(smsChannel
+        ? (fa ? "شماره موبایل معتبر وارد کن؛ مثلاً 09121234567." : "Enter a valid mobile number, e.g. 09121234567.")
+        : (fa ? "ایمیل معتبر وارد کن." : "Enter a valid email."));
+    }
     err("");
     info("");
-    const res = await requestPasswordCode(email);
+    const res = await requestPasswordCode(smsChannel ? { phone: value } : { email: value });
     if (!res.ok) return err(authFailMessage(res.error));
-    resetEmail = res.email || email;
+    resetChannel = res.channel;
+    resetEmail = res.email || "";
+    resetPhone = res.phone || "";
     const hint = $("#recSentHint");
-    if (hint) hint.textContent = t("auth.codeSentTo", { email: res.maskedEmail || resetEmail });
+    if (hint) {
+      hint.textContent = resetChannel === "sms"
+        ? t("auth.codeSentToPhone", { phone: res.maskedPhone || maskPhoneClient(resetPhone) })
+        : t("auth.codeSentTo", { email: res.maskedEmail || resetEmail });
+    }
     info(res.cooldown ? t("auth.codeCooldown") : t("auth.codeSentAgain"));
     showRecoverStep("code");
+    startCodeTimer($("#recTimer"), res.minutes || 15);
   }
 
   $("#recSendCode")?.addEventListener("click", async () => {
@@ -1310,20 +1445,25 @@ export async function initAuthPage() {
     busy = true;
     btn.disabled = true;
     btn.textContent = fa ? "کمی صبر…" : "Please wait…";
-    await sendResetCode($("#recEmail")?.value.trim() || "");
+    await sendResetCode();
     busy = false;
     btn.disabled = false;
     btn.textContent = old;
   });
 
   $("#recResend")?.addEventListener("click", async () => {
-    if (busy || !resetEmail) return;
+    if (busy || !(resetChannel === "sms" ? resetPhone : resetEmail)) return;
     busy = true;
-    const res = await requestPasswordCode(resetEmail);
+    const res = await requestPasswordCode(resetChannel === "sms" ? { phone: resetPhone } : { email: resetEmail });
     busy = false;
     if (!res.ok) return toast(authFailMessage(res.error), "error");
     const hint = $("#recSentHint");
-    if (hint) hint.textContent = t("auth.codeSentTo", { email: res.maskedEmail || resetEmail });
+    if (hint) {
+      hint.textContent = resetChannel === "sms"
+        ? t("auth.codeSentToPhone", { phone: res.maskedPhone || maskPhoneClient(resetPhone) })
+        : t("auth.codeSentTo", { email: res.maskedEmail || resetEmail });
+    }
+    startCodeTimer($("#recTimer"), res.minutes || 15);
     toast(res.cooldown ? t("auth.codeCooldown") : t("auth.codeSentAgain"), "success");
   });
 
@@ -1344,6 +1484,7 @@ export async function initAuthPage() {
     btn.disabled = false;
     btn.textContent = old;
     if (!res.ok) return err(authFailMessage(res.error));
+    stopCodeTimer($("#verifyTimer"));
     toast(t("auth.verifyDone"), "success");
     (verifyDone || (() => location.replace(next)))();
   });
@@ -1364,6 +1505,7 @@ export async function initAuthPage() {
       const hint = $("#verifyHint");
       if (hint) hint.textContent = t("auth.codeSentTo", { email: verifyEmail });
     }
+    startCodeTimer($("#verifyTimer"), res.verification?.minutes || 30);
     toast(t("auth.codeSentAgain"), "success");
   });
 
@@ -1417,11 +1559,10 @@ export async function initAuthPage() {
     if (recoverStep === "recovery") {
       const err = (m) => { $("#recErrorLegacy").textContent = m; };
       const username = $("#recUsername").value.trim();
-      const name = $("#recName").value;
       const code = $("#recRecoveryCode").value;
       const password = $("#recNewPassword").value;
       if (!username) return err(fa ? "نام کاربری را وارد کن." : "Enter your username.");
-      if (!code.trim() && !isRealName(name)) return err(fa ? "کد بازیابی را وارد کن؛ اگر حساب قدیمی داری، اسم واقعی‌ات را بنویس." : "Enter your recovery code, or the real name for older accounts.");
+      if (!code.trim()) return err(fa ? "کد بازیابی را وارد کن." : "Enter your recovery code.");
       if (!isPassword(password)) return err(t("auth.pwWeak"));
       if (password !== $("#recNewPassword2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
       if (Number(normalizeDigits($("#recLegacyCaptchaA").value)) !== legacyCaptcha.a) {
@@ -1433,7 +1574,7 @@ export async function initAuthPage() {
       busy = true;
       btn.disabled = true;
       btn.textContent = fa ? "کمی صبر…" : "Please wait…";
-      const res = await recover({ username, name, code, password });
+      const res = await recover({ username, code, password });
       busy = false;
       btn.disabled = false;
       btn.textContent = old;
@@ -1458,7 +1599,12 @@ export async function initAuthPage() {
     const err = (m) => { $("#recError").textContent = m; };
     const code = ($("#recCode")?.value || "").replace(/\D/g, "");
     const password = $("#recPassword").value;
-    if (!/^\d{8}$/.test(code)) return err(fa ? "کد ایمیل باید ۸ رقم باشد." : "The email code must be 8 digits.");
+    const smsChannel = resetChannel === "sms";
+    if (smsChannel ? !resetPhone : !resetEmail) {
+      $("#recSentHint").textContent = "";
+      return showRecoverStep("email");
+    }
+    if (!/^\d{8}$/.test(code)) return err(fa ? "کد باید ۸ رقم باشد." : "The code must be 8 digits.");
     if (!isPassword(password)) return err(t("auth.pwWeak"));
     if (password !== $("#recPassword2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
     if (Number(normalizeDigits($("#recCaptchaA").value)) !== recCaptcha.a) {
@@ -1470,12 +1616,14 @@ export async function initAuthPage() {
     busy = true;
     btn.disabled = true;
     btn.textContent = fa ? "کمی صبر…" : "Please wait…";
-    const res = await resetPasswordWithEmail({ email: resetEmail, code, password });
+    const res = smsChannel
+      ? await resetPasswordWithPhone({ phone: resetPhone, code, password })
+      : await resetPasswordWithEmail({ email: resetEmail, code, password });
     busy = false;
     btn.disabled = false;
     btn.textContent = old;
     if (!res.ok) return err(authFailMessage(res.error));
-    logModeration("recover", `بازیابی رمز با کد ایمیل ${resetEmail}`);
+    logModeration("recover", `بازیابی رمز با کد ${smsChannel ? `پیامک ${resetPhone}` : `ایمیل ${resetEmail}`}`);
     if (res.recoveryCode) return showRecoveryPanel(res.recoveryCode);
     location.replace(next);
   });
@@ -1494,13 +1642,13 @@ export async function initAuthPage() {
 
     const username = $("#username").value.trim();
     const password = $("#password").value;
-    const name = $("#name")?.value || "";
     const email = $("#email")?.value.trim() || "";
+    const phone = $("#phone")?.value.trim() || "";
 
     if (mode === "register") {
-      if (!isRealName(name)) return err(fa ? "اسم واقعی را کامل بنویس (حداقل ۳ حرف، مثل علی یا Ali)." : "Enter your real name (at least 3 letters).");
       if (!isUsername(username)) return err(fa ? "نام کاربری باید ۳ تا ۲۰ کاراکتر لاتین باشد و با حرف شروع شود." : "Username must be 3–20 latin characters and start with a letter.");
       if (!emailLooksValid(email)) return err(fa ? "ایمیل معتبر وارد کن." : "Enter a valid email.");
+      if (phone && !normalizePhone(phone)) return err(fa ? "شماره موبایل معتبر وارد کن؛ مثلاً 09121234567." : "Enter a valid mobile number, e.g. 09121234567.");
       if (!isPassword(password)) return err(t("auth.pwWeak"));
       if (password !== $("#password2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
       if (Number(normalizeDigits($("#captchaA").value)) !== captcha.a) {
@@ -1517,7 +1665,7 @@ export async function initAuthPage() {
     submit.textContent = fa ? "کمی صبر…" : "Please wait…";
 
     const res = mode === "register"
-      ? await register({ name, username, email, password })
+      ? await register({ username, email, phone, password })
       : await login({ username, password });
 
     busy = false;
@@ -1526,9 +1674,9 @@ export async function initAuthPage() {
 
     if (!res.ok) {
       const map = {
-        name: fa ? "اسم واقعی معتبر نیست." : "Invalid real name.",
         username: fa ? "نام کاربری معتبر نیست." : "Invalid username.",
         email: fa ? "ایمیل معتبر وارد کن." : "Enter a valid email.",
+        phone: fa ? "شماره موبایل معتبر وارد کن؛ مثلاً 09121234567." : "Enter a valid mobile number, e.g. 09121234567.",
         password: t("auth.pwWeak"),
         exists: fa ? "این ایمیل یا نام کاربری قبلاً ثبت شده است." : "This email or username is already registered.",
         credentials: fa ? "ایمیل یا نام کاربری، یا رمز اشتباه است." : "Wrong email/username or password.",
@@ -1542,7 +1690,11 @@ export async function initAuthPage() {
       if (res.error === "verify") {
         logModeration("loginFail", `ورود با ایمیل تأییدنشده @${username.trim().toLowerCase()}`);
         toast(t("auth.emailNotVerified"), "info");
-        return showVerify(res.email || username, () => location.replace(next), { required: true, identifier: username });
+        return showVerify(res.email || username, () => location.replace(next), {
+          required: true,
+          identifier: username,
+          minutes: res.verification?.minutes || 0
+        });
       }
       return err(map[res.error] || "Error");
     }
@@ -1555,7 +1707,8 @@ export async function initAuthPage() {
       if (res.verification?.sent || res.verificationRequired) {
         return showVerify(res.verification?.email || email, done, {
           required: Boolean(res.verificationRequired),
-          identifier: email
+          identifier: email,
+          minutes: res.verification?.minutes || 0
         });
       }
       return done();

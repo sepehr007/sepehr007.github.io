@@ -9,6 +9,7 @@ import { storeState } from "./userStore.js";
 import { connectRedis, redisReady, redisState, createRateLimiter } from "./redis.js";
 import { loadFeatureState, isEnabled, summarizeFeatures } from "./features.js";
 import { mailState } from "./mailer.js";
+import { smsState } from "./sms.js";
 import authRoutes from "./routes/auth.js";
 import lobbyRoutes from "./routes/lobbies.js";
 import billingRoutes from "./routes/billing.js";
@@ -315,6 +316,7 @@ export async function buildServer() {
     db: dbState(),
     userStore: storeState(),
     mail: mailState(),
+    sms: smsState(),
     redis: redisState()
   }));
 
