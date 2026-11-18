@@ -9,6 +9,7 @@ import {
   isLocallyBanned, syncRemoteSession
 } from "./auth.js";
 import { AVATAR_PRESETS, avatarId, avatarSrc, presetValue } from "./avatars.js";
+import { dbGetByIndex } from "./db.js";
 import { loadSiteConfig, applySiteConfig, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
 import { resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, recordFeatureUse, readFeatureCenter } from "./feature-flags.js";
 
@@ -82,6 +83,7 @@ async function boot(me) {
   paintAvatar();
   renderAvatarGallery();
   renderFriends();
+  renderActivity();
   wireAccount();
   wirePassword();
   wireDetails();
@@ -95,6 +97,7 @@ async function boot(me) {
     paintAvatar();
     renderAvatarGallery();
     renderFriends();
+    renderActivity();
     paintMemberSince();
   });
 }
@@ -119,6 +122,46 @@ function paintMemberSince() {
     year: "numeric", month: "long", day: "numeric"
   });
   node.textContent = `${t("profile.memberSince")} ${date}`;
+}
+
+const ACTIVITY_LABEL_KEYS = {
+  "room.host": "activity.roomHost",
+  "room.join": "activity.roomJoin",
+  "lobby.create": "activity.lobbyCreate",
+  "lobby.close": "activity.lobbyClose"
+};
+
+async function renderActivity() {
+  const list = $("#activityList");
+  const empty = $("#activityEmpty");
+  if (!list || !empty || !profile) return;
+  const fa = document.documentElement.lang === "fa";
+  let rows = [];
+  try {
+    rows = await dbGetByIndex("activity", "user", String(profile.username || "").toLowerCase());
+  } catch {
+    rows = [];
+  }
+  rows = rows
+    .filter((r) => typeof r?.at === "number")
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 6);
+  list.innerHTML = "";
+  empty.classList.toggle("hidden", rows.length > 0);
+  for (const row of rows) {
+    const li = el("li", { class: "activity-item" });
+    const main = el("div", { class: "activity-main" });
+    main.append(el("strong", { text: ACTIVITY_LABEL_KEYS[row.type] ? t(ACTIVITY_LABEL_KEYS[row.type]) : row.type }));
+    const room = String(row.data?.room || row.data?.code || "");
+    if (room) main.append(el("span", { class: "activity-room", dir: "ltr", text: room }));
+    li.append(el("span", { class: "activity-dot" }), main);
+    li.append(el("time", {
+      text: new Date(row.at).toLocaleString(fa ? "fa-IR" : "en-US", {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
+      })
+    }));
+    list.append(li);
+  }
 }
 
 function paintAvatar() {
