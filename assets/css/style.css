@@ -223,7 +223,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .screen-ctl:hover{background:rgba(255,255,255,.24)}
 .screen-ctl svg{width:14px;height:14px}
 .stage.dragging::after{content:"";position:absolute;inset:8px;border:2px dashed rgba(124,92,255,.8);border-radius:14px;background:rgba(124,92,255,.08);z-index:5;pointer-events:none}
-.stage-controls{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:6px;padding:10px 12px;background:linear-gradient(transparent,rgba(0,0,0,.82));z-index:4;transition:opacity .25s}
+.stage-controls{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:4px;padding:10px 12px;background:linear-gradient(transparent,rgba(0,0,0,.82));z-index:4;transition:opacity .25s}
 .video-frame:not(.has-media) .stage-controls{display:none}
 .stage-controls.idle{opacity:0;pointer-events:none}
 .ctl{height:34px;min-width:34px;padding:0 8px;border-radius:10px;display:grid;place-items:center;color:#dfe5f3;transition:.18s;position:relative}
@@ -232,6 +232,8 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .ctl-txt{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
 .ctl svg{width:18px;height:18px}
 .vol-wrap{display:flex;align-items:center;gap:2px}
+/* anchor the speaker to the left edge of the player (RTL end of the bar) */
+.stage-controls .vol-wrap{order:1}
 .vol-wrap .vol{width:64px;accent-color:var(--accent);cursor:pointer}
 .react-dock{position:absolute;inset-inline-end:14px;bottom:64px;z-index:6;display:flex;flex-direction:row-reverse;align-items:center;gap:8px}
 .react-dock.is-off{display:none}
@@ -634,7 +636,7 @@ html[dir="rtl"] .avatar-choice.active::after{right:auto;left:5px}
   .video-frame.has-media{flex:1;width:100%;max-height:100%}
   .video-frame{min-height:0}
   .time{display:none}
-  .vol-wrap{display:flex}
+  .vol-wrap{display:flex;order:0}
   .vol-wrap .vol{display:none}
   .react-dock{top:8px;bottom:auto;transform:none;inset-inline-start:8px;inset-inline-end:auto;flex-direction:column-reverse;align-items:flex-start}
   .react-tray{top:calc(100% + 8px);bottom:auto;inset-inline-start:0;inset-inline-end:auto;flex-direction:row;width:max-content;border-radius:999px;transform:translateY(-8px) scale(.94)}
