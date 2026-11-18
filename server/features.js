@@ -86,10 +86,13 @@ export const FEATURE_BY_KEY = new Map(FEATURE_CATALOG.map((item) => [item.key, i
 
 let cache = { at: 0, state: null };
 let scheduleCheckedAt = 0;
+const SCOPE_CACHE_MS = Number(process.env.FEATURE_SCOPE_CACHE_MS || 3000);
+const scopeCache = new Map();
 
 export function invalidateFeatureState() {
   cache = { at: 0, state: null };
   scheduleCheckedAt = 0;
+  scopeCache.clear();
 }
 
 function envEmergency() {
@@ -194,6 +197,7 @@ async function applyDueSchedules() {
       }
     });
     cache = { at: 0, state: null };
+    scopeCache.clear();
   } catch {}
 }
 
@@ -331,8 +335,11 @@ async function roomSettingBlocks(roomCode) {
 }
 
 export async function resolveFeatureState(ctx = {}) {
-  const base = await loadFeatureState();
   const now = Date.now();
+  const cacheKey = [ctx.userId || "", ctx.role || "", ctx.room || "", ctx.server || "", ctx.plan || ""].join("|");
+  const cached = scopeCache.get(cacheKey);
+  if (cached && now - cached.at < SCOPE_CACHE_MS) return cached.state;
+  const base = await loadFeatureState();
   const room = ctx.room ? String(ctx.room).toUpperCase() : "";
   const plan = ctx.plan ? String(ctx.plan) : await activePlanFor(ctx.userId);
   const server = ctx.server ? String(ctx.server) : await roomServerFor(room);
@@ -355,11 +362,16 @@ export async function resolveFeatureState(ctx = {}) {
     }
   }
   const roomBlocks = await roomSettingBlocks(room);
-  return {
+  const state = {
     ...base,
     flags: buildFlags(base, scoped, now, roomBlocks),
     context: { userId: ctx.userId || "", role: ctx.role || "", room, server, plan }
   };
+  // Cached per context for a few seconds so chat/playback loops don't hit SQLite
+  // on every message; any override change clears it immediately.
+  if (scopeCache.size > 500) scopeCache.clear();
+  scopeCache.set(cacheKey, { at: now, state });
+  return state;
 }
 
 export function isEnabled(state, pathName, now = Date.now()) {
