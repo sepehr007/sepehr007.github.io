@@ -1277,7 +1277,7 @@ export async function initAuthPage() {
       rate: fa ? "درخواست‌های زیادی فرستادی؛ کمی صبر کن." : "Too many attempts; wait a moment.",
       password: t("auth.pwWeak"),
       mail: fa ? "ارسال ایمیل ممکن نشد؛ چند لحظه بعد دوباره تلاش کن." : "The email could not be sent. Try again shortly.",
-      offline: fa ? "برای تأیید ایمیل باید سایت به سرور وصل باشد؛ فعلاً با کد بازیابی وارد شو." : "Email features need the server; use your recovery code for now.",
+      offline: fa ? "این قابلیت به سرور سایت نیاز دارد و الان سرور در دسترس نیست؛ فعلاً با کد بازیابی وارد شو." : "This needs the site server, which is not reachable right now; use your recovery code for now.",
       server: fa ? "ارتباط با سرور برقرار نشد؛ دوباره تلاش کن." : "Could not reach the server; try again."
     };
     return map[error] || map.server;

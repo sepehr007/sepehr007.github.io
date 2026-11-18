@@ -1,4 +1,4 @@
-const CACHE = "wt-v87";
+const CACHE = "wt-v88";
 const SHELL = [
   "./",
   "./index.html",
@@ -109,7 +109,7 @@ self.addEventListener("fetch", (event) => {
 
   if (req.mode === "navigate" || req.headers.get("accept")?.includes("text/html")) {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: "no-cache" })
         .then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
@@ -125,7 +125,7 @@ self.addEventListener("fetch", (event) => {
     /\.(?:js|css)$/i.test(url.pathname)
   ) {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: "no-cache" })
         .then((res) => {
           if (res.ok) {
             const copy = res.clone();

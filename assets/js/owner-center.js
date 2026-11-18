@@ -1883,17 +1883,18 @@ export function createCenter(ctx) {
     let base = "";
     try { base = ctx.getApiBase(); } catch {}
 
-    if (!token) {
-      const warn = card("اتصال ایمیل و پیامک", "برای مدیریت SMTP و درگاه پیامک، کنسول باید روی سرور با حساب مالک وارد شده باشد.");
-      const p = el("p", { class: "ohint" });
+    const locked = !token;
+    const warn = card("اتصال ایمیل و پیامک", "از همین صفحه SMTP و درگاه پیامک را وصل کن؛ فرم‌ها همیشه اینجا هستند.");
+    const p = el("p", { class: "ohint" });
+    if (locked) {
       p.textContent = base
-        ? `آدرس سرور: ${base} — اما نشست سروری مالک پیدا نشد. یک بار از کنسول خارج شو و دوباره با رمز مالک وارد شو.`
-        : "آدرس سرور تنظیم نشده؛ سایت هنوز به بک‌اند وصل نیست.";
-      warn.append(p);
-      section.append(warn);
-      section.append(honesty("کلیدهای SMTP و پیامک فقط روی سرور ذخیره می‌شوند و هرگز به مرورگر برنمی‌گردند."));
-      return;
+        ? `آدرس سرور: ${base} — هنوز نشست سروری مالک پیدا نشد. یک بار از کنسول خارج شو و دوباره با رمز مالک وارد شو؛ آن‌وقت دکمه‌های ذخیره و ارسال آزمایشی فعال می‌شوند.`
+        : "آدرس سرور تنظیم نشده؛ سایت به بک‌اند وصل نیست. تا وقتی سرور پوشهٔ server بالا بیاید، این فرم‌ها فقط نمایشی‌اند و ارسال واقعی ایمیل یا پیامک انجام نمی‌شود.";
+    } else {
+      p.textContent = "اتصال فعلی و وضعیت ارسال پایین همین صفحه دیده می‌شود؛ رمزها همیشه فقط روی سرور می‌مانند.";
     }
+    warn.append(p);
+    section.append(warn);
 
     const field = (label, input, span2 = false) => {
       const lab = el("label", { class: `ofield${span2 ? " span2" : ""}` });
@@ -2025,7 +2026,19 @@ export function createCenter(ctx) {
         : "وضعیت: outbox — پیامک فقط در فایل سرور ذخیره می‌شود و به گوشی نمی‌رسد.", ss.mode && ss.mode !== "outbox");
     };
 
-    const put = (body) => apiFetch("/auth/owner/connections", { token, auth: false, method: "PUT", body, timeoutMs: 12000 });
+    const lockedMessage = "برای ذخیره، کنسول باید با حساب مالک به سرور وصل باشد.";
+    const requireSession = () => {
+      if (!locked) return;
+      throw Object.assign(new Error(lockedMessage), { payload: { message: lockedMessage } });
+    };
+    const put = (body) => {
+      requireSession();
+      return apiFetch("/auth/owner/connections", { token, auth: false, method: "PUT", body, timeoutMs: 12000 });
+    };
+    const sendTest = (body) => {
+      requireSession();
+      return apiFetch("/auth/owner/connections/test", { token, auth: false, method: "POST", body, timeoutMs: 25000 });
+    };
 
     mailSave.addEventListener("click", async () => {
       mailSave.disabled = true;
@@ -2067,9 +2080,7 @@ export function createCenter(ctx) {
       const to = mTestTo.value.trim();
       mTestBtn.disabled = true;
       try {
-        const res = await apiFetch("/auth/owner/connections/test", {
-          token, auth: false, method: "POST", body: { kind: "mail", to }, timeoutMs: 25000
-        });
+        const res = await sendTest({ kind: "mail", to });
         if (res.ok) toast(`ایمیل آزمایشی ارسال شد (${res.mode || "smtp"}).`, "success");
         else toast(`ارسال نشد: ${res.error || "خطای نامشخص"}`, "error");
       } catch (err) {
@@ -2120,9 +2131,7 @@ export function createCenter(ctx) {
       const to = sTestTo.value.trim();
       sTestBtn.disabled = true;
       try {
-        const res = await apiFetch("/auth/owner/connections/test", {
-          token, auth: false, method: "POST", body: { kind: "sms", to }, timeoutMs: 25000
-        });
+        const res = await sendTest({ kind: "sms", to });
         if (res.ok) toast(`پیامک آزمایشی ارسال شد (${res.mode || "درگاه"}).`, "success");
         else toast(`ارسال نشد: ${res.error || "خطای نامشخص"}`, "error");
       } catch (err) {
@@ -2134,6 +2143,14 @@ export function createCenter(ctx) {
 
     section.append(mailCard, smsCard);
     section.append(honesty("کلیدهای SMTP و پیامک فقط روی سرور ذخیره می‌شوند و هرگز به مرورگر برنمی‌گردند. این فرم فقط با نشست سروری مالک کار می‌کند؛ اگر Pages استاتیک است، باید API جداگانه بالا باشد."));
+
+    if (locked) {
+      for (const btn of [mailSave, mailClear, mTestBtn, smsSave, smsClear, sTestBtn]) btn.disabled = true;
+      const note = "وضعیت: نامشخص — برای خواندن وضعیت اتصال، کنسول باید با حساب مالک به سرور وصل باشد.";
+      statusText(mailStatus, note, false);
+      statusText(smsStatus, note, false);
+      return;
+    }
 
     (async () => {
       try {
