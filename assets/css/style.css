@@ -233,13 +233,14 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .ctl svg{width:18px;height:18px}
 .vol-wrap{display:flex;align-items:center;gap:2px}
 .vol-wrap .vol{width:64px;accent-color:var(--accent);cursor:pointer}
-.react-dock{position:absolute;inset-inline-end:14px;bottom:58px;z-index:6;display:flex;flex-direction:row-reverse;align-items:center;gap:8px}
+.react-dock{position:absolute;inset-inline-end:14px;bottom:64px;z-index:6;display:flex;flex-direction:row-reverse;align-items:center;gap:8px}
 .react-dock.is-off{display:none}
-.video-frame:not(.has-media) .react-dock{display:none}
 .react-fab{width:auto;height:40px;padding:0 13px 0 11px;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:7px;color:#fff;background:rgba(10,12,20,.62);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(10px);transition:.2s}
 .react-fab:hover,.react-fab[aria-expanded="true"]{background:rgba(124,92,255,.6);transform:scale(1.04)}
 .react-fab svg{width:19px;height:19px}
 .react-label{font-size:11.5px;font-weight:700;white-space:nowrap;line-height:1}
+.react-fab.pulse{animation:reactPulse .9s ease}
+@keyframes reactPulse{0%,100%{box-shadow:0 0 0 0 rgba(124,92,255,.5)}45%{box-shadow:0 0 0 10px rgba(124,92,255,0)}}
 .react-tray{position:absolute;bottom:calc(100% + 8px);inset-inline-end:0;display:flex;flex-direction:row;gap:4px;padding:6px;border-radius:999px;background:rgba(10,12,20,.8);border:1px solid var(--border);backdrop-filter:blur(12px);opacity:0;pointer-events:none;transform:translateY(8px) scale(.94);transition:.18s ease;z-index:7}
 .react-tray.open{opacity:1;pointer-events:auto;transform:none}
 .react-tray button{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-size:19px;line-height:1;transition:.15s}
@@ -247,15 +248,17 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .live-reaction{position:absolute;bottom:64px;left:var(--x,50%);z-index:5;font-size:27px;line-height:1;pointer-events:none;filter:drop-shadow(0 3px 7px rgba(0,0,0,.5));animation:floatUp 2.2s ease-out forwards}
 @keyframes floatUp{0%{opacity:0;transform:translate(-50%,12px) scale(.7)}15%{opacity:1;transform:translate(-50%,0) scale(1)}100%{opacity:0;transform:translate(calc(-50% + var(--dx,0px)),-190px) scale(1.15)}}
 .cine-ctl-dot{position:absolute;top:5px;inset-inline-end:5px;width:7px;height:7px;border-radius:50%;background:var(--accent-2);box-shadow:0 0 0 2px rgba(7,8,13,.7),0 0 8px var(--accent-2)}
-.cine-chat{position:absolute;inset-inline-start:14px;bottom:58px;z-index:5;width:300px;max-width:calc(100% - 28px);display:flex;flex-direction:column;border-radius:16px;background:rgba(9,11,18,.82);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(16px);box-shadow:0 16px 40px rgba(0,0,0,.5);overflow:hidden;transition:width .18s ease,background .18s ease}
+.cine-chat{position:absolute;inset-inline-start:14px;bottom:64px;z-index:5;width:310px;max-width:calc(100% - 28px);max-height:min(62%,340px);display:flex;flex-direction:column;border-radius:16px;background:rgba(9,11,18,.82);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(16px);box-shadow:0 16px 40px rgba(0,0,0,.5);overflow:hidden;transition:width .18s ease,background .18s ease}
 .video-frame:not(.has-media) .cine-chat{display:none}
 .cine-chat.hidden{display:none}
 .cine-chat.min{width:auto;border-radius:999px;background:rgba(10,12,20,.6)}
 .cine-chat.min .cine-list,.cine-chat.min .cine-form{display:none}
-.cine-head{display:flex;align-items:center;gap:6px;padding:6px 8px}
-.cine-chat:not(.min) .cine-head{border-bottom:1px solid rgba(255,255,255,.07);padding-bottom:7px}
+.cine-head{display:flex;align-items:center;gap:6px;padding:7px 8px;flex:none}
+.cine-chat:not(.min) .cine-head{border-bottom:1px solid rgba(255,255,255,.07);padding-bottom:8px}
 .cine-title-btn{display:flex;align-items:center;gap:7px;color:#e8ecf7;font-size:12px;font-weight:700;padding:2px 4px;border-radius:9px;min-width:0}
 .cine-title-btn:hover{background:rgba(255,255,255,.07)}
+.cine-caret{width:12px;height:12px;flex:none;color:var(--text-dim);transition:transform .18s ease}
+.cine-chat:not(.min) .cine-caret{transform:rotate(180deg)}
 .cine-live{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 8px var(--success);flex:none;animation:cinePulse 2s infinite}
 .cine-chat.min .cine-live{background:var(--accent);box-shadow:0 0 8px var(--accent)}
 @keyframes cinePulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -265,7 +268,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .cine-min:hover{background:rgba(255,255,255,.1);color:var(--text)}
 .cine-min svg{width:14px;height:14px}
 .cine-chat.min .cine-min{display:none}
-.cine-list{max-height:190px;overflow-y:auto;padding:4px 10px 8px;display:flex;flex-direction:column;gap:5px;scrollbar-width:thin}
+.cine-list{flex:1 1 auto;min-height:44px;max-height:190px;overflow-y:auto;padding:4px 10px 8px;display:flex;flex-direction:column;gap:5px;scrollbar-width:thin}
 .cine-empty{padding:8px 4px;text-align:center;font-size:11.5px;color:var(--text-faint)}
 .cine-msg{font-size:12px;line-height:1.55;color:#dfe5f3;display:flex;gap:6px;align-items:flex-start;animation:cineIn .18s ease}
 @keyframes cineIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -273,16 +276,28 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .cine-msg.own b{color:#7dd3fc}
 .cine-msg span{min-width:0;overflow-wrap:anywhere}
 .cine-msg.deleted span{color:var(--text-faint);font-style:italic}
-.cine-form{display:flex;gap:6px;padding:7px 8px 8px;border-top:1px solid rgba(255,255,255,.07)}
-.cine-form input{flex:1;min-width:0;height:32px;font-size:12.5px;border-radius:10px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);padding:0 10px;color:var(--text)}
+.cine-form{display:flex;gap:6px;padding:8px;border-top:1px solid rgba(255,255,255,.07);flex:none}
+.cine-form input{flex:1;min-width:0;height:36px;font-size:12.5px;border-radius:10px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);padding:0 10px;color:var(--text)}
 .cine-form input:focus{border-color:rgba(124,92,255,.6);outline:none}
-.cine-form button{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;background:var(--grad);color:#fff;flex:none}
-.cine-form button svg{width:15px;height:15px}
-.chat-fab{position:absolute;inset-inline-end:16px;bottom:150px;z-index:8;display:none;place-items:center;width:46px;height:46px;border-radius:50%;background:var(--grad);color:#fff;border:1px solid rgba(255,255,255,.3);box-shadow:0 12px 30px rgba(124,92,255,.5);transition:transform .16s}
-.chat-fab:hover{transform:scale(1.06)}
-.chat-fab svg{width:20px;height:20px}
-.chat-fab.fab-show{display:grid}
-.chat-fab-badge{position:absolute;top:-4px;inset-inline-end:-4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#f43f5e;color:#fff;font-size:10.5px;font-weight:700;line-height:18px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+.cine-form button{width:auto;min-width:66px;height:36px;padding:0 10px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:5px;background:var(--grad);color:#fff;flex:none;font-size:11.5px;font-weight:700}
+.cine-form button:active{transform:scale(.97)}
+.cine-form button svg{width:15px;height:15px;flex:none}
+.cine-send-label{white-space:nowrap}
+.chat-fab{position:absolute;inset-inline:0;margin-inline:auto;width:max-content;max-width:calc(100% - 28px);bottom:calc(14px + env(safe-area-inset-bottom));z-index:8;display:none;align-items:center;gap:8px;height:42px;padding:0 15px;border-radius:14px;background:rgba(12,14,22,.9);border:1px solid rgba(124,92,255,.5);color:#e8ecf7;box-shadow:0 14px 34px rgba(0,0,0,.55),0 0 0 4px rgba(124,92,255,.1);backdrop-filter:blur(14px);transition:transform .16s ease,border-color .16s ease}
+.chat-fab:hover{border-color:rgba(124,92,255,.8);transform:translateY(-1px)}
+.chat-fab.fab-show{display:flex;animation:chatFabIn .28s cubic-bezier(.22,.9,.3,1)}
+@keyframes chatFabIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+.chat-fab-grip{position:absolute;top:-5px;left:50%;transform:translateX(-50%);width:38px;height:4px;border-radius:99px;background:rgba(255,255,255,.4)}
+.chat-fab-ico{width:18px;height:18px;flex:none;color:var(--accent-2)}
+.chat-fab-label{font-size:12.5px;font-weight:800;white-space:nowrap}
+.chat-fab-hint{font-size:10.5px;font-weight:600;color:var(--text-dim);white-space:nowrap}
+.chat-fab-badge{position:absolute;top:-7px;inset-inline-end:-6px;min-width:19px;height:19px;padding:0 5px;border-radius:10px;background:#f43f5e;color:#fff;font-size:10.5px;font-weight:700;line-height:19px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+html[data-theme="light"] .chat-fab{background:rgba(255,255,255,.92);color:#111827;border-color:rgba(124,92,255,.45)}
+.media-loading{position:absolute;inset:0;z-index:5;display:grid;place-items:center;background:rgba(4,5,9,.55);backdrop-filter:blur(3px);pointer-events:none}
+.media-loading.hidden{display:none}
+.ml-box{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:14px;background:rgba(12,14,22,.92);border:1px solid rgba(124,92,255,.45);box-shadow:0 16px 40px rgba(0,0,0,.5);color:#e8ecf7;font-size:12.5px;font-weight:700}
+.ml-spin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.2);border-top-color:var(--accent);animation:mlSpin .8s linear infinite;flex:none}
+@keyframes mlSpin{to{transform:rotate(360deg)}}
 .mini-btn{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:12.5px;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--text-dim);transition:.15s}
 .mini-btn:hover{color:var(--text);background:rgba(255,255,255,.1)}
 .people-tools{display:flex;gap:3px;margin-inline-start:auto;margin-inline-end:6px}
@@ -624,10 +639,12 @@ html[dir="rtl"] .avatar-choice.active::after{right:auto;left:5px}
   .react-fab{width:40px;padding:0;border-radius:50%}
   .react-label{display:none}
   #reactCtlBtn,#cineCtlBtn{display:none}
-  .cine-chat{inset-inline-start:8px;inset-inline-end:8px;width:auto;max-width:none;bottom:84px}
+  .cine-chat{inset-inline-start:8px;inset-inline-end:8px;width:auto;max-width:none;bottom:84px;max-height:min(54vh,300px)}
   .cine-chat.min{inset-inline-end:auto;width:auto;max-width:calc(100% - 16px)}
   .cine-list{max-height:150px}
-  .chat-fab{bottom:76px;inset-inline-end:10px}
+  .cine-form button{min-width:58px;padding:0 8px}
+  .chat-fab{bottom:calc(10px + env(safe-area-inset-bottom));height:40px;padding:0 13px}
+  .chat-fab-hint{display:none}
   .person-audio .person-vol{max-width:120px}
   .ctl-txt{display:none}
   #speedBtn{display:grid;min-width:34px;padding:0;font-size:11px}
@@ -678,6 +695,15 @@ html[dir="rtl"] .avatar-choice.active::after{right:auto;left:5px}
 }
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.01ms!important;transition-duration:.01ms!important}
+  /* keep reactions visible: the global rule would otherwise finish the float
+     instantly at opacity 0, which made emojis invisible on Windows desktops */
+  .live-reaction{animation:reactionFade 2.2s ease-out forwards!important}
+}
+@keyframes reactionFade{
+  0%{opacity:0;transform:translate(-50%,14px) scale(.9)}
+  12%{opacity:1;transform:translate(-50%,0) scale(1)}
+  78%{opacity:1;transform:translate(-50%,-6px) scale(1)}
+  100%{opacity:0;transform:translate(-50%,-18px) scale(1.05)}
 }
 
 /* ============ personal appearance ============ */

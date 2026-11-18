@@ -64,6 +64,16 @@ let cineUnread = 0;
 let cineMsgs = [];
 const MAX_CINE = 40;
 let lastReactAt = 0;
+let cineAutoOpened = false;
+let chatQueuedToastAt = 0;
+const SAMPLE_SOURCES = [
+  "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+  "https://media.w3.org/2010/05/sintel/trailer.mp4"
+];
+let samplePending = false;
+let sampleIndex = 0;
+let mediaWatchdog = 0;
+let autoplayHintShown = false;
 const PTT_KEY = "wt.ptt";
 let pttOn = store.get(PTT_KEY, false) === true;
 let pttHeld = false;
@@ -222,8 +232,8 @@ async function boot() {
       if (duration) $("#seek").value = String(Math.round((current / duration) * 1000));
       paintSeekFill(current, duration);
     },
-    onLoaded: () => syncStageEmpty(),
-    onError: () => toast(t("toast.videoInvalid"), "error"),
+    onLoaded: () => { clearMediaWatchdog(); hideMediaLoading(); finishSample(true); syncStageEmpty(); },
+    onError: () => { hideMediaLoading(); if (!retrySample()) toast(t("toast.videoInvalid"), "error"); },
     onLevels: (info) => renderQuality(info),
     onAudio: (info) => renderAudio(info)
   });
@@ -418,7 +428,12 @@ function wireNet() {
     else if (msg.by !== me.id) chatJumpCount = Math.min(99, chatJumpCount + 1);
     paintChatJump();
   });
-  net.on("reaction", (r) => floatReaction(r.emoji));
+  net.on("reaction", (r) => {
+    if (!r?.emoji) return;
+    const mine = r.by ? r.by === me.id : (r.nick && r.nick === me.nick && Date.now() - (r.at || 0) < 250);
+    if (mine) return;
+    floatReaction(r.emoji);
+  });
   net.on("chatUpdate", (msg) => updateMessage(msg));
   net.on("chatClear", ({ by } = {}) => {
     clearChatHistory();
@@ -451,6 +466,7 @@ function wireNet() {
     player.applyState(currentPlayback);
     updatePlayUI(currentPlayback.playing);
     syncStageEmpty();
+    if (currentPlayback.playing) watchAutoplay(currentPlayback);
   });
 
   net.on("fileOffer", ({ id, name, size }) => {
@@ -609,8 +625,8 @@ function guardPlaybackFlags() {
 
 function wirePlayer() {
   const video = $("#video");
-  $("#playBtn").addEventListener("click", () => player.togglePlay());
-  $("#bigPlayBtn")?.addEventListener("click", () => player.togglePlay());
+  $("#playBtn").addEventListener("click", resumeOrTogglePlay);
+  $("#bigPlayBtn")?.addEventListener("click", resumeOrTogglePlay);
   $("#back5").addEventListener("click", () => player.seekBy(-5));
   $("#back10").addEventListener("click", () => player.seekBy(-10));
   $("#fwd5").addEventListener("click", () => player.seekBy(5));
@@ -680,7 +696,8 @@ function wirePlayer() {
 
   $("#loadVideoBtn").addEventListener("click", loadVideoFromInput);
   $("#sampleBtn").addEventListener("click", () => {
-    net.command("loadVideo", { url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" });
+    if (samplePending) return;
+    startSample(0);
   });
   $("#videoUrlInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadVideoFromInput(); });
 
@@ -802,6 +819,27 @@ function paintSeekFill(current, duration) {
   seek.style.setProperty("--seek-buffer", `${bufferedPct}%`);
 }
 
+function watchAutoplay(state) {
+  setTimeout(() => {
+    if (!state?.playing || !currentPlayback?.playing) return;
+    if (!player.video.paused) return;
+    if (player.video.readyState < 2) return;
+    updatePlayUI(false);
+    if (!autoplayHintShown) {
+      autoplayHintShown = true;
+      toast(t("toast.tapToPlay"), "info", 3200);
+    }
+  }, 1200);
+}
+
+function resumeOrTogglePlay() {
+  if (currentPlayback?.playing && player.video.paused) {
+    player.applyState(currentPlayback);
+    return;
+  }
+  player.togglePlay();
+}
+
 function updatePlayUI(playing) {
   $("#playBtn .i-play").classList.toggle("hidden", playing);
   $("#playBtn .i-pause").classList.toggle("hidden", !playing);
@@ -825,6 +863,84 @@ function syncStageEmpty() {
   const has = !!player?.url;
   stageEmpty.classList.toggle("hidden", has);
   $("#videoFrame").classList.toggle("has-media", has);
+  if (has) maybeAutoOpenCine();
+}
+
+function maybeAutoOpenCine() {
+  if (cineAutoOpened) return;
+  cineAutoOpened = true;
+  const introKey = `wt.cineIntro:${code}`;
+  try { if (sessionStorage.getItem(introKey)) return; } catch {}
+  if (cineExpanded || !cineOn || !chatEnabled) return;
+  if (!flagOn(flagStates, "watch.floatingChat")) return;
+  if (window.matchMedia("(max-width: 640px)").matches) return;
+  try { sessionStorage.setItem(introKey, "1"); } catch {}
+  setCineExpanded(true);
+}
+
+function showMediaLoading() {
+  $("#mediaLoading")?.classList.remove("hidden");
+  clearMediaWatchdog();
+  mediaWatchdog = setTimeout(() => {
+    hideMediaLoading();
+    if (samplePending) {
+      toast(t("toast.sampleFailed"), "error", 5000);
+      samplePending = false;
+      resetSampleBtn();
+    }
+  }, 18000);
+}
+
+function hideMediaLoading() {
+  clearMediaWatchdog();
+  $("#mediaLoading")?.classList.add("hidden");
+}
+
+function clearMediaWatchdog() {
+  if (mediaWatchdog) clearTimeout(mediaWatchdog);
+  mediaWatchdog = 0;
+}
+
+function resetSampleBtn() {
+  const btn = $("#sampleBtn");
+  if (!btn) return;
+  btn.disabled = false;
+  btn.textContent = t("room.sample");
+}
+
+function finishSample(ok) {
+  if (!samplePending) return;
+  samplePending = false;
+  resetSampleBtn();
+  if (!ok) return;
+  if (player?.canControl?.() && player.video.paused) net.command("control", { action: "play" });
+  toast(t("toast.sampleReady"), "success", 2200);
+}
+
+function startSample(index = 0) {
+  const btn = $("#sampleBtn");
+  samplePending = true;
+  sampleIndex = index;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = t("room.sampleLoading");
+  }
+  showMediaLoading();
+  net.command("loadVideo", { url: SAMPLE_SOURCES[index] });
+  if (player.canControl()) net.command("control", { action: "play" });
+}
+
+function retrySample() {
+  if (!samplePending) return false;
+  sampleIndex += 1;
+  if (sampleIndex >= SAMPLE_SOURCES.length) {
+    samplePending = false;
+    resetSampleBtn();
+    toast(t("toast.sampleFailed"), "error", 5000);
+    return true;
+  }
+  startSample(sampleIndex);
+  return true;
 }
 
 /* Remote clocks can differ wildly between devices; anchor the shared
@@ -838,6 +954,7 @@ function loadVideoFromInput() {
   const url = $("#videoUrlInput").value.trim();
   const v = validateMediaUrl(url);
   if (!v.ok) return toast(v.reason === "blocked" ? t("toast.blockedDomain") : t("toast.videoInvalid"), "error");
+  showMediaLoading();
   net.command("loadVideo", { url: v.url });
 }
 
@@ -1133,7 +1250,12 @@ function sendChatText(text) {
   const slow = Number(roomInfo?.slow) || 0;
   const wait = slow ? Math.ceil((slow * 1000 - (Date.now() - lastChatMsgAt)) / 1000) : 0;
   if (wait > 0) { toast(t("toast.slowWait", { s: String(wait) }), "info"); return false; }
+  const queued = !net.isReady();
   net.command("chat", { text: clean, replyTo });
+  if (queued && Date.now() - chatQueuedToastAt > 4000) {
+    chatQueuedToastAt = Date.now();
+    toast(t("toast.chatQueued"), "info", 2400);
+  }
   recordFeatureUse("chat.text", { plan: flagContext.plan, role: flagContext.role, room: code });
   lastChatMsgAt = Date.now();
   replyTo = null;
@@ -2729,9 +2851,17 @@ function wireCineChat() {
     e.preventDefault();
     const input = $("#cineInput");
     const text = input.value.trim();
-    if (!sendChatText(text)) return;
+    if (!sendChatText(text)) { input.focus(); return; }
     input.value = "";
+    input.focus();
     scrollChat(true);
+  });
+  box.querySelector(".cine-head")?.addEventListener("click", (e) => {
+    if (cineExpanded || e.target.closest(".cine-min") || e.target.closest(".cine-title-btn")) return;
+    setCineExpanded(true);
+  });
+  $("#cineExpandBtn")?.addEventListener("focus", () => {
+    if (!cineExpanded) setCineExpanded(true);
   });
   const opt = $("#optCineChat");
   if (opt) {
@@ -2773,12 +2903,23 @@ function applyReactionVis() {
 function floatReaction(emoji) {
   if (!reactionsOn || !flagOn(flagStates, "chat.reactions")) return;
   const frame = $("#videoFrame");
-  if (!frame || !frame.classList.contains("has-media")) return;
+  if (!frame) return;
   const node = el("span", { class: "live-reaction", text: emoji });
   node.style.setProperty("--x", `${12 + Math.random() * 76}%`);
   node.style.setProperty("--dx", `${Math.round((Math.random() - 0.5) * 90)}px`);
   frame.append(node);
-  setTimeout(() => node.remove(), 2300);
+  setTimeout(() => node.remove(), 2400);
+}
+
+function sendReaction(emoji) {
+  if (!allow("chat.reactions", "واکنش‌ها غیرفعال شده است.")) return;
+  const now = Date.now();
+  if (now - lastReactAt < 450) { closeReactTray(); return; }
+  lastReactAt = now;
+  closeReactTray();
+  floatReaction(emoji);
+  recordFeatureUse("chat.reactions", { plan: flagContext.plan, role: flagContext.role, room: code });
+  net.command("reaction", { emoji });
 }
 
 function wireReactions() {
@@ -2792,14 +2933,7 @@ function wireReactions() {
   for (const emoji of LIVE_EMOJIS) {
     tray.append(el("button", {
       type: "button", role: "menuitem", text: emoji, "aria-label": emoji,
-      onclick: () => {
-        if (!allow("chat.reactions", "واکنش‌ها غیرفعال شده است.")) return;
-        if (Date.now() - lastReactAt < 900) { closeReactTray(); return; }
-        lastReactAt = Date.now();
-        closeReactTray();
-        recordFeatureUse("chat.reactions", { plan: flagContext.plan, role: flagContext.role, room: code });
-        net.command("reaction", { emoji });
-      }
+      onclick: () => sendReaction(emoji)
     }));
   }
   toggle.addEventListener("click", () => {
@@ -2890,7 +3024,7 @@ function wireMisc() {
   });
   setChatHidden(chatHidden, false);
 
-  $("#chatFab")?.addEventListener("click", () => {
+  const restoreChat = () => {
     if (window.matchMedia("(max-width: 640px)").matches) {
       sheetDockOn = true;
       store.set(SHEET_DOCK_KEY, sheetDockOn);
@@ -2901,7 +3035,18 @@ function wireMisc() {
     setChatHidden(false);
     clearUnreadChat();
     activateTab("chat");
-  });
+  };
+  const chatFab = $("#chatFab");
+  chatFab?.addEventListener("click", restoreChat);
+  if (chatFab) {
+    let grabY = null;
+    chatFab.addEventListener("pointerdown", (e) => { grabY = e.clientY; });
+    chatFab.addEventListener("pointerup", (e) => {
+      if (grabY != null && e.clientY - grabY < -18) restoreChat();
+      grabY = null;
+    });
+    chatFab.addEventListener("pointercancel", () => { grabY = null; });
+  }
   window.addEventListener("resize", () => syncChatFab());
 
   document.addEventListener("langchange", () => {

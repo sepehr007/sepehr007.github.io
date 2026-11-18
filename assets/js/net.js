@@ -179,6 +179,8 @@ export class Net {
     this.presenceTimer = null;
     this.screenCalls = new Map();   // peerId -> RTCPeerConnection
     this.screenOffers = new Map();  // peerId -> remote offer sdp
+    this.ready = false;
+    this.pendingCommands = [];
 
     if (isHost) this.#initHostState();
   }
@@ -235,8 +237,10 @@ export class Net {
   #hostOnline() {
     const owner = { id: this.selfId, nick: this.nick, avatar: this.avatar, role: "owner", muted: false, voice: false, joinedAt: Date.now() };
     this.members.set(this.selfId, owner);
+    this.ready = true;
     this.emit("status", "online");
     this.emit("welcome", this.#snapshot(owner));
+    this.#flushCommands();
     let fails = 0;
     let warned = false;
     const beat = async () => {
@@ -631,9 +635,9 @@ export class Net {
     if (!LIVE_REACTIONS.includes(emoji)) return;
     if (!this.#allow(member, "reaction", 8, 5000)) return;
     const now = Date.now();
-    if (now - (member.lastReactionAt || 0) < 600) return;
+    if (now - (member.lastReactionAt || 0) < 400) return;
     member.lastReactionAt = now;
-    const out = { id: uid(), emoji, nick: member.nick, at: now };
+    const out = { id: uid(), emoji, nick: member.nick, at: now, by: member.id };
     this.#broadcast({ t: "reaction", ...out });
     this.emit("reaction", out);
   }
@@ -842,9 +846,11 @@ export class Net {
         this.self = msg.self;
         this.role = msg.self?.role || "member";
         this.roomState = msg.room;
+        this.ready = true;
         this.emit("status", "online");
         this.emit("welcome", msg);
         this.emit("members", msg.members);
+        this.#flushCommands();
         break;
       case "deny":
         clearInterval(this.joinTimer);
@@ -899,13 +905,42 @@ export class Net {
   }
 
   /* ================= unified command API ================= */
+  isReady() {
+    if (this.isHost) return !!this.members.get(this.selfId);
+    return this.ready && this.dc?.readyState === "open";
+  }
+
   command(type, payload = {}) {
     if (this.isHost) {
       const me = this.members.get(this.selfId);
-      if (me) this.#applyLocal(me, type, payload);
-      return;
+      if (me) { this.#applyLocal(me, type, payload); return true; }
+      this.#queueCommand(type, payload);
+      return true;
     }
-    try { if (this.dc?.readyState === "open") this.dc.send(JSON.stringify({ t: type, ...payload })); } catch {}
+    let sent = false;
+    try {
+      if (this.ready && this.dc?.readyState === "open") {
+        this.dc.send(JSON.stringify({ t: type, ...payload }));
+        sent = true;
+      }
+    } catch {}
+    if (!sent) this.#queueCommand(type, payload);
+    return sent;
+  }
+
+  #queueCommand(type, payload) {
+    this.pendingCommands.push({ type, payload, at: Date.now() });
+    if (this.pendingCommands.length > 50) this.pendingCommands.shift();
+  }
+
+  #flushCommands() {
+    if (!this.pendingCommands.length) return;
+    const items = this.pendingCommands.splice(0);
+    const now = Date.now();
+    for (const item of items) {
+      if (now - item.at > 20000) continue;
+      this.command(item.type, item.payload);
+    }
   }
 
   /* ================= local file sharing ================= */

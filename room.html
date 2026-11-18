@@ -78,6 +78,9 @@
       <div class="video-frame" id="videoFrame">
         <video id="video" playsinline crossorigin="anonymous"></video>
         <div class="subtitle-layer" id="subtitleLayer"></div>
+        <div class="media-loading hidden" id="mediaLoading" role="status" aria-live="polite">
+          <div class="ml-box"><span class="ml-spin" aria-hidden="true"></span><span data-i18n="player.loading">در حال بارگذاری ویدیو…</span></div>
+        </div>
 
         <button class="player-big-play hidden" id="bigPlayBtn" type="button" data-i18n-title="player.play" title="Play" aria-label="Play">
           <svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5L8 5.5z"/></svg>
@@ -215,6 +218,7 @@
               <span class="cine-live" aria-hidden="true"></span>
               <span class="cine-title" data-i18n="cine.title">چت شناور</span>
               <span class="cine-unread hidden" id="cineUnread">0</span>
+              <svg class="cine-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
             </button>
             <button class="cine-min" id="cineMinBtn" type="button" data-i18n-title="cine.min" title="جمع کردن" aria-label="Minimize">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 12h12"/></svg>
@@ -223,15 +227,19 @@
           <div class="cine-list" id="cineList"></div>
           <form class="cine-form" id="cineForm" autocomplete="off">
             <input id="cineInput" type="text" maxlength="500" data-i18n-ph="cine.placeholder" placeholder="پیام سریع…">
-            <button type="submit" aria-label="Send">
+            <button type="submit" class="cine-send" aria-label="ارسال پیام">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12l16-8-6 16-3-6-7-2z"/></svg>
+              <span class="cine-send-label" data-i18n="cine.send">ارسال</span>
             </button>
           </form>
         </div>
       </div>
 
-      <button class="chat-fab" id="chatFab" type="button" data-i18n-title="chat.showPanel" title="نمایش چت" aria-label="Show chat">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/><path d="M8 11h8M8 15h5"/></svg>
+      <button class="chat-fab" id="chatFab" type="button" data-i18n-title="chat.showPanel" title="نمایش چت" aria-label="باز کردن چت">
+        <span class="chat-fab-grip" aria-hidden="true"></span>
+        <svg class="chat-fab-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z"/><path d="M8 11h8M8 14h5"/></svg>
+        <span class="chat-fab-label" data-i18n="chat.restore">چت</span>
+        <span class="chat-fab-hint" data-i18n="chat.restoreHint">بکش بالا یا بزن</span>
         <span class="chat-fab-badge hidden" id="chatFabBadge">0</span>
       </button>
 
