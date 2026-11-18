@@ -234,7 +234,21 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .vol-wrap{display:flex;align-items:center;gap:2px}
 /* anchor the speaker to the left edge of the player (RTL end of the bar) */
 .stage-controls .vol-wrap{order:1}
-.vol-wrap .vol{width:64px;accent-color:var(--accent);cursor:pointer}
+.vol-wrap .vol{width:96px;height:16px;appearance:none;-webkit-appearance:none;background:transparent;direction:ltr;accent-color:var(--accent);cursor:pointer;--vol:100%;--vol-track:rgba(255,255,255,.24)}
+.vol-wrap .vol::-webkit-slider-runnable-track{height:4px;border-radius:99px;background:linear-gradient(to right,var(--accent) 0 var(--vol),var(--vol-track) var(--vol) 100%)}
+.vol-wrap .vol::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.45);transition:transform .15s}
+.vol-wrap .vol:hover::-webkit-slider-thumb{transform:scale(1.18)}
+.vol-wrap .vol::-moz-range-track{height:4px;border-radius:99px;background:var(--vol-track)}
+.vol-wrap .vol::-moz-range-progress{height:4px;border-radius:99px;background:var(--accent)}
+.vol-wrap .vol::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.45)}
+@media (max-width:1000px) and (min-width:641px){
+  .stage-controls{gap:2px;padding:9px 8px}
+  .ctl{min-width:30px;padding:0 5px}
+  .ctl svg{width:16px;height:16px}
+  .seek-wrap{min-width:48px}
+  .time{margin:0 3px;font-size:11px}
+  .vol-wrap .vol{width:64px}
+}
 .react-dock{position:absolute;inset-inline-end:14px;bottom:64px;z-index:6;display:flex;flex-direction:row-reverse;align-items:center;gap:8px}
 .react-dock.is-off{display:none}
 .react-fab{width:auto;height:40px;padding:0 13px 0 11px;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:7px;color:#fff;background:rgba(10,12,20,.62);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(10px);transition:.2s}
@@ -893,6 +907,7 @@ html[data-theme="light"] .accent-swatch{box-shadow:inset 0 0 0 1px rgba(15,23,42
 html[data-theme="light"] .accent-swatch.active{border-color:#111;box-shadow:0 0 0 2px rgba(15,23,42,.2)}
 html[data-theme="light"] .react-fab{background:rgba(255,255,255,.72);border-color:rgba(15,23,42,.14);color:#111}
 html[data-theme="light"] .react-tray{background:rgba(255,255,255,.88);box-shadow:0 14px 34px rgba(15,23,42,.18)}
+html[data-theme="light"] .vol-wrap .vol{--vol-track:rgba(15,23,42,.18)}
 html[data-theme="light"] .react-tray button:hover{background:rgba(15,23,42,.08)}
 html[data-theme="light"] .subs-swatch{box-shadow:inset 0 0 0 1px rgba(15,23,42,.25)}
 html[data-theme="light"] .ptr.ready{color:var(--accent)}

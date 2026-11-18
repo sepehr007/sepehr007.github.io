@@ -740,7 +740,9 @@ function wirePlayer() {
   video.muted = store.get("wt.muted", false) === true;
   const syncVolume = () => {
     const silent = video.muted || video.volume === 0;
-    volRange.value = String(Math.round(video.volume * 100));
+    const pct = Math.round(video.volume * 100);
+    volRange.value = String(pct);
+    volRange.style.setProperty("--vol", `${pct}%`);
     $(".i-vol", volBtn).classList.toggle("hidden", silent);
     $(".i-mute", volBtn).classList.toggle("hidden", !silent);
     volBtn.title = silent ? "Unmute" : "Mute";
@@ -749,6 +751,7 @@ function wirePlayer() {
     const level = Number(volRange.value) / 100;
     video.volume = level;
     video.muted = level === 0;
+    volRange.style.setProperty("--vol", `${Math.round(level * 100)}%`);
     store.set("wt.vol", level);
     store.set("wt.muted", video.muted);
   });
