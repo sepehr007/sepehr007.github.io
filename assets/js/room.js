@@ -383,9 +383,9 @@ function wireNet() {
 
   net.on("latency", ({ ms } = {}) => {
     const chip = $("#netPing");
-    if (!chip || me.role === "owner" || !Number.isFinite(ms)) return;
-    chip.textContent = `${ms} ms`;
-    chip.title = t("net.pingTitle");
+    if (!chip || !Number.isFinite(ms)) return;
+    chip.textContent = me.role === "owner" ? `${t("net.host")} · ${ms} ms` : `${ms} ms`;
+    chip.title = me.role === "owner" ? t("net.pingHostTitle") : t("net.pingTitle");
     chip.classList.remove("hidden", "good", "warn", "bad");
     chip.classList.add(ms < 90 ? "good" : ms < 200 ? "warn" : "bad");
   });
@@ -421,6 +421,12 @@ function wireNet() {
     syncStageEmpty();
     $("#netLabel").textContent = t("net.online");
     $("#connLostBar")?.classList.add("hidden");
+    const ping = $("#netPing");
+    if (ping && me.role === "owner") {
+      ping.textContent = t("net.host");
+      ping.title = t("net.pingHostTitle");
+      ping.classList.remove("hidden");
+    }
   });
 
   net.on("members", (list) => {
@@ -1871,12 +1877,14 @@ function toggleLocalMute(id, name) {
   saveUserAudio(name, { mute: next });
   for (const node of peopleList.querySelectorAll(`.person[data-id="${cssEscape(id)}"]`)) {
     node.classList.toggle("muted-local", next);
-    const btn = node.querySelector("[data-lmute]");
-    if (btn) {
+    node.querySelectorAll("[data-lmute]").forEach((btn) => {
       btn.classList.toggle("on", next);
       btn.textContent = next ? "🔇" : "🔊";
       btn.setAttribute("aria-pressed", String(next));
-    }
+      const label = t(next ? "people.localUnmute" : "people.localMute");
+      btn.title = label;
+      btn.setAttribute("aria-label", label);
+    });
   }
   const label = t(next ? "people.localUnmute" : "people.localMute");
   const sheetBtn = $("#psActions [data-sheet='localmute']");
@@ -2037,15 +2045,17 @@ function wirePeople() {
 
   let pressTimer = 0;
   let pressStart = null;
+  let suppressTapUntil = 0;
   peopleList.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse" || e.target.closest("button, input, a")) return;
     const person = e.target.closest(".person");
     if (!person || person.dataset.id === me.id) return;
-    pressStart = { x: e.clientX, y: e.clientY };
+    pressStart = { x: e.clientX, y: e.clientY, at: Date.now(), id: person.dataset.id };
     clearTimeout(pressTimer);
     pressTimer = setTimeout(() => {
       openPersonSheet(person.dataset.id);
       navigator.vibrate?.(12);
+      suppressTapUntil = Date.now() + 700;
       pressStart = null;
     }, 480);
   });
@@ -2054,7 +2064,14 @@ function wirePeople() {
     if (!pressStart) return;
     if (Math.abs(e.clientX - pressStart.x) > 10 || Math.abs(e.clientY - pressStart.y) > 10) cancelPress();
   });
-  peopleList.addEventListener("pointerup", cancelPress);
+  peopleList.addEventListener("pointerup", (e) => {
+    const meta = pressStart;
+    cancelPress();
+    if (!meta || Date.now() < suppressTapUntil) return;
+    if (Date.now() - meta.at > 420) return;
+    if (Math.abs(e.clientX - meta.x) > 10 || Math.abs(e.clientY - meta.y) > 10) return;
+    openPersonSheet(meta.id);
+  });
   peopleList.addEventListener("pointercancel", cancelPress);
   peopleList.addEventListener("pointerleave", cancelPress);
 
@@ -2159,6 +2176,16 @@ function renderMembers() {
     if (actions.children.length) tools.append(actions);
     node.append(avatar, info);
     if (tools.children.length) node.append(tools);
+    if (m.id !== me.id && flagOn(flagStates, "voice.volume")) {
+      const pref = userAudioFor(m.nick);
+      node.append(el("button", {
+        type: "button", class: `person-quick-mute${pref.mute ? " on" : ""}`, "data-lmute": "1",
+        title: t(pref.mute ? "people.localUnmute" : "people.localMute"),
+        "aria-label": t(pref.mute ? "people.localUnmute" : "people.localMute"),
+        "aria-pressed": String(!!pref.mute),
+        text: pref.mute ? "🔇" : "🔊"
+      }));
+    }
     if (m.id !== me.id) {
       node.append(el("button", {
         type: "button", class: "person-more", "data-pmore": "1",
@@ -2287,6 +2314,7 @@ function applyRoomSettings(room) {
   }
   lastManagerSeen = room.managerId || "";
   syncAdminTools();
+  renderMembers();
 }
 
 function syncAdminTools() {
@@ -3157,6 +3185,42 @@ function wireCineChat() {
   if (!box) return;
   cineFeed = new LiveFeed($("#cineFeed"), { gap: 1500, hold: 4600, max: 6 });
   cineFeed.setPaused(cineExpanded);
+  const styleBtn = $("#cineStyleBtn");
+  const styleBox = $("#cineStyle");
+  const brightRange = $("#cineBrightRange");
+  const sizeRange = $("#cineSizeRange");
+  const fillStyleRanges = () => {
+    const p = getPrefs();
+    if (brightRange) brightRange.value = String(p.cineBright);
+    if (sizeRange) sizeRange.value = String(p.cineSize);
+  };
+  const syncPrefRows = () => {
+    const p = getPrefs();
+    if ($("#prefCineBright")) {
+      $("#prefCineBright").value = String(p.cineBright);
+      $("#prefCineBrightVal").textContent = `${p.cineBright}%`;
+    }
+    if ($("#prefCineSize")) {
+      $("#prefCineSize").value = String(p.cineSize);
+      $("#prefCineSizeVal").textContent = p.cineSize.toFixed(1);
+    }
+  };
+  fillStyleRanges();
+  styleBtn?.addEventListener("click", () => {
+    const open = styleBox?.classList.toggle("hidden") === false;
+    if (open) fillStyleRanges();
+    styleBtn.setAttribute("aria-expanded", String(open));
+  });
+  brightRange?.addEventListener("input", () => {
+    savePrefs({ cineBright: Number(brightRange.value) });
+    syncPrefRows();
+  });
+  sizeRange?.addEventListener("input", () => {
+    savePrefs({ cineSize: Number(sizeRange.value) });
+    syncPrefRows();
+  });
+  $("#prefCineBright")?.addEventListener("input", fillStyleRanges);
+  $("#prefCineSize")?.addEventListener("input", fillStyleRanges);
   $("#cineExpandBtn")?.addEventListener("click", () => setCineExpanded(!cineExpanded));
   $("#cineMinBtn")?.addEventListener("click", () => setCineExpanded(false));
   $("#cineCtlBtn")?.addEventListener("click", () => {

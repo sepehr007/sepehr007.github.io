@@ -1255,3 +1255,24 @@ html[data-theme="light"] .feed-sep{color:rgba(15,23,42,.4)}
   .feed-item{transition:opacity .2s linear;transform:none}
   .person-tools,.person-sheet{transition:none}
 }
+
+/* Piece 7.1: inline cinema appearance + always-visible per-member mute */
+.cine-aa{width:auto;min-width:26px;padding:0 5px;font-size:10.5px;font-weight:800;letter-spacing:.2px}
+.cine-style{flex:none;display:flex;flex-direction:column;gap:7px;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03)}
+.cine-style.hidden{display:none}
+.cine-style label{display:flex;align-items:center;gap:8px;font-size:10.8px;color:var(--text-dim)}
+.cine-style label span{flex:none;min-width:54px}
+.cine-style input{flex:1;min-width:0;height:3px;accent-color:var(--accent)}
+.cine-chat.min .cine-style{display:none}
+.person-quick-mute{
+  width:28px;height:28px;flex:none;
+  border-radius:9px;
+  display:grid;place-items:center;
+  font-size:14px;line-height:1;
+  color:var(--text-dim);
+  transition:background .15s,color .15s;
+}
+.person-quick-mute:hover{background:rgba(255,255,255,.09);color:var(--text)}
+.person-quick-mute.on{color:#f87171;background:rgba(248,113,113,.14)}
+html[data-theme="light"] .person-quick-mute:hover{background:rgba(15,23,42,.06)}
+html[data-theme="light"] .cine-style{background:rgba(15,23,42,.03);border-color:rgba(15,23,42,.08)}

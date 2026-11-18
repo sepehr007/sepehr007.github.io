@@ -233,9 +233,14 @@
               <span class="cine-unread hidden" id="cineUnread">0</span>
               <svg class="cine-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
             </button>
+            <button class="cine-min cine-aa" id="cineStyleBtn" type="button" data-i18n-title="cine.style" title="ظاهر چت" aria-label="ظاهر چت" aria-expanded="false">Aa</button>
             <button class="cine-min" id="cineMinBtn" type="button" data-i18n-title="cine.min" title="جمع کردن" aria-label="Minimize">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 12h12"/></svg>
             </button>
+          </div>
+          <div class="cine-style hidden" id="cineStyle">
+            <label><span data-i18n="prefs.brightShort">روشنایی</span><input id="cineBrightRange" type="range" min="40" max="160" step="5"></label>
+            <label><span data-i18n="prefs.sizeShort">اندازهٔ متن</span><input id="cineSizeRange" type="range" min="10" max="22" step="0.5"></label>
           </div>
           <div class="cine-list" id="cineList"></div>
           <form class="cine-form" id="cineForm" autocomplete="off">

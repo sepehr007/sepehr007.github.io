@@ -182,6 +182,7 @@ export class Net {
     this.ready = false;
     this.pendingCommands = [];
     this.pingTimer = null;
+    this.hostPingTimer = null;
     this.pingRtt = 0;
     this.lastLink = "";
 
@@ -505,6 +506,14 @@ export class Net {
     if (!msg || typeof msg !== "object") return;
     if (msg.t === "hello") return this.#handleHello(conn, msg);
     if (msg.t === "ping") return this.#sendTo(conn.peer, { t: "pong", ts: msg.ts, at: msg.at });
+    if (msg.t === "pong") {
+      if (!Number.isFinite(msg.ts)) return;
+      const ms = Math.max(1, Math.round(Date.now() - msg.ts));
+      conn.rtt = conn.rtt ? Math.round(conn.rtt * 0.6 + ms * 0.4) : ms;
+      const vals = [...this.conns.values()].map((c) => c.rtt).filter((v) => Number.isFinite(v));
+      if (vals.length) this.emit("latency", { ms: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) });
+      return;
+    }
     const member = this.members.get(conn.peer);
     if (!member) return;
 
@@ -555,6 +564,7 @@ export class Net {
     }
     if (this.subs) this.#sendTo(conn.peer, { t: "subs", cues: this.subs });
     this.#broadcastMembers();
+    this.#startHostPing();
     this.emit("system", { key: "join", nick: finalNick });
   }
 
@@ -902,6 +912,7 @@ export class Net {
       case "slow": this.emit("slow", Number(msg.wait) || 0); break;
       case "throttle": this.emit("throttle", { kind: msg.kind, wait: Number(msg.wait) || 0 }); break;
       case "playback": this.emit("playback", msg.state); break;
+      case "ping": this.#sendTo(this.hostId, { t: "pong", ts: msg.ts }); break;
       case "room": this.roomState = msg.room; this.emit("room", msg.room); break;
       case "queue": this.emit("queue", msg.items); break;
       case "closed": this.emit("closed"); break;
@@ -942,6 +953,19 @@ export class Net {
     };
     send();
     setTimeout(send, 400);
+  }
+
+  #startHostPing() {
+    if (!this.isHost || this.hostPingTimer) return;
+    const tick = () => {
+      for (const conn of this.conns.values()) {
+        try {
+          if (conn.dc?.readyState === "open") conn.dc.send(JSON.stringify({ t: "ping", ts: Date.now() }));
+        } catch {}
+      }
+    };
+    tick();
+    this.hostPingTimer = setInterval(tick, 4000);
   }
 
   #startPing() {
@@ -1233,6 +1257,7 @@ export class Net {
     clearInterval(this.presenceTimer);
     clearInterval(this.joinTimer);
     clearInterval(this.pingTimer);
+    clearInterval(this.hostPingTimer);
     clearTimeout(this.joinDeadline);
     if (!this.isHost) this.signal?.send({ k: "bye", from: this.selfId });
     this.signal?.close();
