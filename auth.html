@@ -130,43 +130,125 @@
       <p class="hint auth-foot" data-i18n="auth.note">رمز عبور به‌صورت هش ذخیره می‌شود و هیچ‌جا به شکل متن ساده نگه داشته نمی‌شود.</p>
     </form>
 
-    <form id="recoverForm" class="hidden" autocomplete="on">
+    <form id="verifyForm" class="hidden" autocomplete="off" novalidate>
+      <p class="hint verify-hint" id="verifyHint"></p>
       <label class="field">
-        <span data-i18n="auth.username">نام کاربری</span>
-        <input id="recUsername" type="text" maxlength="20" dir="ltr" autocomplete="username" spellcheck="false" data-i18n-ph="auth.usernamePh" placeholder="ali_2026">
+        <span data-i18n="auth.verifyCode">کد ۸ رقمی ایمیل</span>
+        <input id="verifyCode" class="code-input" type="text" inputmode="numeric" maxlength="8" dir="ltr" autocomplete="one-time-code" placeholder="12345678">
       </label>
-      <label class="field">
-        <span data-i18n="auth.recoverCode">کد بازیابی</span>
-        <input id="recCode" type="text" maxlength="20" dir="ltr" autocomplete="one-time-code" spellcheck="false" data-i18n-ph="auth.recoverCodePh" placeholder="XXXX-XXXX-XXXX">
-        <p class="hint" data-i18n="auth.recoverCodeHint">همان کدی که هنگام ساخت حساب گرفتی.</p>
-      </label>
-      <label class="field">
-        <span data-i18n="auth.recoverNameLabel">اسم واقعی (فقط حساب‌های قدیمی)</span>
-        <input id="recName" type="text" maxlength="24" autocomplete="name" data-i18n-ph="auth.namePh" placeholder="مثلاً علی رضایی">
-      </label>
+      <button class="btn btn-primary btn-block btn-lg" id="verifySubmit" type="submit" data-i18n="auth.verifyCta">تأیید ایمیل</button>
+      <p class="auth-error" id="verifyError" role="alert"></p>
+      <button class="link-btn" id="verifyResend" type="button" data-i18n="auth.verifyResend">ارسال دوبارهٔ کد</button>
+      <button class="link-btn" id="verifyLater" type="button" data-i18n="auth.verifyLater">فعلاً رد کن</button>
+    </form>
+
+    <form id="resetForm" class="hidden" autocomplete="off" novalidate>
+      <p class="hint" data-i18n="auth.resetLinkSub">رمز تازه‌ات را انتخاب کن؛ این لینک فقط یک بار کار می‌کند.</p>
       <label class="field">
         <span data-i18n="auth.newPassword">رمز جدید</span>
-        <input id="recPassword" type="password" maxlength="64" autocomplete="new-password">
+        <input id="resetPassword" type="password" maxlength="64" autocomplete="new-password">
         <p class="hint" data-i18n="auth.pwHint">حداقل ۸ کاراکتر، شامل حرف بزرگ، حرف کوچک و عدد.</p>
       </label>
       <label class="field">
         <span data-i18n="auth.password2">تکرار رمز</span>
-        <input id="recPassword2" type="password" maxlength="64" autocomplete="new-password">
+        <input id="resetPassword2" type="password" maxlength="64" autocomplete="new-password">
       </label>
-      <div class="field">
-        <span data-i18n="auth.captcha">کپچا — حاصل را بنویس</span>
-        <div class="captcha-row">
-          <span class="captcha-q" id="recCaptchaQ">?</span>
-          <button class="icon-btn" id="recCaptchaRefresh" type="button" title="New question">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
-          </button>
-          <input id="recCaptchaA" type="text" inputmode="numeric" maxlength="4" dir="ltr" placeholder="13" autocomplete="off">
-        </div>
-      </div>
-      <button class="btn btn-primary btn-block btn-lg" id="recSubmit" type="submit" data-i18n="auth.recoverCta">تعیین رمز جدید</button>
-      <p class="auth-error" id="recError" role="alert"></p>
-      <button class="link-btn" id="recoverBack" type="button" data-i18n="auth.back">بازگشت به ورود</button>
+      <button class="btn btn-primary btn-block btn-lg" id="resetSubmit" type="submit" data-i18n="auth.resetCta">تعیین رمز جدید</button>
+      <p class="auth-error" id="resetError" role="alert"></p>
+      <button class="link-btn" id="resetNewCode" type="button" data-i18n="auth.getNewCode">دریافت کد جدید</button>
+      <button class="link-btn" id="resetToLogin" type="button" data-i18n="auth.back">بازگشت به ورود</button>
     </form>
+
+    <form id="recoverForm" class="hidden" autocomplete="on">
+      <div id="recStep1">
+        <label class="field">
+          <span data-i18n="auth.email">ایمیل</span>
+          <input id="recEmail" type="email" maxlength="160" dir="ltr" autocomplete="email" data-i18n-ph="auth.emailPh" placeholder="you@example.com">
+        </label>
+        <p class="hint" data-i18n="auth.forgotEmailHint">کد ۸ رقمی به این ایمیل می‌رسد؛ با آن رمز تازه می‌گذاری.</p>
+        <button class="btn btn-primary btn-block btn-lg" id="recSendCode" type="button" data-i18n="auth.sendCode">ارسال کد به ایمیل</button>
+        <p class="form-msg" id="recStep1Msg" role="status"></p>
+        <p class="auth-error" id="recStep1Error" role="alert"></p>
+        <button class="link-btn" id="recToRecovery" type="button" data-i18n="auth.useRecoveryCode">کد بازیابی دارم</button>
+        <button class="link-btn" id="recoverBack" type="button" data-i18n="auth.back">بازگشت به ورود</button>
+      </div>
+
+      <div id="recStep2" class="hidden">
+        <p class="hint" id="recSentHint"></p>
+        <label class="field">
+          <span data-i18n="auth.resetCode">کد ۸ رقمی ایمیل</span>
+          <input id="recCode" class="code-input" type="text" inputmode="numeric" maxlength="8" dir="ltr" autocomplete="one-time-code" placeholder="12345678">
+        </label>
+        <label class="field">
+          <span data-i18n="auth.newPassword">رمز جدید</span>
+          <input id="recPassword" type="password" maxlength="64" autocomplete="new-password">
+          <p class="hint" data-i18n="auth.pwHint">حداقل ۸ کاراکتر، شامل حرف بزرگ، حرف کوچک و عدد.</p>
+        </label>
+        <label class="field">
+          <span data-i18n="auth.password2">تکرار رمز</span>
+          <input id="recPassword2" type="password" maxlength="64" autocomplete="new-password">
+        </label>
+        <div class="field">
+          <span data-i18n="auth.captcha">کپچا — حاصل را بنویس</span>
+          <div class="captcha-row">
+            <span class="captcha-q" id="recCaptchaQ">?</span>
+            <button class="icon-btn" id="recCaptchaRefresh" type="button" title="New question">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+            </button>
+            <input id="recCaptchaA" type="text" inputmode="numeric" maxlength="4" dir="ltr" placeholder="13" autocomplete="off">
+          </div>
+        </div>
+        <button class="btn btn-primary btn-block btn-lg" id="recSubmit" type="submit" data-i18n="auth.resetCta">تعیین رمز جدید</button>
+        <p class="auth-error" id="recError" role="alert"></p>
+        <button class="link-btn" id="recResend" type="button" data-i18n="auth.resendCode">ارسال دوبارهٔ کد</button>
+        <button class="link-btn" id="recEmailAgain" type="button" data-i18n="auth.changeEmail">ایمیل دیگری بنویسم</button>
+        <button class="link-btn" id="recoverBack2" type="button" data-i18n="auth.back">بازگشت به ورود</button>
+      </div>
+
+      <div id="recStepRecovery" class="hidden">
+        <label class="field">
+          <span data-i18n="auth.username">نام کاربری</span>
+          <input id="recUsername" type="text" maxlength="20" dir="ltr" autocomplete="username" spellcheck="false" data-i18n-ph="auth.usernamePh" placeholder="ali_2026">
+        </label>
+        <label class="field">
+          <span data-i18n="auth.recoverCode">کد بازیابی</span>
+          <input id="recRecoveryCode" type="text" maxlength="20" dir="ltr" autocomplete="one-time-code" spellcheck="false" data-i18n-ph="auth.recoverCodePh" placeholder="XXXX-XXXX-XXXX">
+          <p class="hint" data-i18n="auth.recoverCodeHint">همان کدی که هنگام ساخت حساب گرفتی.</p>
+        </label>
+        <label class="field">
+          <span data-i18n="auth.recoverNameLabel">اسم واقعی (فقط حساب‌های قدیمی)</span>
+          <input id="recName" type="text" maxlength="24" autocomplete="name" data-i18n-ph="auth.namePh" placeholder="مثلاً علی رضایی">
+        </label>
+        <label class="field">
+          <span data-i18n="auth.newPassword">رمز جدید</span>
+          <input id="recNewPassword" type="password" maxlength="64" autocomplete="new-password">
+          <p class="hint" data-i18n="auth.pwHint">حداقل ۸ کاراکتر، شامل حرف بزرگ، حرف کوچک و عدد.</p>
+        </label>
+        <label class="field">
+          <span data-i18n="auth.password2">تکرار رمز</span>
+          <input id="recNewPassword2" type="password" maxlength="64" autocomplete="new-password">
+        </label>
+        <div class="field">
+          <span data-i18n="auth.captcha">کپچا — حاصل را بنویس</span>
+          <div class="captcha-row">
+            <span class="captcha-q" id="recLegacyCaptchaQ">?</span>
+            <button class="icon-btn" id="recLegacyCaptchaRefresh" type="button" title="New question">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+            </button>
+            <input id="recLegacyCaptchaA" type="text" inputmode="numeric" maxlength="4" dir="ltr" placeholder="13" autocomplete="off">
+          </div>
+        </div>
+        <button class="btn btn-primary btn-block btn-lg" id="recSubmitLegacy" type="submit" data-i18n="auth.recoverCta">تعیین رمز جدید</button>
+        <p class="auth-error" id="recErrorLegacy" role="alert"></p>
+        <button class="link-btn" id="recToEmail" type="button" data-i18n="auth.useEmailInstead">بازیابی با ایمیل</button>
+        <button class="link-btn" id="recoverBack3" type="button" data-i18n="auth.back">بازگشت به ورود</button>
+      </div>
+    </form>
+
+    <div class="mail-result hidden" id="mailResult">
+      <p class="auth-error" id="mailResultText" role="alert"></p>
+      <a class="btn btn-secondary btn-block" href="auth.html?mode=login&amp;force=1" data-i18n="auth.backToLogin">بازگشت به ورود</a>
+    </div>
 
     <div class="recovery-reveal hidden" id="recoveryReveal">
       <span class="recovery-label" data-i18n="auth.recoveryLabel">کد بازیابی تو</span>

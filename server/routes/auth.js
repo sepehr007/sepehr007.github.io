@@ -1,7 +1,21 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { createUser, findUserById, findUsers, updateUser, ensureStore } from "../userStore.js";
+import {
+  createUser,
+  findUserById,
+  findUsers,
+  updateUser,
+  ensureStore,
+  createEmailToken,
+  deleteEmailTokens,
+  findActiveEmailToken,
+  findEmailTokenByLink,
+  bumpEmailTokenAttempts,
+  consumeEmailToken,
+  purgeEmailTokens
+} from "../userStore.js";
+import { sendVerificationMail, sendResetMail, mailMode } from "../mailer.js";
 import {
   saveSession,
   getSession,
@@ -22,12 +36,108 @@ const USER_CACHE_TTL = 120;
 const USERNAME_RE = /^[\p{L}\p{N}_-]{3,24}$/u;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const VERIFY_TTL_MINUTES = 30;
+const RESET_TTL_MINUTES = 15;
+const MAX_CODE_ATTEMPTS = 5;
+const CODE_HASH_ROUNDS = 8;
 
 let warnedSecret = false;
 
 const loginLimit = createRateLimiter({ max: 25, windowMs: 60_000, prefix: "wt:rl:login:" });
 const registerLimit = createRateLimiter({ max: 12, windowMs: 60_000, prefix: "wt:rl:register:" });
 const recoverLimit = createRateLimiter({ max: 10, windowMs: 60_000, prefix: "wt:rl:recover:" });
+const verifySendLimit = createRateLimiter({ max: 6, windowMs: 60_000, prefix: "wt:rl:verifysend:" });
+const verifyConfirmLimit = createRateLimiter({ max: 20, windowMs: 60_000, prefix: "wt:rl:verifyconfirm:" });
+const forgotLimit = createRateLimiter({ max: 6, windowMs: 60_000, prefix: "wt:rl:forgot:" });
+const resetLimit = createRateLimiter({ max: 12, windowMs: 60_000, prefix: "wt:rl:reset:" });
+
+const mailCooldowns = new Map();
+
+function takeCooldown(key, ms = 60_000) {
+  const now = Date.now();
+  const last = mailCooldowns.get(key) || 0;
+  if (now - last < ms) return false;
+  mailCooldowns.set(key, now);
+  return true;
+}
+
+function devSecretsAllowed() {
+  return process.env.NODE_ENV !== "production";
+}
+
+function verificationRequired() {
+  const flag = String(process.env.REQUIRE_EMAIL_VERIFICATION || "").trim().toLowerCase();
+  if (flag === "false" || flag === "off" || flag === "0") return false;
+  return true;
+}
+
+function maskEmail(email) {
+  const [name, domain] = String(email || "").split("@");
+  if (!domain) return "";
+  const head = name.slice(0, 1);
+  return `${head}${"*".repeat(Math.max(1, Math.min(4, name.length - 1)))}@${domain}`;
+}
+
+function newNumericCode() {
+  return String(crypto.randomInt(0, 100000000)).padStart(8, "0");
+}
+
+function newLinkToken() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function hashLinkToken(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function appOrigin(req) {
+  const configured = String(process.env.APP_ORIGIN || process.env.PUBLIC_URL || "").trim();
+  if (configured) return configured.replace(/\/+$/, "");
+  const origin = cleanString(req.headers.origin, 200);
+  if (/^https?:\/\//i.test(origin)) return origin.replace(/\/+$/, "");
+  return "http://localhost:4789";
+}
+
+async function issueEmailToken(user, kind, req) {
+  const minutes = kind === "reset" ? RESET_TTL_MINUTES : VERIFY_TTL_MINUTES;
+  const code = newNumericCode();
+  const linkToken = newLinkToken();
+  await deleteEmailTokens(user.id, kind);
+  const record = await createEmailToken({
+    userId: user.id,
+    kind,
+    codeHash: await bcrypt.hash(code, CODE_HASH_ROUNDS),
+    linkHash: hashLinkToken(linkToken),
+    expiresAt: Date.now() + minutes * 60_000
+  });
+  purgeEmailTokens().catch(() => {});
+  const base = appOrigin(req);
+  const link =
+    kind === "reset"
+      ? `${base}/auth.html?reset=${encodeURIComponent(linkToken)}`
+      : `${base}/auth.html?verify=${encodeURIComponent(linkToken)}`;
+  const delivery =
+    kind === "reset"
+      ? await sendResetMail({ to: user.email, username: user.nick || user.username, code, link, minutes })
+      : await sendVerificationMail({ to: user.email, username: user.nick || user.username, code, link, minutes });
+  return { record, delivery, code, link, minutes };
+}
+
+function publicDelivery(user, issued) {
+  const delivery = issued.delivery || { ok: false, mode: mailMode(), error: "unknown" };
+  const payload = {
+    sent: Boolean(delivery.ok),
+    mode: delivery.mode || "",
+    email: maskEmail(user.email),
+    minutes: issued.minutes
+  };
+  if (!delivery.ok) payload.error = delivery.error || "send_failed";
+  if (delivery.ok && delivery.mode === "outbox" && devSecretsAllowed()) {
+    payload.previewCode = issued.code;
+    payload.previewLink = issued.link;
+  }
+  return payload;
+}
 
 function getSecret() {
   const secret = process.env.JWT_SECRET;
@@ -48,6 +158,7 @@ function publicUser(user) {
     role: user.role || "user",
     avatar: user.avatar || "",
     nick: user.nick || user.username,
+    emailVerified: Boolean(user.emailVerified),
     createdAt: user.createdAt || null,
     profile: {
       nick: user.nick || user.username,
@@ -215,13 +326,22 @@ export default async function authRoutes(app) {
         avatar,
         role: "user"
       });
+      let verification = null;
+      try {
+        verification = publicDelivery(user, await issueEmailToken(user, "verify", req));
+      } catch (err) {
+        req.log.error({ err }, "verification email failed at register");
+        verification = { sent: false, mode: mailMode(), email: maskEmail(user.email), error: "send_failed" };
+      }
       const issued = await issueToken(user, req);
       return reply.code(201).send({
         token: issued.token,
         tokenType: "Bearer",
         expiresIn: issued.expiresIn,
         user: publicUser(user),
-        recoveryCode
+        recoveryCode,
+        verification,
+        verificationRequired: verificationRequired()
       });
     } catch (err) {
       if (err?.code === 11000) {
@@ -250,6 +370,29 @@ export default async function authRoutes(app) {
     const valid = user ? await bcrypt.compare(password, user.passwordHash) : false;
     if (!user || !valid) {
       return fail(reply, 401, "invalid_credentials", "Email/username or password is incorrect.");
+    }
+
+    if (verificationRequired() && !user.emailVerified) {
+      let verification = {
+        sent: Boolean(mailMode() === "outbox"),
+        mode: mailMode(),
+        email: maskEmail(user.email),
+        minutes: VERIFY_TTL_MINUTES
+      };
+      if (takeCooldown(`verify:${user.id}`, 60_000)) {
+        try {
+          verification = publicDelivery(user, await issueEmailToken(user, "verify", req));
+        } catch (err) {
+          req.log.error({ err }, "verification email failed at login");
+          verification = { sent: false, mode: mailMode(), email: maskEmail(user.email), error: "send_failed" };
+        }
+      }
+      return reply.code(403).send({
+        error: "email_not_verified",
+        message: "This email is not verified yet. Enter the code we sent to it.",
+        email: maskEmail(user.email),
+        verification
+      });
     }
 
     await updateUser(user.id, { lastLoginAt: new Date() });
@@ -321,16 +464,30 @@ export default async function authRoutes(app) {
       if (clash.length && String(clash[0].id) !== String(req.auth.userId)) {
         return fail(reply, 409, "already_exists", "This email is already registered.");
       }
-      patch.email = email;
+      const current = await findUserById(req.auth.userId);
+      if (!current || current.email !== email) {
+        patch.email = email;
+        patch.emailVerified = false;
+        patch.emailVerifiedAt = null;
+      }
     }
 
     if (!Object.keys(patch).length) return fail(reply, 400, "nothing_to_update", "No profile fields were sent.");
-    const user = await updateUser(req.auth.userId, patch);
+    let user = await updateUser(req.auth.userId, patch);
     if (!user) return fail(reply, 404, "user_missing", "Account not found.");
+    let verification = null;
+    if (patch.email) {
+      try {
+        verification = publicDelivery(user, await issueEmailToken(user, "verify", req));
+      } catch (err) {
+        req.log.error({ err }, "verification email failed after email change");
+        verification = { sent: false, mode: mailMode(), email: maskEmail(user.email), error: "send_failed" };
+      }
+    }
     const safe = publicUser(user);
     await cacheDel(`user:${safe.id}`);
     await cacheSet(`user:${safe.id}`, safe, USER_CACHE_TTL);
-    return { user: safe };
+    return verification ? { user: safe, verification } : { user: safe };
   });
 
   app.post("/password", { preHandler: [requireAuth] }, async (req, reply) => {
@@ -403,6 +560,203 @@ export default async function authRoutes(app) {
     const recoveryCode = newRecoveryCode();
     await updateUser(user.id, { recoveryHash: await bcrypt.hash(normalizeCode(recoveryCode), RECOVERY_ROUNDS) });
     return { ok: true, recoveryCode };
+  });
+
+  app.post("/verify/send", { preHandler: [verifySendLimit] }, async (req, reply) => {
+    if (!(await storeReady())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    let user = null;
+    const authenticated = String(req.headers.authorization || "").startsWith("Bearer ");
+    if (authenticated) {
+      await requireAuth(req, reply);
+      if (reply.sent) return undefined;
+      user = await findUserById(req.auth.userId);
+      if (!user) return fail(reply, 401, "user_missing", "Account not found.");
+    } else {
+      const identifier = cleanString(body.identifier || body.email || body.username, 160).toLowerCase();
+      if (identifier) {
+        const rows = await findUsers(
+          identifier.includes("@") ? { email: identifier } : { usernameLower: identifier }
+        );
+        user = rows[0] || null;
+      }
+      if (!user) {
+        return {
+          ok: true,
+          verification: { sent: true, mode: mailMode(), email: "", minutes: VERIFY_TTL_MINUTES }
+        };
+      }
+    }
+    if (user.emailVerified) return { ok: true, already: true, user: authenticated ? publicUser(user) : null };
+    if (!takeCooldown(`verify:${user.id}`, 45_000)) {
+      return {
+        ok: true,
+        cooldown: true,
+        verification: { sent: true, mode: mailMode(), email: maskEmail(user.email), minutes: VERIFY_TTL_MINUTES }
+      };
+    }
+    const verification = publicDelivery(user, await issueEmailToken(user, "verify", req));
+    return { ok: true, verification };
+  });
+
+  app.post("/verify/confirm", { preHandler: [verifyConfirmLimit] }, async (req, reply) => {
+    if (!(await storeReady())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const code = String(body.code ?? "").replace(/\D/g, "");
+    if (!/^\d{8}$/.test(code)) return fail(reply, 400, "invalid_code", "The code must be 8 digits.");
+
+    let user = null;
+    let authenticated = false;
+    if (String(req.headers.authorization || "").startsWith("Bearer ")) {
+      await requireAuth(req, reply);
+      if (reply.sent) return undefined;
+      authenticated = true;
+      user = await findUserById(req.auth.userId);
+      if (!user) return fail(reply, 401, "user_missing", "Account not found.");
+    } else {
+      const identifier = cleanString(body.identifier || body.email || body.username, 160).toLowerCase();
+      if (!identifier) return fail(reply, 400, "missing_identifier", "Enter your email or username.");
+      const rows = await findUsers(
+        identifier.includes("@") ? { email: identifier } : { usernameLower: identifier }
+      );
+      user = rows[0] || null;
+      if (!user) return fail(reply, 400, "invalid_code", "The code is not correct.");
+    }
+    if (user.emailVerified) return { ok: true, already: true, user: publicUser(user) };
+
+    const token = await findActiveEmailToken(user.id, "verify");
+    if (!token) return fail(reply, 400, "code_expired", "The code expired. Request a new one.");
+    const valid = await bcrypt.compare(code, token.codeHash || "");
+    if (!valid) {
+      const attempts = await bumpEmailTokenAttempts(token.id);
+      if (attempts >= MAX_CODE_ATTEMPTS) {
+        await consumeEmailToken(token.id);
+        return fail(reply, 429, "too_many_attempts", "Too many wrong codes. Request a new code.");
+      }
+      return fail(reply, 400, "invalid_code", "The code is not correct.");
+    }
+
+    await consumeEmailToken(token.id);
+    const updated = await updateUser(user.id, { emailVerified: true, emailVerifiedAt: new Date() });
+    const safe = publicUser(updated);
+    await cacheDel(`user:${safe.id}`);
+    await cacheSet(`user:${safe.id}`, safe, USER_CACHE_TTL);
+    if (authenticated) return { ok: true, user: safe };
+    const issued = await issueToken(updated, req);
+    return {
+      ok: true,
+      token: issued.token,
+      tokenType: "Bearer",
+      expiresIn: issued.expiresIn,
+      user: safe
+    };
+  });
+
+  app.post("/verify-link", { preHandler: [verifyConfirmLimit] }, async (req, reply) => {
+    if (!(await storeReady())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const token = String(body.token ?? "").trim();
+    if (!token) return fail(reply, 400, "invalid_link", "This verification link is not valid.");
+    const record = await findEmailTokenByLink(hashLinkToken(token), "verify");
+    if (!record) return fail(reply, 400, "link_expired", "This verification link expired or was already used.");
+    const user = await findUserById(record.userId);
+    if (!user) return fail(reply, 404, "user_missing", "Account not found.");
+
+    await consumeEmailToken(record.id);
+    const updated = await updateUser(user.id, { emailVerified: true, emailVerifiedAt: new Date() });
+    await cacheDel(`user:${user.id}`);
+    const issued = await issueToken(updated, req);
+    return {
+      ok: true,
+      token: issued.token,
+      tokenType: "Bearer",
+      expiresIn: issued.expiresIn,
+      user: publicUser(updated)
+    };
+  });
+
+  app.post("/password/forgot", { preHandler: [forgotLimit] }, async (req, reply) => {
+    if (!(await storeReady())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const email = cleanString(body.email, 160).toLowerCase();
+    if (!EMAIL_RE.test(email)) return fail(reply, 400, "invalid_email", "Enter a valid email address.");
+
+    const rows = await findUsers({ email });
+    const user = rows[0] || null;
+    if (!user) {
+      // Same answer for unknown emails so accounts cannot be probed.
+      return { ok: true, sent: true, email: maskEmail(email), minutes: RESET_TTL_MINUTES };
+    }
+    if (!takeCooldown(`forgot:${email}`, 60_000)) {
+      return { ok: true, sent: true, cooldown: true, email: maskEmail(email), minutes: RESET_TTL_MINUTES };
+    }
+    try {
+      const delivery = publicDelivery(user, await issueEmailToken(user, "reset", req));
+      if (!delivery.sent) {
+        return fail(reply, 502, "mail_failed", "The email could not be sent right now. Try again in a minute.");
+      }
+      return { ok: true, ...delivery, verificationRequired: verificationRequired() };
+    } catch (err) {
+      req.log.error({ err }, "reset email failed");
+      return fail(reply, 502, "mail_failed", "The email could not be sent right now. Try again in a minute.");
+    }
+  });
+
+  app.post("/password/reset", { preHandler: [resetLimit] }, async (req, reply) => {
+    if (!(await storeReady())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const linkToken = String(body.token ?? "").trim();
+    const email = cleanString(body.email, 160).toLowerCase();
+    const code = String(body.code ?? "").replace(/\D/g, "");
+    const next = String(body.password ?? "");
+    if (next.length < 8 || next.length > 128) {
+      return fail(reply, 400, "invalid_password", "Password must be between 8 and 128 characters.");
+    }
+
+    let record = null;
+    let user = null;
+    if (linkToken) {
+      record = await findEmailTokenByLink(hashLinkToken(linkToken), "reset");
+      if (!record) return fail(reply, 400, "link_expired", "This reset link expired or was already used.");
+      user = await findUserById(record.userId);
+    } else {
+      if (!EMAIL_RE.test(email)) return fail(reply, 400, "invalid_email", "Enter the email of your account.");
+      if (!/^\d{8}$/.test(code)) return fail(reply, 400, "invalid_code", "The code must be 8 digits.");
+      const rows = await findUsers({ email });
+      user = rows[0] || null;
+      record = user ? await findActiveEmailToken(user.id, "reset") : null;
+      if (!user || !record) return fail(reply, 400, "code_expired", "The code expired. Request a new one.");
+      const valid = await bcrypt.compare(code, record.codeHash || "");
+      if (!valid) {
+        const attempts = await bumpEmailTokenAttempts(record.id);
+        if (attempts >= MAX_CODE_ATTEMPTS) {
+          await consumeEmailToken(record.id);
+          return fail(reply, 429, "too_many_attempts", "Too many wrong codes. Request a new code.");
+        }
+        return fail(reply, 400, "invalid_code", "The code is not correct.");
+      }
+    }
+    if (!user) return fail(reply, 400, "user_missing", "Account not found.");
+
+    const recoveryCode = newRecoveryCode();
+    const updated = await updateUser(user.id, {
+      passwordHash: await bcrypt.hash(next, BCRYPT_ROUNDS),
+      recoveryHash: await bcrypt.hash(normalizeCode(recoveryCode), RECOVERY_ROUNDS),
+      emailVerified: true,
+      emailVerifiedAt: user.emailVerifiedAt || new Date()
+    });
+    await consumeEmailToken(record.id);
+    await revokeUserSessions(user.id);
+    await cacheDel(`user:${user.id}`);
+    const issued = await issueToken(updated, req);
+    return {
+      ok: true,
+      token: issued.token,
+      tokenType: "Bearer",
+      expiresIn: issued.expiresIn,
+      user: publicUser(updated),
+      recoveryCode
+    };
   });
 
   app.post("/logout", { preHandler: [requireAuth] }, async (req) => {

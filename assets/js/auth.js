@@ -117,6 +117,7 @@ function writeApiUser(user) {
     role: user.role || "user",
     avatar: prof.avatar || user.avatar || "",
     nick: user.nick || prof.nick || "",
+    emailVerified: Boolean(user.emailVerified),
     createdAt: user.createdAt || null,
     profile: {
       nick: prof.nick || user.nick || "",
@@ -310,7 +311,8 @@ function remoteUser() {
     createdAt: Number.isFinite(created) && created > 0 ? created : null,
     friends: Array.isArray(rec?.friends) ? [...rec.friends] : [],
     email: remote.email || rec?.email || "",
-    role: remote.role || "user"
+    role: remote.role || "user",
+    emailVerified: Boolean(remote.emailVerified)
   };
 }
 
@@ -599,7 +601,14 @@ export async function register({ name, username, email, password }) {
         }
       }
       clearThrottle(u);
-      return { ok: true, nick, remote: true, recoveryCode: res.recoveryCode || "" };
+      return {
+        ok: true,
+        nick,
+        remote: true,
+        recoveryCode: res.recoveryCode || "",
+        verification: res.verification || null,
+        verificationRequired: Boolean(res.verificationRequired)
+      };
     }
   } catch (err) { apiErr = err; }
   if (apiErr && !backendUnavailable(apiErr)) {
@@ -660,6 +669,14 @@ export async function login({ username, password }) {
     }
   } catch (err) { apiErr = err; }
   if (apiErr?.status === 429) return { ok: false, error: "rate" };
+  if (apiErr?.payload?.error === "email_not_verified") {
+    return {
+      ok: false,
+      error: "verify",
+      email: apiErr.payload.email || "",
+      verification: apiErr.payload.verification || null
+    };
+  }
   const recKey = localLookup || u;
   const rec = users[recKey];
   if (!rec) { noteFailure(recKey); logModeration("loginFail", `نام کاربری ناشناس @${u}`); return { ok: false, error: "credentials" }; }
@@ -768,6 +785,116 @@ export async function rotateRecoveryCode({ password } = {}) {
   return { ok: true, recoveryCode };
 }
 
+/* ---------- email verification & reset ---------- */
+function mailError(err, fallback = "server") {
+  if (backendUnavailable(err)) return "offline";
+  if (err?.status === 429) return "rate";
+  const code = err?.payload?.error || "";
+  if (code === "invalid_email") return "email";
+  if (code === "invalid_code") return "code";
+  if (code === "code_expired" || code === "link_expired" || code === "invalid_link") return "expired";
+  if (code === "invalid_password") return "password";
+  if (code === "mail_failed") return "mail";
+  return fallback;
+}
+
+async function adoptResetSession(res, password) {
+  apiSetToken(res.token);
+  writeApiUser(res.user);
+  const key = await mirrorApiAccount(res.user, { password, force: true });
+  if (key) {
+    saveSession(key);
+    const users = readUsers();
+    if (users[key] && res.recoveryCode) {
+      users[key] = await attachRecovery(users[key], res.recoveryCode);
+      writeUsers(users);
+    }
+  }
+  return { ok: true, nick: res.user?.nick || res.user?.username || "", recoveryCode: res.recoveryCode || "" };
+}
+
+export async function verifyEmailCode(code, identifier = "") {
+  const digits = String(code || "").replace(/\D/g, "");
+  if (!/^\d{8}$/.test(digits)) return { ok: false, error: "code" };
+  try {
+    const res = await authApi.confirmEmailCode({ code: digits, identifier: String(identifier || "").trim() });
+    if (res?.user) {
+      writeApiUser(res.user);
+      const key = await mirrorApiAccount(res.user, { force: true });
+      if (key) saveSession(key);
+    }
+    return { ok: true, user: res?.user || null, already: Boolean(res?.already) };
+  } catch (err) {
+    return { ok: false, error: mailError(err) };
+  }
+}
+
+export async function resendVerificationEmail(identifier = "") {
+  try {
+    const res = await authApi.sendEmailCode({ identifier: String(identifier || "").trim() });
+    return { ok: true, already: Boolean(res?.already), verification: res?.verification || null };
+  } catch (err) {
+    return { ok: false, error: mailError(err) };
+  }
+}
+
+export async function verifyEmailWithLink(token) {
+  const clean = String(token || "").trim();
+  if (!clean) return { ok: false, error: "expired" };
+  try {
+    const res = await authApi.verifyEmailLink({ token: clean });
+    if (res?.user) {
+      writeApiUser(res.user);
+      const key = await mirrorApiAccount(res.user, { force: true });
+      if (key) saveSession(key);
+    }
+    return { ok: true, user: res?.user || null };
+  } catch (err) {
+    return { ok: false, error: mailError(err) };
+  }
+}
+
+export async function requestPasswordCode(email) {
+  const mail = String(email || "").trim().toLowerCase();
+  if (!emailLooksValid(mail)) return { ok: false, error: "email" };
+  try {
+    const res = await authApi.forgotPassword({ email: mail });
+    return {
+      ok: true,
+      sent: res?.sent !== false,
+      email: mail,
+      maskedEmail: res?.email || "",
+      cooldown: Boolean(res?.cooldown)
+    };
+  } catch (err) {
+    return { ok: false, error: mailError(err) };
+  }
+}
+
+export async function resetPasswordWithEmail({ email, code, password }) {
+  const mail = String(email || "").trim().toLowerCase();
+  const digits = String(code || "").replace(/\D/g, "");
+  if (!emailLooksValid(mail)) return { ok: false, error: "email" };
+  if (!/^\d{8}$/.test(digits)) return { ok: false, error: "code" };
+  if (!isPassword(password)) return { ok: false, error: "password" };
+  try {
+    const res = await authApi.resetPassword({ email: mail, code: digits, password });
+    return await adoptResetSession(res, password);
+  } catch (err) {
+    return { ok: false, error: mailError(err) };
+  }
+}
+
+export async function resetPasswordWithLink({ token, password }) {
+  if (!isPassword(password)) return { ok: false, error: "password" };
+  try {
+    const res = await authApi.resetPassword({ token: String(token || "").trim(), password });
+    return await adoptResetSession(res, password);
+  } catch (err) {
+    return { ok: false, error: mailError(err) };
+  }
+}
+
 /* ---------- captcha ---------- */
 export function makeCaptcha() {
   const plus = Math.random() < 0.6;
@@ -824,6 +951,12 @@ export async function initAuthPage() {
   let busy = false;
   let recovering = false;
   let lastRecoveryCode = "";
+  let verifyEmail = "";
+  let verifyIdentifier = "";
+  let verifyDone = null;
+  let resetToken = new URLSearchParams(location.search).get("reset") || "";
+  let resetEmail = "";
+  let recoverStep = "email";
 
   const nextRaw = new URLSearchParams(location.search).get("next") || "";
   const next = safeNext(nextRaw);
@@ -864,8 +997,22 @@ export async function initAuthPage() {
     if (inp) inp.value = "";
   }
 
+  let legacyCaptcha = makeCaptcha();
+  function drawLegacyCaptcha() {
+    legacyCaptcha = makeCaptcha();
+    const q = $("#recLegacyCaptchaQ");
+    if (q) q.textContent = `${legacyCaptcha.q} = ?`;
+    const inp = $("#recLegacyCaptchaA");
+    if (inp) inp.value = "";
+  }
+
   function setMode(m) {
     mode = m;
+    recovering = false;
+    for (const id of ["verifyForm", "resetForm", "recoverForm", "recoveryReveal", "mailResult"]) {
+      document.getElementById(id)?.classList.add("hidden");
+    }
+    form.classList.remove("hidden");
     const fa = document.documentElement.lang === "fa";
     $("#tabLogin")?.classList.toggle("active", m === "login");
     $("#tabRegister")?.classList.toggle("active", m === "register");
@@ -888,12 +1035,12 @@ export async function initAuthPage() {
     $("#username")?.focus();
   }
 
-  function showRecoveryPanel(code) {
+  function showRecoveryPanel(code, done) {
     const box = $("#recoveryReveal");
     $("#authForm")?.classList.add("hidden");
     $("#recoverForm")?.classList.add("hidden");
     document.querySelector(".auth-tabs")?.classList.add("hidden");
-    if (!box) { location.replace(next); return; }
+    if (!box) { (done || (() => location.replace(next)))(); return; }
     lastRecoveryCode = code;
     const codeNode = $("#rcCode");
     if (codeNode) codeNode.textContent = code;
@@ -908,33 +1055,125 @@ export async function initAuthPage() {
         catch { copy.textContent = code; }
       };
     }
-    const done = $("#rcDone");
-    if (done) {
-      done.textContent = t("auth.recoveryContinue");
-      done.onclick = () => location.replace(next);
+    const finish = $("#rcDone");
+    if (finish) {
+      finish.textContent = t("auth.recoveryContinue");
+      finish.onclick = done || (() => location.replace(next));
     }
     $("#rcCode")?.scrollIntoView({ block: "center" });
   }
 
-  function showRecover(on) {
-    const resetOpen = featureOn("passwordReset", cfg);
-    if (on && !resetOpen) {
+  function showRecoverStep(step) {
+    recoverStep = step;
+    $("#recStep1")?.classList.toggle("hidden", step !== "email");
+    $("#recStep2")?.classList.toggle("hidden", step !== "code");
+    $("#recStepRecovery")?.classList.toggle("hidden", step !== "recovery");
+    if (step === "code") {
+      $("#recError").textContent = "";
+      drawRecCaptcha();
+      $("#recCode")?.focus();
+    } else if (step === "recovery") {
+      $("#recErrorLegacy").textContent = "";
+      drawLegacyCaptcha();
+      $("#recUsername")?.focus();
+    } else {
+      $("#recStep1Error").textContent = "";
+      $("#recEmail")?.focus();
+    }
+  }
+
+  function showVerify(email, done, { required = false, identifier = "" } = {}) {
+    recovering = false;
+    verifyIdentifier = identifier;
+    $("#verifyLater")?.classList.toggle("hidden", Boolean(required));
+    for (const id of ["authForm", "recoverForm", "resetForm", "recoveryReveal", "mailResult"]) {
+      document.getElementById(id)?.classList.add("hidden");
+    }
+    document.querySelector(".auth-tabs")?.classList.add("hidden");
+    $("#verifyForm")?.classList.remove("hidden");
+    verifyEmail = email || "";
+    verifyDone = done || (() => location.replace(next));
+    $("#authTitle").textContent = t("auth.verifyTitle");
+    $("#authSub").textContent = t("auth.verifySub");
+    const hint = $("#verifyHint");
+    if (hint) hint.textContent = verifyEmail ? t("auth.codeSentTo", { email: verifyEmail }) : "";
+    $("#verifyError").textContent = "";
+    const inp = $("#verifyCode");
+    if (inp) { inp.value = ""; inp.focus(); }
+  }
+
+  function showReset() {
+    recovering = false;
+    for (const id of ["authForm", "verifyForm", "recoverForm", "recoveryReveal", "mailResult"]) {
+      document.getElementById(id)?.classList.add("hidden");
+    }
+    document.querySelector(".auth-tabs")?.classList.add("hidden");
+    $("#resetForm")?.classList.remove("hidden");
+    $("#authTitle").textContent = t("auth.resetLinkTitle");
+    $("#authSub").textContent = t("auth.resetLinkSub");
+    $("#resetError").textContent = "";
+    const inp = $("#resetPassword");
+    if (inp) { inp.value = ""; inp.focus(); }
+    const again = $("#resetPassword2");
+    if (again) again.value = "";
+  }
+
+  function showMailResult(message) {
+    for (const id of ["authForm", "verifyForm", "resetForm", "recoverForm", "recoveryReveal"]) {
+      document.getElementById(id)?.classList.add("hidden");
+    }
+    document.querySelector(".auth-tabs")?.classList.add("hidden");
+    $("#mailResult")?.classList.remove("hidden");
+    const text = $("#mailResultText");
+    if (text) text.textContent = message;
+    $("#authTitle").textContent = t("auth.verifyTitle");
+    $("#authSub").textContent = "";
+  }
+
+  function openRecover() {
+    if (!featureOn("passwordReset", cfg)) {
       toast(document.documentElement.lang === "fa" ? "بازیابی رمز غیرفعال شده است." : "Password recovery is disabled.", "error");
       return;
     }
-    recovering = on;
-    $("#authForm")?.classList.toggle("hidden", on);
-    $("#recoverForm")?.classList.toggle("hidden", !on);
-    document.querySelector(".auth-tabs")?.classList.toggle("hidden", on);
-    const title = $("#authTitle");
-    const sub = $("#authSub");
-    if (title) title.textContent = t(on ? "auth.recoverTitle" : mode === "login" ? "auth.loginTitle" : "auth.registerTitle");
-    if (sub) sub.textContent = t(on ? "auth.recoverSub" : mode === "login" ? "auth.loginSub" : "auth.registerSub");
-    if (on) {
-      $("#recError").textContent = "";
-      drawRecCaptcha();
-      $("#recUsername")?.focus();
+    recovering = true;
+    for (const id of ["authForm", "verifyForm", "resetForm", "recoveryReveal", "mailResult"]) {
+      document.getElementById(id)?.classList.add("hidden");
     }
+    $("#recoverForm")?.classList.remove("hidden");
+    document.querySelector(".auth-tabs")?.classList.add("hidden");
+    $("#authTitle").textContent = t("auth.recoverTitle");
+    $("#authSub").textContent = t("auth.forgotSub");
+    $("#recStep1Msg").textContent = "";
+    $("#recSentHint").textContent = "";
+    const loginId = $("#username")?.value.trim() || "";
+    const mailInput = $("#recEmail");
+    if (mailInput && emailLooksValid(loginId)) mailInput.value = loginId;
+    showRecoverStep("email");
+  }
+
+  function closeRecover() {
+    recovering = false;
+    setMode(mode);
+  }
+
+  function showRecover(on) {
+    if (on) openRecover();
+    else { closeRecover(); setMode("login"); }
+  }
+
+  function authFailMessage(error) {
+    const fa = document.documentElement.lang === "fa";
+    const map = {
+      email: fa ? "ایمیل معتبر وارد کن." : "Enter a valid email.",
+      code: fa ? "کد ۸ رقمی درست نیست." : "That 8-digit code is not correct.",
+      expired: fa ? "این کد یا لینک منقضی شده؛ کد تازه بگیر." : "This code or link expired. Request a new one.",
+      rate: fa ? "درخواست‌های زیادی فرستادی؛ کمی صبر کن." : "Too many attempts; wait a moment.",
+      password: t("auth.pwWeak"),
+      mail: fa ? "ارسال ایمیل ممکن نشد؛ چند لحظه بعد دوباره تلاش کن." : "The email could not be sent. Try again shortly.",
+      offline: fa ? "برای تأیید ایمیل باید سایت به سرور وصل باشد؛ فعلاً با کد بازیابی وارد شو." : "Email features need the server; use your recovery code for now.",
+      server: fa ? "ارتباط با سرور برقرار نشد؛ دوباره تلاش کن." : "Could not reach the server; try again."
+    };
+    return map[error] || map.server;
   }
 
   function applyAccess() {
@@ -968,18 +1207,41 @@ export async function initAuthPage() {
   $("#tabLogin")?.addEventListener("click", () => setMode("login"));
   $("#tabRegister")?.addEventListener("click", () => setMode("register"));
   $("#captchaRefresh")?.addEventListener("click", drawCaptcha);
+  $("#forgotLink")?.addEventListener("click", () => showRecover(true));
 
-  await syncRemoteSession();
-  const user = currentUser();
-  if (user && !new URLSearchParams(location.search).get("force")) {
-    location.replace(next);
-    return;
+  async function handleMailLinks() {
+    const verifyToken = new URLSearchParams(location.search).get("verify");
+    if (verifyToken) {
+      const res = await verifyEmailWithLink(verifyToken);
+      if (res.ok) {
+        toast(t("auth.verifyDone"), "success");
+        setTimeout(() => location.replace(next), 900);
+      } else {
+        showMailResult(res.error === "expired" ? t("auth.verifyLinkInvalid") : authFailMessage(res.error));
+      }
+      return true;
+    }
+    if (resetToken) {
+      showReset();
+      return true;
+    }
+    return false;
   }
 
-  if (mode === "register" && !accessOn("registration", cfg) && accessOn("login", cfg)) mode = "login";
-  if (mode === "login" && !accessOn("login", cfg) && accessOn("registration", cfg)) mode = "register";
-  setMode(mode);
-  applyAccess();
+  if (!(await handleMailLinks())) {
+    await syncRemoteSession();
+    const user = currentUser();
+    if (user && !new URLSearchParams(location.search).get("force")) {
+      location.replace(next);
+      return;
+    }
+
+    if (mode === "register" && !accessOn("registration", cfg) && accessOn("login", cfg)) mode = "login";
+    if (mode === "login" && !accessOn("login", cfg) && accessOn("registration", cfg)) mode = "register";
+    setMode(mode);
+    applyAccess();
+  }
+
   document.addEventListener("langchange", () => {
     applySiteConfig(cfg);
     const reveal = $("#recoveryReveal");
@@ -987,55 +1249,233 @@ export async function initAuthPage() {
       showRecoveryPanel(lastRecoveryCode);
       return;
     }
-    if (recovering) showRecover(true); else setMode(mode);
+    const verifyBox = $("#verifyForm");
+    if (verifyEmail && verifyBox && !verifyBox.classList.contains("hidden")) {
+      $("#authTitle").textContent = t("auth.verifyTitle");
+      $("#authSub").textContent = t("auth.verifySub");
+      const hint = $("#verifyHint");
+      if (hint) hint.textContent = t("auth.codeSentTo", { email: verifyEmail });
+      return;
+    }
+    const resetBox = $("#resetForm");
+    if (resetBox && !resetBox.classList.contains("hidden")) {
+      $("#authTitle").textContent = t("auth.resetLinkTitle");
+      $("#authSub").textContent = t("auth.resetLinkSub");
+      return;
+    }
+    if (recovering) {
+      openRecover();
+      showRecoverStep(recoverStep);
+      return;
+    }
+    setMode(mode);
     applyAccess();
   });
 
-  $("#forgotLink")?.addEventListener("click", () => showRecover(true));
-  $("#recoverBack")?.addEventListener("click", () => { showRecover(false); setMode("login"); });
+  $("#recoverBack")?.addEventListener("click", () => { closeRecover(); setMode("login"); });
+  $("#recoverBack2")?.addEventListener("click", () => { closeRecover(); setMode("login"); });
+  $("#recoverBack3")?.addEventListener("click", () => { closeRecover(); setMode("login"); });
   $("#recCaptchaRefresh")?.addEventListener("click", drawRecCaptcha);
+  $("#recLegacyCaptchaRefresh")?.addEventListener("click", drawLegacyCaptcha);
+  $("#recToRecovery")?.addEventListener("click", () => showRecoverStep("recovery"));
+  $("#recToEmail")?.addEventListener("click", () => showRecoverStep("email"));
+  $("#recEmailAgain")?.addEventListener("click", () => { $("#recSentHint").textContent = ""; showRecoverStep("email"); });
+
+  $("#resetNewCode")?.addEventListener("click", () => {
+    resetToken = "";
+    openRecover();
+  });
+  $("#resetToLogin")?.addEventListener("click", () => { resetToken = ""; setMode("login"); });
+
+  async function sendResetCode(email) {
+    const err = (m) => { $("#recStep1Error").textContent = m; };
+    const info = (m) => { $("#recStep1Msg").textContent = m; };
+    if (!emailLooksValid(email)) return err(document.documentElement.lang === "fa" ? "ایمیل معتبر وارد کن." : "Enter a valid email.");
+    err("");
+    info("");
+    const res = await requestPasswordCode(email);
+    if (!res.ok) return err(authFailMessage(res.error));
+    resetEmail = res.email || email;
+    const hint = $("#recSentHint");
+    if (hint) hint.textContent = t("auth.codeSentTo", { email: res.maskedEmail || resetEmail });
+    info(res.cooldown ? t("auth.codeCooldown") : t("auth.codeSentAgain"));
+    showRecoverStep("code");
+  }
+
+  $("#recSendCode")?.addEventListener("click", async () => {
+    if (busy) return;
+    const btn = $("#recSendCode");
+    const fa = document.documentElement.lang === "fa";
+    const old = btn.textContent;
+    busy = true;
+    btn.disabled = true;
+    btn.textContent = fa ? "کمی صبر…" : "Please wait…";
+    await sendResetCode($("#recEmail")?.value.trim() || "");
+    busy = false;
+    btn.disabled = false;
+    btn.textContent = old;
+  });
+
+  $("#recResend")?.addEventListener("click", async () => {
+    if (busy || !resetEmail) return;
+    busy = true;
+    const res = await requestPasswordCode(resetEmail);
+    busy = false;
+    if (!res.ok) return toast(authFailMessage(res.error), "error");
+    const hint = $("#recSentHint");
+    if (hint) hint.textContent = t("auth.codeSentTo", { email: res.maskedEmail || resetEmail });
+    toast(res.cooldown ? t("auth.codeCooldown") : t("auth.codeSentAgain"), "success");
+  });
+
+  $("#verifyForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    const fa = document.documentElement.lang === "fa";
+    const err = (m) => { $("#verifyError").textContent = m; };
+    const digits = ($("#verifyCode")?.value || "").replace(/\D/g, "");
+    if (!/^\d{8}$/.test(digits)) return err(fa ? "کد باید ۸ رقم باشد." : "The code must be 8 digits.");
+    const btn = $("#verifySubmit");
+    const old = btn.textContent;
+    busy = true;
+    btn.disabled = true;
+    btn.textContent = fa ? "کمی صبر…" : "Please wait…";
+    const res = await verifyEmailCode(digits, verifyIdentifier);
+    busy = false;
+    btn.disabled = false;
+    btn.textContent = old;
+    if (!res.ok) return err(authFailMessage(res.error));
+    toast(t("auth.verifyDone"), "success");
+    (verifyDone || (() => location.replace(next)))();
+  });
+
+  $("#verifyResend")?.addEventListener("click", async () => {
+    if (busy) return;
+    busy = true;
+    const res = await resendVerificationEmail(verifyIdentifier);
+    busy = false;
+    if (!res.ok) return toast(authFailMessage(res.error), "error");
+    if (res.already) {
+      toast(t("auth.verifyDone"), "success");
+      (verifyDone || (() => location.replace(next)))();
+      return;
+    }
+    if (res.verification?.email) {
+      verifyEmail = res.verification.email;
+      const hint = $("#verifyHint");
+      if (hint) hint.textContent = t("auth.codeSentTo", { email: verifyEmail });
+    }
+    toast(t("auth.codeSentAgain"), "success");
+  });
+
+  $("#verifyLater")?.addEventListener("click", () => {
+    (verifyDone || (() => location.replace(next)))();
+  });
+
+  $("#resetForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    const fa = document.documentElement.lang === "fa";
+    const err = (m) => { $("#resetError").textContent = m; };
+    const password = $("#resetPassword")?.value || "";
+    if (!isPassword(password)) return err(t("auth.pwWeak"));
+    if (password !== $("#resetPassword2")?.value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
+    const btn = $("#resetSubmit");
+    const old = btn.textContent;
+    busy = true;
+    btn.disabled = true;
+    btn.textContent = fa ? "کمی صبر…" : "Please wait…";
+    const res = await resetPasswordWithLink({ token: resetToken, password });
+    busy = false;
+    btn.disabled = false;
+    btn.textContent = old;
+    if (!res.ok) {
+      if (res.error === "expired") resetToken = "";
+      return err(authFailMessage(res.error));
+    }
+    logModeration("recover", "بازیابی رمز با لینک ایمیل");
+    resetToken = "";
+    if (res.recoveryCode) return showRecoveryPanel(res.recoveryCode);
+    location.replace(next);
+  });
 
   $("#recoverForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (busy) return;
     const fa = document.documentElement.lang === "fa";
-    const err = (m) => { const el = $("#recError"); if (el) el.textContent = m; };
-    if (!accessOn("login", cfg)) return err(fa ? "بازیابی رمز موقتاً بسته است." : "Password recovery is temporarily closed.");
-    if (!featureOn("passwordReset", cfg)) return err(fa ? "بازیابی رمز غیرفعال شده است." : "Password recovery is disabled.");
-    const username = $("#recUsername").value.trim();
-    const name = $("#recName").value;
-    const code = $("#recCode")?.value || "";
+    if (!accessOn("login", cfg)) {
+      const el = recoverStep === "recovery" ? $("#recErrorLegacy") : recoverStep === "email" ? $("#recStep1Error") : $("#recError");
+      if (el) el.textContent = fa ? "بازیابی رمز موقتاً بسته است." : "Password recovery is temporarily closed.";
+      return;
+    }
+    if (!featureOn("passwordReset", cfg)) {
+      const el = recoverStep === "recovery" ? $("#recErrorLegacy") : recoverStep === "email" ? $("#recStep1Error") : $("#recError");
+      if (el) el.textContent = fa ? "بازیابی رمز غیرفعال شده است." : "Password recovery is disabled.";
+      return;
+    }
+    if (recoverStep === "email") return;
+
+    if (recoverStep === "recovery") {
+      const err = (m) => { $("#recErrorLegacy").textContent = m; };
+      const username = $("#recUsername").value.trim();
+      const name = $("#recName").value;
+      const code = $("#recRecoveryCode").value;
+      const password = $("#recNewPassword").value;
+      if (!username) return err(fa ? "نام کاربری را وارد کن." : "Enter your username.");
+      if (!code.trim() && !isRealName(name)) return err(fa ? "کد بازیابی را وارد کن؛ اگر حساب قدیمی داری، اسم واقعی‌ات را بنویس." : "Enter your recovery code, or the real name for older accounts.");
+      if (!isPassword(password)) return err(t("auth.pwWeak"));
+      if (password !== $("#recNewPassword2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
+      if (Number(normalizeDigits($("#recLegacyCaptchaA").value)) !== legacyCaptcha.a) {
+        drawLegacyCaptcha();
+        return err(fa ? "جواب کپچا درست نیست؛ دوباره تلاش کن." : "Captcha answer is wrong, try again.");
+      }
+      const btn = $("#recSubmitLegacy");
+      const old = btn.textContent;
+      busy = true;
+      btn.disabled = true;
+      btn.textContent = fa ? "کمی صبر…" : "Please wait…";
+      const res = await recover({ username, name, code, password });
+      busy = false;
+      btn.disabled = false;
+      btn.textContent = old;
+      if (!res.ok) {
+        const map = {
+          credentials: fa ? "این نام کاربری و کد بازیابی با هم هم‌خوانی ندارند." : "Username and recovery code do not match.",
+          password: t("auth.pwWeak"),
+          locked: t("auth.locked"),
+          blocked: fa ? "این حساب به‌دست مدیر سایت مسدود شده است." : "This account is blocked by the site owner.",
+          secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https.",
+          rate: fa ? "درخواست‌های زیادی فرستادی؛ کمی صبر کن." : "Too many attempts; wait a moment."
+        };
+        logModeration("recoverFail", `تلاش ناموفق بازیابی رمز @${username}`);
+        return err(map[res.error] || "Error");
+      }
+      logModeration("recover", `بازیابی رمز @${String(username).trim().toLowerCase()}`);
+      if (res.recoveryCode) return showRecoveryPanel(res.recoveryCode);
+      location.replace(next);
+      return;
+    }
+
+    const err = (m) => { $("#recError").textContent = m; };
+    const code = ($("#recCode")?.value || "").replace(/\D/g, "");
     const password = $("#recPassword").value;
-    if (!username) return err(fa ? "نام کاربری را وارد کن." : "Enter your username.");
-    if (!code.trim() && !isRealName(name)) return err(fa ? "کد بازیابی را وارد کن؛ اگر حساب قدیمی داری، اسم واقعی‌ات را بنویس." : "Enter your recovery code, or the real name for older accounts.");
+    if (!/^\d{8}$/.test(code)) return err(fa ? "کد ایمیل باید ۸ رقم باشد." : "The email code must be 8 digits.");
     if (!isPassword(password)) return err(t("auth.pwWeak"));
     if (password !== $("#recPassword2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
     if (Number(normalizeDigits($("#recCaptchaA").value)) !== recCaptcha.a) {
       drawRecCaptcha();
       return err(fa ? "جواب کپچا درست نیست؛ دوباره تلاش کن." : "Captcha answer is wrong, try again.");
     }
-    busy = true;
     const btn = $("#recSubmit");
     const old = btn.textContent;
+    busy = true;
     btn.disabled = true;
     btn.textContent = fa ? "کمی صبر…" : "Please wait…";
-    const res = await recover({ username, name, code, password });
+    const res = await resetPasswordWithEmail({ email: resetEmail, code, password });
     busy = false;
     btn.disabled = false;
     btn.textContent = old;
-    if (!res.ok) {
-      const map = {
-        credentials: fa ? "این نام کاربری و کد بازیابی با هم هم‌خوانی ندارند." : "Username and recovery code do not match.",
-        password: t("auth.pwWeak"),
-        locked: t("auth.locked"),
-        blocked: fa ? "این حساب به‌دست مدیر سایت مسدود شده است." : "This account is blocked by the site owner.",
-        secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https.",
-        rate: fa ? "درخواست‌های زیادی فرستادی؛ کمی صبر کن." : "Too many attempts; wait a moment."
-      };
-      logModeration("recoverFail", `تلاش ناموفق بازیابی رمز @${username}`);
-      return err(map[res.error] || "Error");
-    }
-    logModeration("recover", `بازیابی رمز @${String(username).trim().toLowerCase()}`);
+    if (!res.ok) return err(authFailMessage(res.error));
+    logModeration("recover", `بازیابی رمز با کد ایمیل ${resetEmail}`);
     if (res.recoveryCode) return showRecoveryPanel(res.recoveryCode);
     location.replace(next);
   });
@@ -1099,13 +1539,27 @@ export async function initAuthPage() {
         secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https."
       };
       if (res.error === "blocked") logModeration("loginFail", `ورود حساب مسدود @${username.trim().toLowerCase()}`);
+      if (res.error === "verify") {
+        logModeration("loginFail", `ورود با ایمیل تأییدنشده @${username.trim().toLowerCase()}`);
+        toast(t("auth.emailNotVerified"), "info");
+        return showVerify(res.email || username, () => location.replace(next), { required: true, identifier: username });
+      }
       return err(map[res.error] || "Error");
     }
 
     const u = username.trim().toLowerCase();
     logModeration(mode === "register" ? "register" : "login", `${mode === "register" ? "ساخت حساب" : "ورود"} @${u}`);
     recordFeatureUse(mode === "register" ? "account.registration" : "account.login", buildFlagContext({ user: currentUser() }));
-    if (mode === "register" && res.recoveryCode) return showRecoveryPanel(res.recoveryCode);
+    if (mode === "register" && res.recoveryCode) {
+      const done = () => showRecoveryPanel(res.recoveryCode);
+      if (res.verification?.sent || res.verificationRequired) {
+        return showVerify(res.verification?.email || email, done, {
+          required: Boolean(res.verificationRequired),
+          identifier: email
+        });
+      }
+      return done();
+    }
     location.replace(next);
   });
 }

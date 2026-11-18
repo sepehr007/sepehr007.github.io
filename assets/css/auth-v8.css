@@ -73,3 +73,22 @@ html[data-theme="light"] .v8-auth-card .auth-notice{color:#92400e}
 .recovery-actions{display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap}
 .recovery-actions .btn{margin-top:0}
 html[data-theme="light"] .recovery-code{color:#0f172a;background:rgba(255,255,255,.8);border-color:rgba(15,23,42,.18)}
+
+/* email verification & magic-link reset */
+.code-input {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 20px;
+  letter-spacing: 8px;
+  text-align: center;
+  direction: ltr;
+}
+.code-input::placeholder {
+  letter-spacing: 4px;
+  font-size: 15px;
+}
+.verify-hint { margin-bottom: 14px; }
+.mail-result { padding: 8px 0 4px; }
+.mail-result .auth-error { margin-bottom: 16px; }
+#recStep2 .link-btn + .link-btn,
+#recStepRecovery .link-btn + .link-btn,
+#resetForm .link-btn + .link-btn { margin-top: 6px; }

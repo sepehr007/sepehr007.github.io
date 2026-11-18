@@ -25,6 +25,15 @@ const userSchema = new mongoose.Schema(
       trim: true,
       index: true
     },
+    emailVerified: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    emailVerifiedAt: {
+      type: Date,
+      default: null
+    },
     passwordHash: {
       type: String,
       required: true,

@@ -206,7 +206,8 @@ export async function apiFetch(path, options = {}) {
   if (!res.ok) {
     const message = (data && typeof data === "object" && data.message) || res.statusText || "Request failed";
     const code = (data && typeof data === "object" && data.error) || `http_${res.status}`;
-    if (res.status === 401 && bearer) {
+    const tokenProblem = ["missing_token", "invalid_token", "session_revoked", "user_missing"].includes(code);
+    if (res.status === 401 && bearer && tokenProblem) {
       apiClearToken();
       try {
         globalThis.dispatchEvent?.(new CustomEvent("wt:api-unauthorized"));
@@ -264,6 +265,34 @@ export const authApi = {
   },
   newRecoveryCode({ password }) {
     return apiFetch("/auth/recovery-code", { method: "POST", body: { password } });
+  },
+  sendEmailCode({ identifier } = {}) {
+    return apiFetch("/auth/verify/send", { method: "POST", body: { identifier } });
+  },
+  confirmEmailCode({ code, identifier }) {
+    return apiFetch("/auth/verify/confirm", { method: "POST", body: { code, identifier } }).then((res) => {
+      if (res?.token) apiSetToken(res.token);
+      return res;
+    });
+  },
+  verifyEmailLink({ token }) {
+    return apiFetch("/auth/verify-link", { method: "POST", auth: false, body: { token } }).then((res) => {
+      if (res?.token) apiSetToken(res.token);
+      return res;
+    });
+  },
+  forgotPassword({ email }) {
+    return apiFetch("/auth/password/forgot", { method: "POST", auth: false, body: { email } });
+  },
+  resetPassword({ token, email, code, password }) {
+    return apiFetch("/auth/password/reset", {
+      method: "POST",
+      auth: false,
+      body: token ? { token, password } : { email, code, password }
+    }).then((res) => {
+      if (res?.token) apiSetToken(res.token);
+      return res;
+    });
   },
   logout() {
     return apiFetch("/auth/logout", { method: "POST" }).finally(() => apiClearToken());
