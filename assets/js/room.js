@@ -235,7 +235,8 @@ async function boot() {
     onLoaded: () => { clearMediaWatchdog(); hideMediaLoading(); finishSample(true); syncStageEmpty(); },
     onError: () => { hideMediaLoading(); if (!retrySample()) toast(t("toast.videoInvalid"), "error"); },
     onLevels: (info) => renderQuality(info),
-    onAudio: (info) => renderAudio(info)
+    onAudio: (info) => renderAudio(info),
+    onText: (info) => renderTextTracks(info)
   });
 
   voice = new Voice({
@@ -270,6 +271,7 @@ async function boot() {
   wireScreen();
   wirePtt();
   wireMisc();
+  wireTooltips();
   wireViewport();
   wireSheet();
   wireFileLoad();
@@ -371,6 +373,27 @@ function wireNet() {
     dot.dataset.state = s;
     $("#netLabel").textContent = s === "online" ? t("net.online") : s === "connecting" ? t("net.connecting") : t("net.offline");
     if (s === "online") $("#connLostBar")?.classList.add("hidden");
+    if (s !== "online") {
+      $("#netPing")?.classList.add("hidden");
+      $("#netLink")?.classList.add("hidden");
+    }
+  });
+
+  net.on("latency", ({ ms } = {}) => {
+    const chip = $("#netPing");
+    if (!chip || me.role === "owner" || !Number.isFinite(ms)) return;
+    chip.textContent = `${ms} ms`;
+    chip.title = t("net.pingTitle");
+    chip.classList.remove("hidden", "good", "warn", "bad");
+    chip.classList.add(ms < 90 ? "good" : ms < 200 ? "warn" : "bad");
+  });
+
+  net.on("link", ({ relay } = {}) => {
+    const chip = $("#netLink");
+    if (!chip || me.role === "owner") return;
+    chip.textContent = relay ? t("net.relay") : t("net.p2p");
+    chip.classList.remove("hidden");
+    chip.classList.toggle("relay", !!relay);
   });
 
   net.on("welcome", (data) => {
@@ -1285,7 +1308,6 @@ function wireChat() {
     hideOpt.checked = chatHidden;
     hideOpt.addEventListener("change", () => setChatHidden(hideOpt.checked));
   }
-  $("#chatRestoreBtn")?.addEventListener("click", () => setChatHidden(false));
 
   chatForm.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1735,7 +1757,6 @@ function scrollChatSoon(force = false) {
 function setChatHidden(hidden, persist = true) {
   chatHidden = !!hidden;
   $(".room-shell")?.classList.toggle("chat-hidden", chatHidden);
-  $("#chatRestoreBtn")?.classList.toggle("hidden", !chatHidden);
   const opt = $("#optHideChat");
   if (opt) opt.checked = chatHidden;
   if (chatHidden) $("#sidebar")?.classList.remove("open");
@@ -2169,6 +2190,10 @@ function wireSettings() {
     if (!allow("watch.audioTracks", "انتخاب ترک صوتی غیرفعال شده است.")) return;
     player.setAudio(e.target.value);
   });
+  $("#optSubsTrack")?.addEventListener("change", (e) => {
+    if (!allow("watch.subtitles", "زیرنویس غیرفعال شده است.")) return;
+    player.setTextTrack(Number(e.target.value));
+  });
 
   $("#subsPickBtn")?.addEventListener("click", () => {
     if (!allow("watch.subtitles", "زیرنویس غیرفعال شده است.")) return;
@@ -2192,10 +2217,17 @@ function wireSettings() {
     e.target.value = "";
   });
   const layer = $("#subtitleLayer");
+  const videoEl = $("#video");
   const applySubStyle = () => {
-    if (!layer) return;
-    layer.style.setProperty("--sub-color", subColor);
-    layer.style.setProperty("--sub-bg", `rgba(0,0,0,${subBg})`);
+    const bg = `rgba(0,0,0,${subBg})`;
+    if (layer) {
+      layer.style.setProperty("--sub-color", subColor);
+      layer.style.setProperty("--sub-bg", bg);
+    }
+    if (videoEl) {
+      videoEl.style.setProperty("--sub-color", subColor);
+      videoEl.style.setProperty("--sub-bg", bg);
+    }
   };
   const sizeInput = $("#subsSize");
   const offsetInput = $("#subsOffset");
@@ -2286,6 +2318,24 @@ function renderAudio(info) {
     sel.append(el("option", { value: String(track.i), text: label }));
   }
   sel.value = String(Math.max(0, info.current));
+}
+
+function renderTextTracks(info) {
+  const row = $("#subsTrackRow");
+  const sel = $("#optSubsTrack");
+  if (!row || !sel) return;
+  if (!info || !info.tracks?.length) {
+    row.classList.add("hidden");
+    sel.innerHTML = "";
+    return;
+  }
+  row.classList.remove("hidden");
+  sel.innerHTML = "";
+  sel.append(el("option", { value: "-1", text: t("settings.subsTrackOff") }));
+  for (const track of info.tracks) {
+    sel.append(el("option", { value: String(track.i), text: track.name }));
+  }
+  sel.value = String(info.current >= 0 ? info.current : -1);
 }
 
 function renderSubsSets() {
@@ -2385,6 +2435,7 @@ function wirePrefs() {
   bindRange("#prefChatSize", "#prefChatSizeVal", "chatSize", (v) => String(v.toFixed(1)));
   bindRange("#prefChatAlpha", "#prefChatAlphaVal", "chatAlpha", (v) => `${v}%`);
   bindRange("#prefChatBright", "#prefChatBrightVal", "chatBright", (v) => `${v}%`);
+  bindRange("#prefGlass", "#prefGlassVal", "glass", (v) => `${v}%`);
   markAccent();
 
   $("#prefsReset").addEventListener("click", () => {
@@ -2397,6 +2448,8 @@ function wirePrefs() {
     $("#prefChatAlphaVal").textContent = `${d.chatAlpha}%`;
     $("#prefChatBright").value = String(d.chatBright);
     $("#prefChatBrightVal").textContent = `${d.chatBright}%`;
+    $("#prefGlass").value = String(d.glass);
+    $("#prefGlassVal").textContent = `${d.glass}%`;
     markAccent();
     markTheme();
     toast(t("prefs.resetDone"), "success");
@@ -2543,15 +2596,41 @@ function nickFor(id) {
   return members.find((m) => m.id === id)?.nick || me.nick || "?";
 }
 
+let shareEndTimer = 0;
+let shareEndBlinkTimer = 0;
+function clearShareEndState() {
+  clearTimeout(shareEndTimer);
+  clearTimeout(shareEndBlinkTimer);
+  shareEndTimer = 0;
+  shareEndBlinkTimer = 0;
+  const btn = $("#shareBtn");
+  btn?.classList.remove("share-ended", "blink");
+}
+
 function paintScreenState() {
   const btn = $("#shareBtn");
   if (!btn) return;
   btn.classList.toggle("active", screenSharing);
   btn.classList.toggle("state-on", screenSharing);
-  btn.classList.toggle("state-off", !screenSharing);
+  btn.classList.remove("state-off");
   btn.title = t(screenSharing ? "screen.stop" : "screen.start");
   btn.setAttribute("aria-label", btn.title);
   btn.setAttribute("aria-pressed", String(screenSharing));
+}
+
+function paintShareEnded() {
+  const btn = $("#shareBtn");
+  if (!btn) return;
+  clearShareEndState();
+  btn.classList.add("share-ended", "blink");
+  btn.title = t("screen.ended");
+  btn.setAttribute("aria-label", btn.title);
+  shareEndBlinkTimer = setTimeout(() => btn.classList.remove("blink"), 5000);
+  shareEndTimer = setTimeout(() => {
+    btn.classList.remove("share-ended", "blink");
+    btn.title = t("screen.start");
+    btn.setAttribute("aria-label", btn.title);
+  }, 10000);
 }
 
 function sendScreenTo(peerId) {
@@ -2587,6 +2666,7 @@ async function startScreenShare() {
   }
   screenStream = stream;
   screenSharing = true;
+  clearShareEndState();
   screenSentTo = new Set();
   recordFeatureUse("screen.share", { plan: flagContext.plan, role: flagContext.role, room: code });
   stream.getVideoTracks().forEach((track) => track.addEventListener("ended", stopScreenShare));
@@ -2609,6 +2689,7 @@ function stopScreenShare() {
     else hideScreenView();
   }
   paintScreenState();
+  paintShareEnded();
   toast(t("toast.screenStopped"));
 }
 
@@ -3034,6 +3115,33 @@ function wireMisc() {
   $("#copyLinkBtn").addEventListener("click", () => invite(false));
   $("#inviteBtn").addEventListener("click", () => invite(true));
 
+  const moreBtn = $("#moreBtn");
+  const topMenu = $("#topMenu");
+  if (moreBtn && topMenu) {
+    const closeMenu = () => {
+      topMenu.classList.add("hidden");
+      moreBtn.setAttribute("aria-expanded", "false");
+    };
+    moreBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const willOpen = topMenu.classList.contains("hidden");
+      topMenu.classList.toggle("hidden", !willOpen);
+      moreBtn.setAttribute("aria-expanded", String(willOpen));
+    });
+    document.addEventListener("click", (e) => {
+      if (topMenu.classList.contains("hidden")) return;
+      if (topMenu.contains(e.target) || moreBtn.contains(e.target)) return;
+      closeMenu();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeMenu();
+    });
+    document.addEventListener("langchange", () => {
+      topMenu.classList.add("hidden");
+      moreBtn.setAttribute("aria-expanded", "false");
+    });
+  }
+
   $("#leaveBtn").addEventListener("click", async () => {
     const ok = await confirmDialog({
       title: getLang() === "fa" ? "خروج از اتاق" : "Leave room",
@@ -3046,6 +3154,15 @@ function wireMisc() {
   });
 
   $("#reconnectBtn")?.addEventListener("click", () => safeReload());
+
+  document.addEventListener("focusin", (e) => {
+    if (e.target.matches?.("input, textarea, select")) document.body.classList.add("kb-open");
+  });
+  document.addEventListener("focusout", () => {
+    setTimeout(() => {
+      if (!document.activeElement?.matches?.("input, textarea, select")) document.body.classList.remove("kb-open");
+    }, 80);
+  });
 
   $("#sideBtn")?.addEventListener("click", () => {
     if (chatHidden) return setChatHidden(false);
@@ -3093,6 +3210,82 @@ function wireMisc() {
   });
 
   window.addEventListener("beforeunload", cleanup);
+}
+
+/* ================= instant tooltips ================= */
+function wireTooltips() {
+  const SELECT = "button, a[href], [role='button'], input[type='range'], select";
+  let tip = null;
+  let timer = 0;
+  let current = null;
+  let pressTimer = 0;
+
+  const ensure = () => {
+    if (!tip) {
+      tip = el("div", { class: "qtip", role: "tooltip" });
+      document.body.append(tip);
+    }
+    return tip;
+  };
+  const textFor = (node) =>
+    String(node.getAttribute("title") || node.getAttribute("aria-label") || node.dataset.tip || "").trim();
+  const show = (node) => {
+    const text = textFor(node);
+    if (!text) return;
+    node.dataset.tip = text;
+    if (node.hasAttribute("title")) node.removeAttribute("title");
+    const box = ensure();
+    current = node;
+    box.textContent = text;
+    const r = node.getBoundingClientRect();
+    const below = r.top < 48;
+    box.classList.toggle("below", below);
+    const half = box.offsetWidth / 2;
+    const x = Math.min(Math.max(r.left + r.width / 2, half + 6), window.innerWidth - half - 6);
+    box.style.left = `${Math.round(x)}px`;
+    box.style.top = `${Math.round(below ? r.bottom : r.top)}px`;
+    box.classList.add("on");
+  };
+  const hide = () => {
+    clearTimeout(timer);
+    clearTimeout(pressTimer);
+    current = null;
+    tip?.classList.remove("on");
+  };
+
+  document.addEventListener("pointerover", (e) => {
+    if (e.pointerType === "touch") return;
+    const node = e.target.closest?.(SELECT);
+    if (!node || node === current) return;
+    hide();
+    timer = setTimeout(() => show(node), 80);
+  });
+  document.addEventListener("pointerout", (e) => {
+    if (e.pointerType === "touch") return;
+    const node = e.target.closest?.(SELECT);
+    if (node && node === current && !node.contains(e.relatedTarget)) hide();
+  });
+  document.addEventListener("focusin", (e) => {
+    const node = e.target.closest?.(SELECT);
+    if (node?.matches(":focus-visible")) show(node);
+  });
+  document.addEventListener("focusout", hide);
+  document.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    const node = e.target.closest?.(SELECT);
+    if (!node) return;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      show(node);
+      try { navigator.vibrate?.(6); } catch {}
+      setTimeout(hide, 2400);
+    }, 420);
+  }, { passive: true });
+  ["pointerup", "pointercancel", "pointermove"].forEach((ev) => {
+    document.addEventListener(ev, () => clearTimeout(pressTimer), { passive: true });
+  });
+  document.addEventListener("click", hide, true);
+  window.addEventListener("scroll", hide, { capture: true, passive: true });
 }
 
 function cleanup() {

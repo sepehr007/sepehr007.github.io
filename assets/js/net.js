@@ -181,6 +181,9 @@ export class Net {
     this.screenOffers = new Map();  // peerId -> remote offer sdp
     this.ready = false;
     this.pendingCommands = [];
+    this.pingTimer = null;
+    this.pingRtt = 0;
+    this.lastLink = "";
 
     if (isHost) this.#initHostState();
   }
@@ -500,6 +503,7 @@ export class Net {
   async #onGuestMessage(conn, msg) {
     if (!msg || typeof msg !== "object") return;
     if (msg.t === "hello") return this.#handleHello(conn, msg);
+    if (msg.t === "ping") return this.#sendTo(conn.peer, { t: "pong", ts: msg.ts, at: msg.at });
     const member = this.members.get(conn.peer);
     if (!member) return;
 
@@ -851,6 +855,7 @@ export class Net {
         this.emit("welcome", msg);
         this.emit("members", msg.members);
         this.#flushCommands();
+        this.#startPing();
         break;
       case "deny":
         clearInterval(this.joinTimer);
@@ -877,6 +882,13 @@ export class Net {
       case "forceMute": this.emit("forceMute", msg.muted); break;
       case "voice": this.emit("voice", { id: msg.id, on: msg.on, nick: msg.nick }); break;
       case "subs": this.emit("subs", msg.cues); break;
+      case "pong": {
+        if (!Number.isFinite(msg.ts)) break;
+        const ms = Math.max(1, Math.round(Date.now() - msg.ts));
+        this.pingRtt = this.pingRtt ? Math.round(this.pingRtt * 0.6 + ms * 0.4) : ms;
+        this.emit("latency", { ms: this.pingRtt });
+        break;
+      }
       case "fileOffer": this.emit("fileOffer", { id: msg.id, name: msg.name, size: msg.size }); break;
       case "fileStart":
         this.fileRx = { id: msg.id, name: msg.name, size: Number(msg.size) || 0, chunks: [], received: 0, lastEmit: 0 };
@@ -902,6 +914,37 @@ export class Net {
     };
     send();
     setTimeout(send, 400);
+  }
+
+  #startPing() {
+    if (this.isHost || this.pingTimer) return;
+    const tick = () => {
+      if (this.dc?.readyState !== "open") return;
+      try { this.dc.send(JSON.stringify({ t: "ping", ts: Date.now() })); } catch {}
+      this.#probeLink();
+    };
+    tick();
+    this.pingTimer = setInterval(tick, 4000);
+  }
+
+  async #probeLink() {
+    const pc = this.hostConn?.pc;
+    if (!pc) return;
+    try {
+      const stats = await pc.getStats();
+      let pair = null;
+      const locals = new Map();
+      stats.forEach((s) => {
+        if (s.type === "local-candidate") locals.set(s.id, s);
+        if (s.type === "candidate-pair" && (s.selected || (s.nominated && s.state === "succeeded"))) pair = s;
+      });
+      const local = pair ? locals.get(pair.localCandidateId) : null;
+      const type = local?.candidateType || "";
+      if (type && type !== this.lastLink) {
+        this.lastLink = type;
+        this.emit("link", { relay: type === "relay", type });
+      }
+    } catch {}
   }
 
   /* ================= unified command API ================= */
@@ -1160,6 +1203,7 @@ export class Net {
     this.destroyed = true;
     clearInterval(this.presenceTimer);
     clearInterval(this.joinTimer);
+    clearInterval(this.pingTimer);
     clearTimeout(this.joinDeadline);
     if (!this.isHost) this.signal?.send({ k: "bye", from: this.selfId });
     this.signal?.close();

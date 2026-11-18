@@ -27,7 +27,7 @@ export function parseSubtitles(raw) {
 }
 
 export class Player {
-  constructor({ video, frame, onControl, onTime, onLoaded, onError, onLevels, onAudio, canControl }) {
+  constructor({ video, frame, onControl, onTime, onLoaded, onError, onLevels, onAudio, onText, canControl }) {
     this.video = video;
     this.frame = frame;
     this.onControl = onControl;
@@ -36,6 +36,7 @@ export class Player {
     this.onError = onError;
     this.onLevels = onLevels;
     this.onAudio = onAudio;
+    this.onText = onText;
     this.canControl = canControl || (() => true);
 
     this.url = "";
@@ -67,6 +68,12 @@ export class Player {
       this.#request("seek", { time: this.video.currentTime });
     });
 
+    this.video.textTracks?.addEventListener?.("addtrack", () => this.#emitText());
+    this.video.textTracks?.addEventListener?.("removetrack", () => this.#emitText());
+    this.video.textTracks?.addEventListener?.("change", () => this.#emitText());
+    this.video.audioTracks?.addEventListener?.("addtrack", () => this.#emitAudio());
+    this.video.addEventListener("loadedmetadata", () => { this.#emitText(); this.#emitAudio(); });
+
     this.timer = setInterval(() => this.#syncNow(true), 2500);
   }
 
@@ -85,6 +92,7 @@ export class Player {
     this.destroyHls();
     this.onLevels?.(null);
     this.onAudio?.(null);
+    this.onText?.(null);
     this.video.removeAttribute("src");
     this.video.load();
     this.cues = [];
@@ -139,7 +147,19 @@ export class Player {
   }
 
   #emitAudio() {
-    if (!this.hls) return;
+    if (!this.hls) {
+      const list = this.video.audioTracks;
+      if (!list || list.length < 2) { this.onAudio?.(null); return; }
+      const tracks = [];
+      let current = 0;
+      for (let i = 0; i < list.length; i++) {
+        const a = list[i];
+        tracks.push({ i, name: a.label || a.language || `Track ${i + 1}`, lang: a.language || "" });
+        if (a.enabled) current = i;
+      }
+      this.onAudio?.({ tracks, current });
+      return;
+    }
     const list = this.hls.audioTracks || [];
     if (!list.length) { this.onAudio?.(null); return; }
     const tracks = list.map((a, i) => ({ i, name: a.name || "", lang: a.lang || "" }));
@@ -147,8 +167,37 @@ export class Player {
   }
 
   setAudio(i) {
-    if (!this.hls) return;
-    this.hls.audioTrack = Number(i);
+    const n = Number(i);
+    if (this.hls) { this.hls.audioTrack = n; return; }
+    const list = this.video.audioTracks;
+    if (list) for (let k = 0; k < list.length; k++) list[k].enabled = k === n;
+  }
+
+  #emitText() {
+    const list = this.video.textTracks;
+    if (!list) { this.onText?.(null); return; }
+    const tracks = [];
+    let current = -1;
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      if (t.kind !== "subtitles" && t.kind !== "captions") continue;
+      tracks.push({ i, name: t.label || t.language || `Subtitle ${tracks.length + 1}`, lang: t.language || "" });
+      if (t.mode === "showing") current = i;
+    }
+    if (!tracks.length) { this.onText?.(null); return; }
+    this.onText?.({ tracks, current });
+  }
+
+  setTextTrack(i) {
+    const list = this.video.textTracks;
+    if (!list) return;
+    const want = Number(i);
+    for (let n = 0; n < list.length; n++) {
+      const t = list[n];
+      if (t.kind !== "subtitles" && t.kind !== "captions") continue;
+      t.mode = n === want ? "showing" : "disabled";
+    }
+    this.#emitText();
   }
 
   applyState(state) {

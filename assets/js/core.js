@@ -157,7 +157,8 @@ export const PREF_DEFAULTS = {
   brightness: 100,
   chatSize: 13.4,
   chatAlpha: 72,
-  chatBright: 100
+  chatBright: 100,
+  glass: 60
 };
 
 export function getPrefs() {
@@ -192,6 +193,10 @@ export function applyUIPrefs(prefs = getPrefs()) {
   root.setProperty("--side-alpha", String(prefs.chatAlpha / 100));
   root.setProperty("--chat-bright", String(prefs.chatBright / 100));
   root.setProperty("--chat-text-brightness", String(prefs.chatBright / 100));
+  const glass = Math.min(100, Math.max(0, Number(prefs.glass) || 0));
+  root.setProperty("--glass-blur", `${Math.round(4 + glass * 0.22)}px`);
+  root.setProperty("--glass-alpha", (0.94 - glass * 0.0032).toFixed(2));
+  root.setProperty("--glass", String(glass));
   const video = document.getElementById("video");
   if (video) video.style.filter = prefs.brightness === 100 ? "" : `brightness(${prefs.brightness / 100})`;
 }
