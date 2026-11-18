@@ -1680,12 +1680,30 @@ export function createCenter(ctx) {
     custom.append(accentWrap, accent2Wrap);
     wrap.append(custom);
     const preview = el("div", { class: "ow-theme-preview" });
-    preview.style.background = `linear-gradient(135deg,${current.accent || "#3d6bff"},${current.accent2 || "#f5b23e"})`;
-    preview.append(el("span", { text: "پیش‌نمایش گرادیان سایت" }));
+    const pvBar = el("div", { class: "ow-pv-bar" });
+    pvBar.append(el("span"), el("span"), el("span"));
+    const pvCard = el("div", { class: "ow-pv-card" });
+    const pvChip = el("span", { class: "ow-pv-chip" });
+    const pvBtn = el("span", { class: "ow-pv-btn", text: "دکمه" });
+    pvCard.append(pvChip, el("b", { text: "پیش‌نمایش زندهٔ ظاهر سایت" }), el("span", { class: "ow-pv-line" }), el("span", { class: "ow-pv-line short" }), pvBtn);
+    preview.append(pvBar, pvCard);
+    const paintPreview = () => {
+      const d = ctx.getDraft()?.site || {};
+      const a = /^#[0-9a-f]{6}$/i.test(d.accent || "") ? d.accent : "#3d6bff";
+      const b = /^#[0-9a-f]{6}$/i.test(d.accent2 || "") ? d.accent2 : "#f5b23e";
+      preview.dataset.mode = d.defaultTheme === "light" ? "light" : "dark";
+      preview.style.setProperty("--pv-a", a);
+      preview.style.setProperty("--pv-b", b);
+      preview.style.setProperty("--pv-grad", `linear-gradient(135deg,${a},${b})`);
+    };
+    paintPreview();
+    const repaint = () => queueMicrotask(paintPreview);
+    sel.addEventListener("change", repaint);
+    [c1, t1, c2, t2].forEach((inp) => inp.addEventListener("input", repaint));
     wrap.append(preview);
     section.append(wrap);
     ctx.renderInputs();
-    section.append(honesty("فونت، شعاع گوشه‌ها و افکت‌ها هنوز متغیر CSS عمومی ندارند؛ این صفحه فقط گزینه‌هایی را نشان می‌دهد که واقعاً روی سایت اعمال می‌شوند."));
+    section.append(honesty("این پیش‌نمایش فقط تم پیش‌فرض سایت را نشان می‌دهد؛ کاربرانی که اجازهٔ تم شخصی دارند ظاهر خودشان را می‌بینند. برای بستن کامل شخصی‌سازی ظاهر، در مرکز قابلیت‌ها «تم سفارشی» (account.customThemes) را خاموش کن."));
   };
 
   /* ----- seo ----- */

@@ -14,7 +14,7 @@ import { dbPut, dbGetByIndex, dbDelete, recordActivity } from "./db.js";
 import { avatarSrc } from "./avatars.js";
 import { CAPS } from "./capabilities.js";
 import { notifPrefs, notifPermission, setRoomNotif, notifyChat, notifyActivity } from "./notifications.js";
-import { loadSiteConfig, applySiteConfig, featureOn, accessOn, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
+import { loadSiteConfig, applySiteConfig, applyGlobalTheme, featureOn, accessOn, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
 import {
   resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, recordFeatureUse, readFeatureCenter
 } from "./feature-flags.js";
@@ -123,7 +123,32 @@ function refreshRuntimeFlags() {
   flagStates = resolveFlags(siteCfg, center.scopes, flagContext);
   applyFlagsToDom(siteCfg, center, flagContext, document, flagStates);
   applyFeatureFlags();
+  syncPrefsGate();
   return flagStates;
+}
+
+let prefsReady = false;
+let markThemeUI = () => {};
+let markAccentUI = () => {};
+
+function syncPrefsGate() {
+  if (!prefsReady) return;
+  const blocked = !flagOn(flagStates, "account.customThemes");
+  const note = $("#prefsLockedNote");
+  if (note) note.hidden = !blocked;
+  $("#prefCard")?.classList.toggle("prefs-locked", blocked);
+  $$("#themeRow .theme-opt").forEach((b) => { b.disabled = blocked; });
+  $$("#accentRow .accent-swatch").forEach((b) => { b.disabled = blocked; });
+  const custom = $("#accentCustom");
+  if (custom) custom.disabled = blocked;
+  $("#accentCustomWrap")?.classList.toggle("is-disabled", blocked);
+  if (blocked) {
+    if (siteCfg) applyGlobalTheme(siteCfg);
+  } else {
+    applyUIPrefs(getPrefs());
+    markThemeUI();
+    markAccentUI();
+  }
 }
 
 function applyPrivacyFlags() {
@@ -2916,6 +2941,7 @@ function wirePrefs() {
     b.dataset.a = acc.a;
     b.dataset.b = acc.b;
     b.addEventListener("click", () => {
+      if (!allow("account.customThemes", t("prefs.locked"))) return;
       savePrefs({ accent: acc.a, accent2: acc.b });
       markAccent();
     });
@@ -2942,6 +2968,7 @@ function wirePrefs() {
   if (themeRow) {
     $$(".theme-opt", themeRow).forEach((btn) => {
       btn.addEventListener("click", () => {
+        if (!allow("account.customThemes", t("prefs.locked"))) return;
         savePrefs({ theme: btn.dataset.themeOpt });
         markTheme();
       });
@@ -2952,6 +2979,7 @@ function wirePrefs() {
   const customInput = $("#accentCustom");
   if (customInput) {
     customInput.addEventListener("input", () => {
+      if (!allow("account.customThemes", t("prefs.locked"))) return;
       savePrefs({ accent: customInput.value, accent2: lightenHex(customInput.value) });
       markAccent();
     });
@@ -2980,6 +3008,7 @@ function wirePrefs() {
   markAccent();
 
   $("#prefsReset").addEventListener("click", () => {
+    if (!allow("account.customThemes", t("prefs.locked"))) return;
     const d = resetPrefs();
     $("#prefBrightness").value = String(d.brightness);
     $("#prefBrightnessVal").textContent = `${d.brightness}%`;
@@ -2999,6 +3028,11 @@ function wirePrefs() {
     markTheme();
     toast(t("prefs.resetDone"), "success");
   });
+
+  markAccentUI = markAccent;
+  markThemeUI = markTheme;
+  prefsReady = true;
+  syncPrefsGate();
 }
 
 /* ================= tabs ================= */

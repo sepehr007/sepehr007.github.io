@@ -798,15 +798,31 @@
 .ow-preset { width: 42px; height: 42px; border-radius: 12px; border: 2px solid transparent; cursor: pointer; }
 .ow-preset.active { border-color: #fff; box-shadow: 0 0 0 3px rgba(var(--brand-rgb),.35); }
 .ow-theme-preview {
+  --pv-a:#3d6bff;--pv-b:#f5b23e;--pv-grad:linear-gradient(135deg,#3d6bff,#f5b23e);
   margin-top: 16px;
-  height: 66px;
+  border: 1px solid rgba(255,255,255,.09);
   border-radius: 12px;
-  display: grid;
-  place-items: center;
-  font-size: 11.5px;
-  color: #fff;
-  text-shadow: 0 1px 8px rgba(0,0,0,.4);
+  padding: 12px 13px;
+  background: #0b0d15;
+  color: #e9edf7;
+  transition: background .2s, color .2s, border-color .2s;
 }
+.ow-theme-preview[data-mode="light"]{background:#f7f9fd;color:#121826;border-color:rgba(15,23,42,.12)}
+.ow-pv-bar{display:flex;gap:5px;margin-bottom:9px}
+.ow-pv-bar span{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.18)}
+.ow-pv-bar span:first-child{background:var(--pv-a)}
+.ow-pv-bar span:nth-child(2){background:var(--pv-b)}
+.ow-theme-preview[data-mode="light"] .ow-pv-bar span{background:rgba(15,23,42,.16)}
+.ow-theme-preview[data-mode="light"] .ow-pv-bar span:first-child{background:var(--pv-a)}
+.ow-theme-preview[data-mode="light"] .ow-pv-bar span:nth-child(2){background:var(--pv-b)}
+.ow-pv-card{display:flex;flex-direction:column;gap:6px}
+.ow-pv-card b{font-size:12px;font-weight:700}
+.ow-pv-chip{width:38px;height:12px;border-radius:99px;background:var(--pv-grad)}
+.ow-pv-line{display:block;height:6px;width:78%;border-radius:4px;background:rgba(255,255,255,.15)}
+.ow-pv-line.short{width:50%;background:rgba(255,255,255,.08)}
+.ow-theme-preview[data-mode="light"] .ow-pv-line{background:rgba(15,23,42,.15)}
+.ow-theme-preview[data-mode="light"] .ow-pv-line.short{background:rgba(15,23,42,.08)}
+.ow-pv-btn{display:inline-flex;align-items:center;justify-content:center;width:64px;height:22px;margin-top:2px;border-radius:7px;background:var(--pv-grad);color:#fff;font-size:10.5px}
 .ow-seo-preview {
   display: grid;
   gap: 4px;

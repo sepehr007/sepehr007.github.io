@@ -48,7 +48,7 @@
     <span class="brand-text">هم‌تماشا</span>
     <span class="brand-beta" data-i18n="v8.beta">بتای عمومی</span>
   </a>
-  <nav class="v8-nav" aria-label="Main">
+  <nav class="v8-nav" aria-label="ناوبری اصلی" data-i18n-aria="common.mainNav">
     <a href="#why" data-i18n="v8.navWhy">چرا هم‌تماشا؟</a>
     <a href="#features" data-i18n="v8.navFeatures">قابلیت‌ها</a>
     <a href="#how" data-i18n="v8.navHow">چطور کار می‌کند</a>
@@ -60,15 +60,15 @@
       <a class="btn btn-primary btn-sm" id="signupLink" href="auth.html?next=index.html" data-i18n="auth.register">ثبت‌نام</a>
     </div>
     <div class="user-chip hidden" id="userChip">
-      <a class="user-link" id="profileLink" href="profile.html" title="Profile">
+      <a class="user-link" id="profileLink" href="profile.html" title="پروفایل" data-i18n-title="menu.profile">
         <span class="avatar" id="userAvatar">–</span>
         <span class="u-name" id="userName"></span>
       </a>
-      <button class="icon-btn" id="logoutBtn" type="button" aria-label="Sign out">
+      <button class="icon-btn" id="logoutBtn" type="button" aria-label="خروج از حساب" data-i18n-aria="common.signout">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 17l5-5-5-5M20 12H9M12 20H5V4h7"/></svg>
       </button>
     </div>
-    <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="Change language">EN</button>
+    <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="تغییر زبان" data-i18n-aria="common.language">EN</button>
   </div>
 </header>
 
@@ -93,7 +93,7 @@
         <li data-i18n="v8.trust2">روی موبایل و لپ‌تاپ یکسان</li>
         <li data-i18n="v8.trust3">رمزها هش‌شده، نه متن ساده</li>
       </ul>
-      <div class="v8-stats" aria-label="Highlights">
+      <div class="v8-stats" aria-label="ویژگی‌ها" data-i18n-aria="common.highlights">
         <span class="stat-chip"><span class="stat-dot"></span><span data-i18n="v8.stat1">همگام‌سازی دقیق پخش</span></span>
         <span class="stat-chip" data-i18n="v8.stat2">MP4 · HLS · MKV · AVI</span>
         <span class="stat-chip" data-i18n="v8.stat3">چت روی خود فیلم</span>
@@ -152,7 +152,7 @@
         <h2 id="lobbyName">لابی من</h2>
         <p class="lobby-meta" id="lobbyMeta"></p>
       </div>
-      <button class="lobby-code" id="lobbyCopyBtn" type="button" title="Copy invite link" data-i18n-title="lobby.copy">
+      <button class="lobby-code" id="lobbyCopyBtn" type="button" title="کپی لینک دعوت" aria-label="کپی لینک دعوت" data-i18n-title="lobby.copy" data-i18n-aria="lobby.copy">
         <span id="lobbyCode">------</span>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
       </button>

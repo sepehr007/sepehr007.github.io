@@ -180,6 +180,117 @@ export const PREF_DEFAULTS = {
    them to the new brand palette once, without touching custom choices. */
 const LEGACY_ACCENTS = { "#7c5cff": "#3d6bff", "#22d3ee": "#f5b23e" };
 
+/* Appearance is per account: a theme chosen here must never leak into
+   another account using the same browser. Guests get their own bucket. */
+const LEGACY_PREFS_KEY = "wt.prefs";
+function sessionUid() {
+  const s = store.get("wt.session", null);
+  return s && typeof s.u === "string" && s.u ? s.u : "";
+}
+export function prefsKey(uid = sessionUid()) {
+  return uid ? `wt.prefs:${uid}` : "wt.prefs:guest";
+}
+function prevPrefsKey(uid = sessionUid()) {
+  return uid ? `wt.prefs.prev:${uid}` : "wt.prefs.prev:guest";
+}
+function userThemesKey(uid = sessionUid()) {
+  return uid ? `wt.themes:${uid}` : "wt.themes:guest";
+}
+export function hasPersonalTheme() {
+  return !!store.get(prefsKey(), null);
+}
+
+export const THEME_PRESETS = [
+  { id: "azure", fa: "شب آبی", en: "Azure Night", theme: "dark", accent: "#3d6bff", accent2: "#f5b23e" },
+  { id: "midnight", fa: "نیمه‌شب", en: "Midnight", theme: "dark", accent: "#818cf8", accent2: "#38bdf8" },
+  { id: "emerald", fa: "زمرد", en: "Emerald", theme: "dark", accent: "#34d399", accent2: "#f5b23e" },
+  { id: "sunset", fa: "غروب", en: "Sunset", theme: "dark", accent: "#fb7185", accent2: "#a855f7" },
+  { id: "daylight", fa: "روشن روز", en: "Daylight", theme: "light", accent: "#3d6bff", accent2: "#f5b23e" },
+  { id: "paper", fa: "کاغذ", en: "Paper", theme: "light", accent: "#0f766e", accent2: "#b45309" },
+  { id: "sky", fa: "آسمان", en: "Sky", theme: "light", accent: "#0284c7", accent2: "#f59e0b" }
+];
+
+export function normalizeHex(raw) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(raw || "").trim());
+  return m ? `#${m[1].toLowerCase()}` : "";
+}
+
+function cleanTheme(theme) {
+  return theme === "light" ? "light" : theme === "dark" ? "dark" : "";
+}
+
+export function listUserThemes() {
+  const raw = store.get(userThemesKey(), []);
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((t) => t && typeof t.id === "string" && normalizeHex(t.accent) && normalizeHex(t.accent2));
+}
+
+export function saveUserTheme(name) {
+  const clean = String(name || "").trim().replace(/\s+/g, " ").slice(0, 24);
+  if (clean.length < 2) return { ok: false, reason: "name" };
+  const p = getPrefs();
+  const list = listUserThemes();
+  const existing = list.find((t) => t.name.toLowerCase() === clean.toLowerCase());
+  const entry = {
+    id: existing?.id || `t_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+    name: clean,
+    theme: cleanTheme(p.theme) || "dark",
+    accent: p.accent,
+    accent2: p.accent2,
+    at: Date.now()
+  };
+  const next = [entry, ...list.filter((t) => t.id !== entry.id)].slice(0, 12);
+  store.set(userThemesKey(), next);
+  return { ok: true, theme: entry, replaced: !!existing };
+}
+
+export function deleteUserTheme(id) {
+  const list = listUserThemes();
+  const next = list.filter((t) => t.id !== id);
+  store.set(userThemesKey(), next);
+  return next.length !== list.length;
+}
+
+export function currentThemeId() {
+  const p = getPrefs();
+  const all = [...THEME_PRESETS, ...listUserThemes()];
+  return all.find(
+    (t) => (cleanTheme(t.theme) || "dark") === (cleanTheme(p.theme) || "dark") &&
+      normalizeHex(t.accent) === normalizeHex(p.accent) &&
+      normalizeHex(t.accent2) === normalizeHex(p.accent2)
+  )?.id || "";
+}
+
+export function applyThemeById(id) {
+  const preset = THEME_PRESETS.find((t) => t.id === id);
+  const saved = preset || listUserThemes().find((t) => t.id === id);
+  if (!saved) return null;
+  return savePrefs({ theme: cleanTheme(saved.theme) || "dark", accent: saved.accent, accent2: saved.accent2 });
+}
+
+export function hasPreviousTheme() {
+  const prev = store.get(prevPrefsKey(), null);
+  return !!(prev && normalizeHex(prev.accent) && normalizeHex(prev.accent2));
+}
+
+export function restorePreviousTheme() {
+  const prev = store.get(prevPrefsKey(), null);
+  if (!prev || !normalizeHex(prev.accent) || !normalizeHex(prev.accent2)) return null;
+  const current = getPrefs();
+  store.set(prevPrefsKey(), { theme: current.theme, accent: current.accent, accent2: current.accent2 });
+  const next = {
+    ...current,
+    theme: cleanTheme(prev.theme) || "dark",
+    accent: normalizeHex(prev.accent),
+    accent2: normalizeHex(prev.accent2),
+    palette: 2
+  };
+  store.set(prefsKey(), next);
+  applyUIPrefs(next);
+  return next;
+}
+
+
 function hexToRgbTriplet(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
   if (!m) return "";
@@ -188,7 +299,19 @@ function hexToRgbTriplet(hex) {
 }
 
 export function getPrefs() {
-  const saved = store.get("wt.prefs", null);
+  const key = prefsKey();
+  let saved = store.get(key, null);
+  if (!saved) {
+    /* one-time adoption of the old device-wide record for whoever is
+       signed in now; every later account starts from the site defaults */
+    const legacy = store.get(LEGACY_PREFS_KEY, null);
+    if (legacy && typeof legacy === "object" && !store.get("wt.prefs.migrated", false)) {
+      saved = legacy;
+      store.set(key, { ...legacy, palette: 2 });
+      store.del(LEGACY_PREFS_KEY);
+      store.set("wt.prefs.migrated", true);
+    }
+  }
   const merged = { ...PREF_DEFAULTS, ...(saved && typeof saved === "object" ? saved : {}) };
   if (saved && saved.palette !== 2) {
     if (LEGACY_ACCENTS[merged.accent]) merged.accent = LEGACY_ACCENTS[merged.accent];
@@ -198,14 +321,25 @@ export function getPrefs() {
 }
 
 export function savePrefs(patch) {
-  const next = { ...getPrefs(), ...patch, palette: 2 };
-  store.set("wt.prefs", next);
+  const clean = { ...patch };
+  if (clean.accent) clean.accent = normalizeHex(clean.accent) || patch.accent;
+  if (clean.accent2) clean.accent2 = normalizeHex(clean.accent2) || patch.accent2;
+  const current = getPrefs();
+  const next = { ...current, ...clean, palette: 2 };
+  const themeChanged = ["theme", "accent", "accent2"].some(
+    (k) => k in clean && clean[k] !== current[k]
+  );
+  if (themeChanged) {
+    store.set(prevPrefsKey(), { theme: current.theme, accent: current.accent, accent2: current.accent2 });
+  }
+  store.set(prefsKey(), next);
   applyUIPrefs(next);
   return next;
 }
 
 export function resetPrefs() {
-  store.del("wt.prefs");
+  store.del(prefsKey());
+  store.del(LEGACY_PREFS_KEY);
   applyUIPrefs(PREF_DEFAULTS);
   return { ...PREF_DEFAULTS };
 }

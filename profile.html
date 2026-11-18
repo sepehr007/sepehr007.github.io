@@ -33,11 +33,11 @@
     <span class="brand-text">هم‌تماشا</span>
   </a>
   <div class="header-actions">
-    <a class="btn btn-ghost btn-sm" href="./" aria-label="Home">
+    <a class="btn btn-ghost btn-sm" href="./" aria-label="خانه" data-i18n-aria="common.home">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>
       <span data-i18n="common.back">بازگشت</span>
     </a>
-    <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="Change language">EN</button>
+    <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="تغییر زبان" data-i18n-aria="common.language">EN</button>
   </div>
 </header>
 
@@ -206,17 +206,77 @@
 
       <section class="card profile-card" id="appearanceCard">
         <h2 data-i18n="profile.appearance">ظاهر</h2>
-        <div class="field">
-          <span data-i18n="profile.accent">رنگ لهجه</span>
-          <div class="palette-row">
-            <div class="accent-row" id="accentRow" role="radiogroup" aria-label="Accent color"></div>
-            <label class="accent-custom" id="accentCustomWrap" data-i18n-title="prefs.custom" title="رنگ دلخواه">
-              <input type="color" id="accentCustom" aria-label="Custom accent color">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            </label>
+        <p class="hint" data-i18n="profile.appearanceNote">تم فقط برای حساب خودت ذخیره می‌شود و ظاهر بقیهٔ کاربران را تغییر نمی‌دهد.</p>
+        <div id="appearanceBody">
+          <div class="field">
+            <span data-i18n="profile.themeMode">حالت پایه</span>
+            <div class="theme-mode-row" id="themeRow" role="group" aria-label="حالت ظاهر" data-i18n-aria="prefs.themeMode">
+              <button class="theme-mode" type="button" data-theme-mode="dark" data-i18n="profile.themeDark">تیره</button>
+              <button class="theme-mode" type="button" data-theme-mode="light" data-i18n="profile.themeLight">روشن</button>
+            </div>
           </div>
+
+          <div class="field">
+            <span data-i18n="profile.presets">تم‌های آماده</span>
+            <div class="theme-preset-grid" id="themePresetGrid"></div>
+          </div>
+
+          <div class="theme-preview" id="themePreview" role="img" aria-label="پیش‌نمایش تم" data-i18n-aria="prefs.themePreview">
+            <div class="tp-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+            <div class="tp-body" aria-hidden="true">
+              <span class="tp-chip"></span>
+              <span class="tp-line"></span>
+              <span class="tp-line short"></span>
+              <span class="tp-btn"></span>
+            </div>
+            <span class="tp-name" id="themePreviewName"></span>
+          </div>
+
+          <div class="field">
+            <span data-i18n="profile.accent">رنگ لهجه</span>
+            <div class="palette-row">
+              <div class="accent-row" id="accentRow" role="radiogroup" aria-label="رنگ مکمل" data-i18n-aria="prefs.accent"></div>
+              <label class="accent-custom" id="accentCustomWrap" data-i18n-title="prefs.custom" title="رنگ دلخواه">
+                <input type="color" id="accentCustom" aria-label="رنگ مکمل دلخواه" data-i18n-aria="prefs.customAccent">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              </label>
+            </div>
+            <div class="hex-row">
+              <label class="hex-field">
+                <span data-i18n="profile.hexAccent">کد رنگ لهجه</span>
+                <input id="accentHex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#3d6bff">
+              </label>
+              <label class="hex-field">
+                <span data-i18n="profile.hexAccent2">کد رنگ دوم</span>
+                <input id="accent2Hex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#f5b23e">
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <span data-i18n="profile.saveAsTheme">ذخیره به‌عنوان تم شخصی</span>
+            <div class="theme-save-row">
+              <input id="themeName" type="text" maxlength="24" data-i18n-ph="profile.themeNamePh" placeholder="مثلاً شب آرام">
+              <button class="btn btn-primary btn-sm" id="themeSave" type="button" data-i18n="profile.themeSave">ذخیره</button>
+            </div>
+            <p class="hint" data-i18n="profile.themeSaveHint">نام ۲ تا ۲۴ کاراکتر؛ تم فعلی با همین نام ذخیره می‌شود (حداکثر ۱۲ تم).</p>
+          </div>
+
+          <div class="field" id="savedThemesWrap">
+            <span data-i18n="profile.savedThemes">تم‌های من</span>
+            <ul class="saved-themes" id="savedThemes"></ul>
+            <p class="hint hidden" id="savedThemesEmpty" data-i18n="profile.savedThemesEmpty">هنوز تم شخصی ذخیره نکردی.</p>
+          </div>
+
+          <div class="appearance-actions">
+            <button class="btn btn-secondary btn-sm" id="themeRestorePrev" type="button" data-i18n="profile.themeRestore">بازگشت به تم قبلی</button>
+            <button class="link-btn" id="lookReset" type="button" data-i18n="profile.lookReset">بازنشانی ظاهر</button>
+          </div>
+          <p class="form-msg" id="appearanceMsg" role="alert"></p>
         </div>
-        <button class="link-btn" id="lookReset" type="button" data-i18n="profile.lookReset">بازنشانی ظاهر</button>
+        <div class="appearance-locked hidden" id="appearanceLocked">
+          <p class="hint" data-i18n="profile.appearanceLocked">شخصی‌سازی ظاهر توسط مدیر سایت خاموش شده؛ ظاهر پیش‌فرض سایت نمایش داده می‌شود.</p>
+        </div>
       </section>
     </div>
   </div>

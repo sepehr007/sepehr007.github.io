@@ -1,7 +1,6 @@
 /* Design tokens live in design-system.css, which every page loads first. */
 *{margin:0;padding:0;box-sizing:border-box}
 html{color-scheme:dark}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
 html,body{height:100%}
 body{
   font-family:var(--font);
@@ -770,6 +769,13 @@ html[dir="rtl"] .avatar-choice.active::after{right:auto;left:5px}
 .accent-swatch{width:26px;height:26px;border-radius:50%;border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);transition:transform .15s,border-color .15s;padding:0}
 .accent-swatch:hover{transform:scale(1.1)}
 .accent-swatch.active{border-color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+.pref-card.prefs-locked .theme-row,
+.pref-card.prefs-locked .palette-row{opacity:.5}
+.pref-card.prefs-locked .theme-opt,
+.pref-card.prefs-locked .accent-swatch{cursor:not-allowed}
+.accent-custom.is-disabled{opacity:.45;pointer-events:none}
+.pref-note{margin:10px 0 0}
+#prefsLockedNote{color:var(--note-error)}
 .pref-row{display:grid;grid-template-columns:1fr 120px 44px;align-items:center;gap:10px;margin-top:10px}
 .pref-row label{font-size:12px;color:var(--text-dim)}
 .pref-row input[type=range]{width:100%;padding:0;height:4px;border:none;border-radius:99px;background:rgba(255,255,255,.18);appearance:none;accent-color:var(--accent);cursor:pointer}
@@ -842,22 +848,7 @@ html[data-theme="light"] .pref-live-text{color:#303a4d}
 }
 
 /* ============ light theme ============ */
-html[data-theme="light"]{
-  color-scheme:light;
-  --bg:#f3f5fa;
-  --bg-2:#e9edf6;
-  --panel:rgba(15,23,42,.045);
-  --panel-strong:rgba(15,23,42,.075);
-  --border:rgba(15,23,42,.1);
-  --border-strong:rgba(15,23,42,.18);
-  --text:#121826;
-  --text-dim:#4a5468;
-  --text-faint:#67718a;
-  --success:#047857;
-  --warn:#b45309;
-  --danger:#dc2626;
-  --shadow:0 22px 50px -24px rgba(15,23,42,.22);
-}
+/* Token values live in design-system.css; component overrides stay here. */
 html[data-theme="light"] .bg-aurora{background:
   radial-gradient(1100px 650px at 80% -10%,rgba(var(--brand-rgb),.16),transparent 65%),
   radial-gradient(900px 600px at 10% 110%,rgba(var(--brand-2-rgb),.13),transparent 65%),

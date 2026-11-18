@@ -1,7 +1,9 @@
 import { initI18n, t } from "./i18n.js";
 import {
   $, $$, el, toast, initials, applyUIPrefs, getPrefs, savePrefs, resetPrefs,
-  ACCENTS, lightenHex, registerServiceWorker, RateGuard
+  ACCENTS, lightenHex, registerServiceWorker, RateGuard,
+  THEME_PRESETS, normalizeHex, listUserThemes, saveUserTheme, deleteUserTheme,
+  currentThemeId, applyThemeById, hasPreviousTheme, restorePreviousTheme
 } from "./core.js";
 import {
   currentUser, getProfile, saveProfile, changeUsername, changePassword,
@@ -11,7 +13,7 @@ import {
 import { AVATAR_PRESETS, avatarId, avatarSrc, presetValue } from "./avatars.js";
 import { dbGetByIndex } from "./db.js";
 import { subscriptionStatus } from "./plans.js";
-import { loadSiteConfig, applySiteConfig, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
+import { loadSiteConfig, applySiteConfig, applyGlobalTheme, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
 import { resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, recordFeatureUse, readFeatureCenter } from "./feature-flags.js";
 import { capabilityRows, deviceSummary } from "./capabilities.js";
 import {
@@ -40,6 +42,7 @@ function refreshFlags(me) {
   const center = readFeatureCenter();
   flagStates = resolveFlags(siteCfg, center.scopes, flagContext);
   applyFlagsToDom(siteCfg, center, flagContext, document, flagStates);
+  syncAppearanceGate();
   return flagStates;
 }
 
@@ -112,6 +115,7 @@ async function boot(me) {
     renderDeviceCard();
     refreshNotifUI();
     paintMemberSince();
+    paintAppearance();
   });
 }
 
@@ -527,44 +531,220 @@ function renderFriends() {
 }
 
 /* ---------- appearance ---------- */
+let appearanceReady = false;
+let paintAppearance = () => {};
+
+function syncAppearanceGate() {
+  if (!appearanceReady) return;
+  const blocked = !allow("account.customThemes");
+  $("#appearanceBody")?.classList.toggle("hidden", blocked);
+  $("#appearanceLocked")?.classList.toggle("hidden", !blocked);
+  if (blocked) {
+    if (siteCfg) applyGlobalTheme(siteCfg);
+    $("#appearanceMsg").textContent = "";
+  } else {
+    applyUIPrefs(getPrefs());
+    paintAppearance();
+  }
+}
+
 function wireAppearance() {
-  const row = $("#accentRow");
-  const paint = () => {
-    const prefs = getPrefs();
-    const preset = ACCENTS.some((a) => a.a === prefs.accent);
-    [...row.children].forEach((b) => b.classList.toggle("active", b.dataset.a === prefs.accent));
-    const input = $("#accentCustom");
-    const wrap = $("#accentCustomWrap");
-    if (input) input.value = prefs.accent;
-    if (wrap) {
-      wrap.classList.toggle("active", !preset);
-      wrap.style.background = preset ? "" : `linear-gradient(135deg,${prefs.accent},${prefs.accent2})`;
-    }
+  const body = $("#appearanceBody");
+  if (!body) return;
+  appearanceReady = true;
+  const msg = $("#appearanceMsg");
+  const note = (text, kind = "") => { if (msg) { msg.textContent = text; msg.className = `form-msg ${kind}`.trim(); } };
+  const guard = () => {
+    if (allow("account.customThemes")) return true;
+    toast(t("profile.appearanceLockedToast"), "error");
+    return false;
   };
+
+  const modeRow = $("#themeRow");
+  const presetGrid = $("#themePresetGrid");
+  const accentRow = $("#accentRow");
+  const savedList = $("#savedThemes");
+  const savedEmpty = $("#savedThemesEmpty");
+  const restoreBtn = $("#themeRestorePrev");
+  const hex1 = $("#accentHex");
+  const hex2 = $("#accent2Hex");
+
+  for (const preset of THEME_PRESETS) {
+    const b = el("button", { class: "theme-preset", type: "button", "data-preset": preset.id });
+    const chip = el("span", { class: "tp-chip-lg", "aria-hidden": "true" });
+    chip.style.background = `linear-gradient(135deg,${preset.accent},${preset.accent2})`;
+    const name = el("span", { class: "tp-preset-name", text: t(`profile.preset.${preset.id}`) });
+    const mode = el("span", { class: "tp-preset-mode", text: preset.theme === "light" ? t("profile.themeLight") : t("profile.themeDark") });
+    b.append(chip, name, mode);
+    b.addEventListener("click", () => {
+      if (!guard()) return;
+      applyThemeById(preset.id);
+      paint();
+      note(t("profile.themeApplied"), "ok");
+    });
+    presetGrid.append(b);
+  }
+
   for (const acc of ACCENTS) {
     const b = el("button", { class: "accent-swatch", type: "button", "data-a": acc.a, title: acc.a });
     b.style.background = `linear-gradient(135deg,${acc.a},${acc.b})`;
     b.addEventListener("click", () => {
-      if (!allow("account.customThemes")) return;
+      if (!guard()) return;
       savePrefs({ accent: acc.a, accent2: acc.b });
       paint();
     });
-    row.append(b);
+    accentRow.append(b);
   }
+
+  [...modeRow.querySelectorAll(".theme-mode")].forEach((b) => {
+    b.addEventListener("click", () => {
+      if (!guard()) return;
+      savePrefs({ theme: b.dataset.themeMode });
+      paint();
+      note(t("profile.themeApplied"), "ok");
+    });
+  });
+
   const custom = $("#accentCustom");
   if (custom) {
     custom.addEventListener("input", () => {
-      if (!allow("account.customThemes")) return;
+      if (!guard()) return;
       savePrefs({ accent: custom.value, accent2: lightenHex(custom.value) });
       paint();
     });
   }
+
+  function wireHex(input, key) {
+    if (!input) return;
+    const commit = (silent) => {
+      if (!guard()) { paint(); return; }
+      const hex = normalizeHex(input.value);
+      if (!hex) {
+        if (!silent) {
+          note(t("profile.hexInvalid"), "err");
+          paint();
+        }
+        return;
+      }
+      if (hex !== getPrefs()[key]) savePrefs({ [key]: hex });
+      paint();
+      if (!silent) note(t("profile.themeApplied"), "ok");
+    };
+    input.addEventListener("input", () => commit(true));
+    input.addEventListener("change", () => commit(false));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(false); }
+    });
+  }
+  wireHex(hex1, "accent");
+  wireHex(hex2, "accent2");
+
+  function renderSaved() {
+    savedList.textContent = "";
+    const items = listUserThemes();
+    savedEmpty.classList.toggle("hidden", items.length > 0);
+    const activeId = currentThemeId();
+    for (const th of items) {
+      const li = el("li", { class: "saved-theme" });
+      if (th.id === activeId) li.classList.add("active");
+      const chip = el("span", { class: "tp-chip-lg", "aria-hidden": "true" });
+      chip.style.background = `linear-gradient(135deg,${th.accent},${th.accent2})`;
+      const meta = el("div", { class: "saved-theme-meta" });
+      meta.append(
+        el("strong", { text: th.name }),
+        el("span", { class: "hint", text: th.theme === "light" ? t("profile.themeLight") : t("profile.themeDark") })
+      );
+      const use = el("button", { class: "btn btn-secondary btn-sm", type: "button", text: t("profile.themeApply") });
+      use.addEventListener("click", () => {
+        if (!guard()) return;
+        applyThemeById(th.id);
+        paint();
+        note(t("profile.themeApplied"), "ok");
+      });
+      const del = el("button", { class: "link-btn saved-del", type: "button", text: t("profile.themeDelete") });
+      del.addEventListener("click", () => {
+        if (!guard()) return;
+        deleteUserTheme(th.id);
+        paint();
+        note(t("profile.themeDeleted"), "ok");
+      });
+      li.append(chip, meta, use, del);
+      savedList.append(li);
+    }
+  }
+
+  function paint() {
+    const prefs = getPrefs();
+    const cur = currentThemeId();
+    [...modeRow.querySelectorAll(".theme-mode")].forEach((b) => {
+      const on = b.dataset.themeMode === prefs.theme;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    [...presetGrid.children].forEach((b) => {
+      const on = b.dataset.preset === cur;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    const presetAccent = ACCENTS.some((a) => a.a === prefs.accent);
+    [...accentRow.children].forEach((b) => {
+      const on = b.dataset.a === prefs.accent;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    const wrap = $("#accentCustomWrap");
+    if (custom) custom.value = prefs.accent;
+    if (wrap) {
+      wrap.classList.toggle("active", !presetAccent);
+      wrap.style.background = presetAccent ? "" : `linear-gradient(135deg,${prefs.accent},${prefs.accent2})`;
+    }
+    if (hex1 && document.activeElement !== hex1) hex1.value = prefs.accent;
+    if (hex2 && document.activeElement !== hex2) hex2.value = prefs.accent2;
+    const saved = listUserThemes().find((x) => x.id === cur);
+    const preset = THEME_PRESETS.find((p) => p.id === cur);
+    $("#themePreviewName").textContent = saved
+      ? saved.name
+      : preset
+        ? t(`profile.preset.${preset.id}`)
+        : t("profile.themeCustom");
+    $("#themePreview").dataset.mode = prefs.theme === "light" ? "light" : "dark";
+    restoreBtn.disabled = !hasPreviousTheme();
+    renderSaved();
+  }
+
+  paintAppearance = paint;
   paint();
+  syncAppearanceGate();
+
+  $("#themeSave").addEventListener("click", () => {
+    if (!guard()) return;
+    const res = saveUserTheme($("#themeName").value);
+    if (!res.ok) {
+      note(res.reason === "name" ? t("profile.themeNameInvalid") : t("profile.themeSaveFail"), "err");
+      return;
+    }
+    $("#themeName").value = "";
+    paint();
+    note(res.replaced ? t("profile.themeReplaced") : t("profile.themeSaved"), "ok");
+  });
+  $("#themeName").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); $("#themeSave").click(); }
+  });
+  restoreBtn.addEventListener("click", () => {
+    if (!guard()) return;
+    if (!restorePreviousTheme()) {
+      note(t("profile.themeNoPrev"), "err");
+      paint();
+      return;
+    }
+    paint();
+    note(t("profile.themeRestored"), "ok");
+  });
   $("#lookReset").addEventListener("click", () => {
-    if (!allow("account.customThemes")) return;
+    if (!guard()) return;
     resetPrefs();
     paint();
-    toast(t("profile.lookResetDone"), "success");
+    note(t("profile.lookResetDone"), "ok");
   });
 }
 

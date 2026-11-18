@@ -1,4 +1,4 @@
-import { store } from "./core.js";
+import { store, hasPersonalTheme } from "./core.js";
 import { apiFetch } from "./api.js";
 import { renderPricingSection } from "./pricing.js";
 import { FLAGS, normalizeFeatureRules, scheduleState, isFlagOn } from "./feature-flags.js";
@@ -349,6 +349,29 @@ function announceDismissKey(text) {
   return `wt.announce.${h}`;
 }
 
+export function applyGlobalTheme(cfg = current, root = document) {
+  const theme = cfg?.site?.defaultTheme === "light" ? "light" : "dark";
+  const accent = /^#[0-9a-f]{6}$/i.test(cfg?.site?.accent || "") ? cfg.site.accent : "#3d6bff";
+  const accent2 = /^#[0-9a-f]{6}$/i.test(cfg?.site?.accent2 || "") ? cfg.site.accent2 : "#f5b23e";
+  root.documentElement.dataset.theme = theme;
+  const rootStyle = root.documentElement.style;
+  rootStyle.setProperty("--accent", accent);
+  rootStyle.setProperty("--accent-2", accent2);
+  const toRgb = (hex) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+    if (!m) return "";
+    const n = parseInt(m[1], 16);
+    return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+  };
+  const rgb1 = toRgb(accent);
+  const rgb2 = toRgb(accent2);
+  if (rgb1) rootStyle.setProperty("--brand-rgb", rgb1);
+  if (rgb2) rootStyle.setProperty("--brand-2-rgb", rgb2);
+  rootStyle.setProperty("--grad", `linear-gradient(135deg,${accent} 0%,#38bdf8 58%,${accent2} 100%)`);
+  const meta = root.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = theme === "light" ? "#f3f5fa" : "#07080d";
+}
+
 export function applySiteConfig(cfg = current, { root = document } = {}) {
   const lang = root.documentElement.lang === "en" ? "en" : "fa";
   const fa = lang === "fa";
@@ -366,25 +389,7 @@ export function applySiteConfig(cfg = current, { root = document } = {}) {
   const ogSite = root.querySelector('meta[property="og:site_name"]');
   if (ogSite) ogSite.content = name;
 
-  if (!store.get("wt.prefs", null)) {
-    root.documentElement.dataset.theme = cfg.site.defaultTheme;
-    const rootStyle = root.documentElement.style;
-    rootStyle.setProperty("--accent", cfg.site.accent);
-    rootStyle.setProperty("--accent-2", cfg.site.accent2);
-    const toRgb = (hex) => {
-      const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
-      if (!m) return "";
-      const n = parseInt(m[1], 16);
-      return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
-    };
-    const rgb1 = toRgb(cfg.site.accent);
-    const rgb2 = toRgb(cfg.site.accent2);
-    if (rgb1) rootStyle.setProperty("--brand-rgb", rgb1);
-    if (rgb2) rootStyle.setProperty("--brand-2-rgb", rgb2);
-    rootStyle.setProperty("--grad", `linear-gradient(135deg,${cfg.site.accent} 0%,#38bdf8 58%,${cfg.site.accent2} 100%)`);
-    const meta = root.querySelector('meta[name="theme-color"]');
-    if (meta) meta.content = cfg.site.defaultTheme === "light" ? "#f3f5fa" : "#07080d";
-  }
+  if (!hasPersonalTheme()) applyGlobalTheme(cfg, root);
 
   root.querySelectorAll("[data-wt-announce]").forEach((n) => n.remove());
   const text = fa ? cfg.announcement.textFa : cfg.announcement.textEn;
@@ -402,7 +407,7 @@ export function applySiteConfig(cfg = current, { root = document } = {}) {
       const close = document.createElement("button");
       close.type = "button";
       close.className = "site-announce-x";
-      close.setAttribute("aria-label", "Close");
+      close.setAttribute("aria-label", document.documentElement.lang === "en" ? "Close" : "بستن");
       close.textContent = "×";
       close.addEventListener("click", () => {
         try { sessionStorage.setItem(key, "1"); } catch {}
