@@ -3306,6 +3306,18 @@ export function createCenter(ctx) {
     refreshAnalytics();
   }
 
+  function registerPage(def, renderer) {
+    if (!def || !def.id || !def.view) return;
+    if (def.group && !NAV_GROUPS.some((g) => g.id === def.group)) {
+      NAV_GROUPS.push({ id: def.group, label: def.groupLabel || def.group });
+    }
+    if (!PAGE_DEFS.some((p) => p.id === def.id)) {
+      PAGE_DEFS.push({ kind: "dynamic", keywords: "", ...def });
+    }
+    if (typeof renderer === "function") renderers[def.id] = renderer;
+    buildNav();
+  }
+
   function init() {
     buildNav();
     initChrome();
@@ -3315,5 +3327,5 @@ export function createCenter(ctx) {
     refreshAll();
   }
 
-  return { init, renderPage, refreshDashboard, refreshAnalytics, refreshAll, ensureExtras, showModal, closeModal };
+  return { init, renderPage, refreshDashboard, refreshAnalytics, refreshAll, ensureExtras, showModal, closeModal, registerPage };
 }

@@ -1,4 +1,5 @@
 import { store } from "./core.js";
+import { apiFetch } from "./api.js";
 import { renderPricingSection } from "./pricing.js";
 import { FLAGS, normalizeFeatureRules, scheduleState, isFlagOn } from "./feature-flags.js";
 
@@ -92,6 +93,7 @@ let loaded = false;
 let loading = null;
 let fromPreview = false;
 let fromLive = false;
+let fromServer = false;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -120,8 +122,8 @@ export function normalizeSiteConfig(raw) {
   };
   merged.version = num(merged.version, 1, 1, 9999);
   merged.limits.defaultCapacity = num(merged.limits.defaultCapacity, 6, 2, 24);
-  merged.limits.maxCapacity = num(merged.limits.maxCapacity, 24, merged.limits.defaultCapacity, 24);
-  merged.limits.chatPerWindow = num(merged.limits.chatPerWindow, 6, 2, 30);
+  merged.limits.maxCapacity = num(merged.limits.maxCapacity, 24, merged.limits.defaultCapacity, 48);
+  merged.limits.chatPerWindow = num(merged.limits.chatPerWindow, 6, 2, 60);
   merged.limits.chatWindowMs = num(merged.limits.chatWindowMs, 3000, 1000, 30000);
   merged.limits.avatarChanges = num(merged.limits.avatarChanges, 3, 1, 20);
   merged.limits.avatarWindowMs = num(merged.limits.avatarWindowMs, 5000, 1000, 30000);
@@ -188,6 +190,31 @@ export async function loadSiteConfig() {
         fromPreview = true;
       }
     }
+    if (!fromPreview) {
+      try {
+        const remote = await apiFetch("/settings/public", { auth: false, token: false, timeoutMs: 2000 });
+        const groups = {};
+        for (const key of ["site", "announcement", "maintenance", "limits", "plans", "billing", "chat", "player", "subtitle", "upload", "notify", "security", "room"]) {
+          if (remote?.[key] && typeof remote[key] === "object") groups[key] = remote[key];
+        }
+        if (Object.keys(groups).length) {
+          cfg = normalizeSiteConfig(merge(cfg, groups));
+          fromServer = true;
+        }
+      } catch {}
+      try {
+        const featureData = await apiFetch("/features", { auth: true, timeoutMs: 2000 });
+        if (featureData?.flags && typeof featureData.flags === "object") {
+          for (const [pathName, enabled] of Object.entries(featureData.flags)) {
+            const [root, leaf] = pathName.split(".");
+            if (!root || !leaf) continue;
+            if (!cfg[root] || typeof cfg[root] !== "object") cfg[root] = {};
+            cfg[root][leaf] = enabled !== false;
+          }
+          fromServer = true;
+        }
+      } catch {}
+    }
     current = cfg;
     loaded = true;
     return current;
@@ -201,6 +228,10 @@ export function isConfigPreview() {
 
 export function isConfigLive() {
   return fromLive;
+}
+
+export function isConfigServer() {
+  return fromServer;
 }
 
 let liveChannel = null;

@@ -502,6 +502,48 @@ const operations = String.raw`
   CREATE INDEX IF NOT EXISTS idx_backup_created ON backup_runs(created_at DESC);
 `;
 
+const governance = String.raw`
+  CREATE TABLE IF NOT EXISTS feature_overrides (
+    id TEXT PRIMARY KEY,
+    feature_key TEXT NOT NULL,
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('global','user','role','server','room','plan')),
+    scope_id TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL CHECK (enabled IN (0,1)),
+    config_json TEXT NOT NULL DEFAULT '{}',
+    note TEXT NOT NULL DEFAULT '',
+    updated_by TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL,
+    UNIQUE (feature_key, scope_type, scope_id)
+  );
+  CREATE TABLE IF NOT EXISTS feature_schedule (
+    id TEXT PRIMARY KEY,
+    feature_key TEXT NOT NULL,
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('global','user','role','server','room','plan')),
+    scope_id TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL CHECK (enabled IN (0,1)),
+    note TEXT NOT NULL DEFAULT '',
+    effective_at INTEGER NOT NULL,
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    applied_at INTEGER
+  );
+  CREATE TABLE IF NOT EXISTS feature_history (
+    id TEXT PRIMARY KEY,
+    feature_key TEXT NOT NULL,
+    scope_type TEXT NOT NULL DEFAULT 'global',
+    scope_id TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL,
+    source TEXT NOT NULL DEFAULT 'manual',
+    actor TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_feature_overrides_scope ON feature_overrides(scope_type, scope_id);
+  CREATE INDEX IF NOT EXISTS idx_feature_schedule_due ON feature_schedule(applied_at, effective_at);
+  CREATE INDEX IF NOT EXISTS idx_feature_history_key ON feature_history(feature_key, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_feature_history_created ON feature_history(created_at DESC);
+`;
+
 function seed(db) {
   const now = Date.now();
   const roles = [
@@ -634,6 +676,13 @@ export const MIGRATIONS = [
     name: "users-last-login-column",
     up(db) {
       addColumn(db, "users", "last_login_at", "INTEGER");
+    }
+  },
+  {
+    version: 8,
+    name: "feature-governance",
+    up(db) {
+      db.exec(governance);
     }
   }
 ];

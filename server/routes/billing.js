@@ -6,6 +6,7 @@ import { requireAuth } from "./auth.js";
 import { ensureStore } from "../userStore.js";
 import { sqlPlans, sqlSubscriptionState, sqlCreateOrder } from "../stores/billing.js";
 import { audit } from "../audit.js";
+import { resolveFeatureState, isEnabled } from "../features.js";
 
 const DEFAULT_PLANS = [
   {
@@ -80,6 +81,10 @@ export default async function billingRoutes(app) {
   });
 
   app.post("/orders", { preHandler: requireAuth }, async (req, reply) => {
+    const gate = await resolveFeatureState({ userId: req.auth.userId, role: req.auth.role });
+    if (!isEnabled(gate, "features.subscriptionsEnabled")) {
+      return fail(reply, 403, "subscriptions_closed", "Subscriptions are disabled by the site owner.");
+    }
     const slug = String(req.body?.planId || req.body?.planSlug || "").trim().toLowerCase();
     if (!dbReady()) {
       if (!(await ensureStore())) return fail(reply, 503, "db_unavailable", "Database is not connected.");

@@ -8,6 +8,7 @@ import { readModLog, logModeration, clearModLog } from "./modlog.js";
 import { apiFetch, getApiBase } from "./api.js";
 import { logAudit } from "./owner-audit.js";
 import { createCenter, getUi, setUi } from "./owner-center.js";
+import { installGodPages } from "./owner-god.js";
 import { pageDef } from "./owner-registry.js";
 
 const DRAFT_KEY = "wt.ownerDraft";
@@ -886,6 +887,8 @@ const center = createCenter({
   lockConsole,
   getApiBase
 });
+
+installGodPages(center);
 
 function renderAll() {
   configureGate();

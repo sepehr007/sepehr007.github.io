@@ -190,6 +190,10 @@ server/                 بک‌اند Fastify: احراز هویت، لابی، 
 server/database/        اسکیمای ~۴۰ جدول، مهاجرت نسخه‌دار، تراکنش، پشتیبان و خروجی
 server/stores/          کوئری‌های SQLite برای لابی، اتاق/پیام و مالی
 server/routes/admin.js  API دیتابیس و حسابرسی مخصوص مالک
+server/routes/platform.js  API داشبورد مالک: کاربران، پیام‌ها، گزارش‌ها، مالی، آمار، ذخیره‌سازی، تنظیمات و قابلیت‌ها
+server/features.js      موتور کنترل قابلیت: دامنه، وابستگی، زمان‌بندی و تاریخچه
+server/platformSettings.js  رجیستری و اعتبارسنجی تنظیمات سایت ذخیره‌شده در دیتابیس
+server/adminGuard.js    محافظ نقش مالک و نرخ درخواست مسیرهای پنل
 assets/data/site-config.json  تنظیمات سراسری منتشرشده (با کنسول مالک کامیت می‌شود)
 assets/js/core.js       ابزارها، اعتبارسنجی لینک، Toast
 assets/js/i18n.js       مترجم فا/EN
@@ -204,6 +208,7 @@ assets/js/voice.js      صدای زنده
 assets/js/room.js       رابط اتاق
 assets/js/landing.js    رابط صفحه اول
 assets/js/owner.js      منطق کنسول مالک، تأیید توکن، پیش‌نویس و انتشار GitHub
+assets/js/owner-god.js  صفحات کنترل سرور: نمای پلتفرم، کاربران، پیام‌ها، مالی، قابلیت‌ها، تنظیمات و پشتیبان
 assets/js/site-config.js  بارگذاری/اعتبارسنجی/اعمال تنظیمات سراسری + پیش‌نمایش مالک
 assets/js/modlog.js     گزارش محلی رخدادهای مدیریتی
 sw.js / manifest.webmanifest   PWA

@@ -7,13 +7,15 @@ import websocket from "@fastify/websocket";
 import { connectDB, dbReady, dbState, disconnectDB } from "./db.js";
 import { storeState } from "./userStore.js";
 import { connectRedis, redisReady, redisState, createRateLimiter } from "./redis.js";
-import { loadFeatureState, isEnabled, summarizeFeatures } from "./features.js";
+import { resolveFeatureState, isEnabled, summarizeFeatures, featureStatus } from "./features.js";
+import { publicPlatformSettings, settingNumber } from "./platformSettings.js";
 import { mailState } from "./mailer.js";
 import { smsState } from "./sms.js";
-import authRoutes from "./routes/auth.js";
+import authRoutes, { readAuth } from "./routes/auth.js";
 import lobbyRoutes from "./routes/lobbies.js";
 import billingRoutes from "./routes/billing.js";
 import adminRoutes from "./routes/admin.js";
+import platformRoutes from "./routes/platform.js";
 import { startMaintenance } from "./database/index.js";
 import { Room } from "./models/Room.js";
 import { Message } from "./models/Message.js";
@@ -80,9 +82,10 @@ function registerRealtime(app) {
     client.roomId = "";
   };
 
-  const roomFeature = async () => {
-    const state = await loadFeatureState();
+  const roomFeature = async (room = "") => {
+    const state = await resolveFeatureState(room ? { room } : {});
     return {
+      state,
       realtime: () => isEnabled(state, "features.realtimeEnabled"),
       join: () => isEnabled(state, "access.roomJoin"),
       create: () => isEnabled(state, "access.roomCreate"),
@@ -117,13 +120,6 @@ function registerRealtime(app) {
         }
 
         if (type === "join") {
-          const flags = await roomFeature();
-          if (!flags.realtime()) {
-            return send(ws, { type: "error", code: "realtime_disabled", message: "Realtime is disabled by the site owner." });
-          }
-          if (!flags.join()) {
-            return send(ws, { type: "error", code: "rooms_closed", message: "Joining rooms is closed by the site owner." });
-          }
           const room = cleanRoom(msg.room);
           if (!room) {
             return send(ws, {
@@ -131,6 +127,13 @@ function registerRealtime(app) {
               code: "invalid_room",
               message: "Room code must be 4-16 characters (A-Z, 0-9, dash)."
             });
+          }
+          const flags = await roomFeature(room);
+          if (!flags.realtime()) {
+            return send(ws, { type: "error", code: "realtime_disabled", message: "Realtime is disabled by the site owner." });
+          }
+          if (!flags.join()) {
+            return send(ws, { type: "error", code: "rooms_closed", message: "Joining rooms is closed by the site owner." });
           }
           if (client.room && client.room !== room) leaveRoom(client);
           client.name = cleanName(msg.name);
@@ -197,13 +200,15 @@ function registerRealtime(app) {
         }
 
         if (type === "chat") {
-          const flags = await roomFeature();
+          const flags = await roomFeature(client.room);
           if (!flags.chat()) {
             return send(ws, { type: "error", code: "chat_disabled", message: "Chat is disabled by the site owner." });
           }
           const now = Date.now();
-          client.hits = client.hits.filter((t) => now - t < CHAT_WINDOW_MS);
-          if (client.hits.length >= CHAT_MAX) {
+          const windowMs = await settingNumber("limits.chatWindowMs", CHAT_WINDOW_MS);
+          const maxPerWindow = await settingNumber("limits.chatPerWindow", CHAT_MAX);
+          client.hits = client.hits.filter((t) => now - t < windowMs);
+          if (client.hits.length >= maxPerWindow) {
             return send(ws, {
               type: "error",
               code: "chat_rate_limited",
@@ -212,7 +217,8 @@ function registerRealtime(app) {
           }
           client.hits.push(now);
 
-          const content = cleanText(msg.content, 2000);
+          const maxLength = Math.max(100, Math.round(await settingNumber("chat.maxLength", 2000)));
+          const content = cleanText(msg.content, maxLength);
           if (!content) {
             return send(ws, { type: "error", code: "empty_message", message: "Message is empty." });
           }
@@ -248,7 +254,7 @@ function registerRealtime(app) {
         }
 
         if (type === "playback") {
-          const flags = await roomFeature();
+          const flags = await roomFeature(client.room);
           if (!flags.playback()) {
             return send(ws, { type: "error", code: "playback_disabled", message: "Shared playback is disabled by the site owner." });
           }
@@ -391,17 +397,30 @@ export async function buildServer() {
   await app.register(lobbyRoutes, { prefix: "/api/lobbies" });
   await app.register(billingRoutes, { prefix: "/api/billing" });
   await app.register(adminRoutes, { prefix: "/api/admin" });
+  await app.register(platformRoutes, { prefix: "/api/admin" });
 
-  app.get("/api/features", async () => {
-    const state = await loadFeatureState();
+  app.get("/api/features", async (req) => {
+    const auth = readAuth(req);
+    const state = auth
+      ? await resolveFeatureState({ userId: auth.sub, role: auth.role })
+      : await resolveFeatureState({ role: "guest" });
+    const flags = {};
+    for (const item of featureStatus(state)) flags[item.key] = item.enabled;
     return {
       ok: true,
       updatedAt: state.updatedAt,
       features: state.features,
       access: state.access,
       featureRules: state.featureRules,
+      flags,
+      status: featureStatus(state),
       effective: summarizeFeatures(state)
     };
+  });
+
+  app.get("/api/settings/public", async () => {
+    const settings = await publicPlatformSettings();
+    return { ok: true, ...settings };
   });
 
   registerRealtime(app);

@@ -1,8 +1,7 @@
 import { dbReady } from "../db.js";
-import { requireAuth } from "./auth.js";
-import { createRateLimiter } from "../redis.js";
 import { audit } from "../audit.js";
 import { storeState } from "../userStore.js";
+import { adminLimit, ownerOnly } from "../adminGuard.js";
 import {
   databaseHealth,
   tableCounts,
@@ -12,18 +11,6 @@ import {
   pruneDatabase,
   listAudit
 } from "../database/index.js";
-
-const adminLimit = createRateLimiter({ max: 30, windowMs: 60_000, prefix: "wt:rl:admin:" });
-
-async function ownerOnly(req, reply) {
-  await requireAuth(req, reply);
-  if (reply.sent) return false;
-  if (!["owner", "super_owner"].includes(req.auth.role)) {
-    reply.code(403).send({ error: "forbidden", message: "Only the site owner can manage the database." });
-    return false;
-  }
-  return true;
-}
 
 export default async function adminRoutes(app) {
   app.addHook("preHandler", adminLimit);

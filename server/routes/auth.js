@@ -21,6 +21,8 @@ import { sendResetSms, sendTestSms, smsMode, smsState } from "../sms.js";
 import { loadConnections, saveConnections, safeConnections } from "../settings.js";
 import { saveDbSession, getDbSession, touchDbSession, revokeDbSession, revokeDbUserSessions } from "../sessionStore.js";
 import { audit } from "../audit.js";
+import { resolveFeatureState, isEnabled } from "../features.js";
+import { settingBool, settingNumber } from "../platformSettings.js";
 import {
   saveSession,
   getSession,
@@ -73,10 +75,10 @@ function devSecretsAllowed() {
   return process.env.NODE_ENV !== "production";
 }
 
-function verificationRequired() {
+async function verificationRequired() {
   const flag = String(process.env.REQUIRE_EMAIL_VERIFICATION || "").trim().toLowerCase();
-  if (flag === "false" || flag === "off" || flag === "0") return false;
-  return true;
+  const envValue = !(flag === "false" || flag === "off" || flag === "0");
+  return settingBool("security.requireEmailVerify", envValue);
 }
 
 function maskEmail(email) {
@@ -181,6 +183,17 @@ function getSecret() {
   return "dev-only-secret-change-me";
 }
 
+export function readAuth(req) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  if (!token) return null;
+  try {
+    return jwt.verify(token, getSecret(), { issuer: JWT_ISSUER, audience: JWT_AUDIENCE });
+  } catch {
+    return null;
+  }
+}
+
 function publicUser(user) {
   if (!user) return null;
   return {
@@ -257,6 +270,8 @@ async function revokeAllSessions(userId) {
 export async function issueToken(user, req) {
   const jti = crypto.randomUUID();
   const userId = String(user.id);
+  const days = Math.max(1, Math.min(90, Math.round(await settingNumber("security.sessionDays", JWT_TTL_SECONDS / 86400))));
+  const ttl = days * 86400;
   const token = jwt.sign(
     {
       sub: userId,
@@ -266,7 +281,7 @@ export async function issueToken(user, req) {
     },
     getSecret(),
     {
-      expiresIn: JWT_TTL_SECONDS,
+      expiresIn: ttl,
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE
     }
@@ -279,7 +294,7 @@ export async function issueToken(user, req) {
       ip: req.ip || "",
       ua: cleanString(req.headers["user-agent"], 220)
     },
-    JWT_TTL_SECONDS
+    ttl
   );
   await saveDbSession({
     jti,
@@ -287,9 +302,9 @@ export async function issueToken(user, req) {
     role: user.role || "user",
     ip: req.ip || "",
     userAgent: cleanString(req.headers["user-agent"], 220),
-    expiresAt: Date.now() + JWT_TTL_SECONDS * 1000
+    expiresAt: Date.now() + ttl * 1000
   });
-  return { token, jti, expiresIn: JWT_TTL_SECONDS };
+  return { token, jti, expiresIn: ttl };
 }
 
 export async function requireAuth(req, reply) {
@@ -335,6 +350,9 @@ export default async function authRoutes(app) {
   app.post("/register", { preHandler: [registerLimit] }, async (req, reply) => {
     if (!(await storeReady())) {
       return fail(reply, 503, "database_unavailable", "Database is not connected yet. Try again shortly.");
+    }
+    if (!isEnabled(await resolveFeatureState({ role: "guest" }), "access.registration")) {
+      return fail(reply, 403, "registration_disabled", "Registration is closed by the site owner.");
     }
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const username = cleanString(body.username, 24);
@@ -409,7 +427,7 @@ export default async function authRoutes(app) {
         user: publicUser(user),
         recoveryCode,
         verification,
-        verificationRequired: verificationRequired()
+        verificationRequired: await verificationRequired()
       });
     } catch (err) {
       if (err?.code === 11000) {
@@ -422,6 +440,9 @@ export default async function authRoutes(app) {
   app.post("/login", { preHandler: [loginLimit] }, async (req, reply) => {
     if (!(await storeReady())) {
       return fail(reply, 503, "database_unavailable", "Database is not connected yet. Try again shortly.");
+    }
+    if (!isEnabled(await resolveFeatureState({ role: "guest" }), "access.login")) {
+      return fail(reply, 403, "login_disabled", "Signing in is closed by the site owner.");
     }
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const identifier = cleanString(body.identifier || body.email || body.username, 160).toLowerCase();
@@ -443,7 +464,11 @@ export default async function authRoutes(app) {
       return fail(reply, 401, "invalid_credentials", "Email/username or password is incorrect.");
     }
 
-    if (verificationRequired() && !user.emailVerified) {
+    if (!isEnabled(await resolveFeatureState({ userId: user.id, role: user.role }), "access.login")) {
+      return fail(reply, 403, "login_disabled", "Signing in is disabled for this account by the site owner.");
+    }
+
+    if (await verificationRequired() && !user.emailVerified) {
       let verification = {
         sent: Boolean(mailMode() === "outbox"),
         mode: mailMode(),
@@ -601,6 +626,9 @@ export default async function authRoutes(app) {
   app.post("/recover", { preHandler: [recoverLimit] }, async (req, reply) => {
     if (!(await storeReady())) {
       return fail(reply, 503, "database_unavailable", "Database is not connected yet. Try again shortly.");
+    }
+    if (!isEnabled(await resolveFeatureState({ role: "guest" }), "features.passwordReset")) {
+      return fail(reply, 403, "recovery_disabled", "Password recovery is disabled by the site owner.");
     }
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const identifier = cleanString(body.identifier || body.username || body.email, 160).toLowerCase();
@@ -775,6 +803,9 @@ export default async function authRoutes(app) {
 
   app.post("/password/forgot", { preHandler: [forgotLimit] }, async (req, reply) => {
     if (!(await storeReady())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+    if (!isEnabled(await resolveFeatureState({ role: "guest" }), "features.passwordReset")) {
+      return fail(reply, 403, "recovery_disabled", "Password recovery is disabled by the site owner.");
+    }
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const phoneRaw = cleanString(body.phone, 20);
     const email = cleanString(body.email, 160).toLowerCase();
@@ -817,7 +848,7 @@ export default async function authRoutes(app) {
       if (!delivery.sent) {
         return fail(reply, 502, "mail_failed", "The email could not be sent right now. Try again in a minute.");
       }
-      return { ok: true, ...delivery, verificationRequired: verificationRequired() };
+      return { ok: true, ...delivery, verificationRequired: await verificationRequired() };
     } catch (err) {
       req.log.error({ err }, "reset email failed");
       return fail(reply, 502, "mail_failed", "The email could not be sent right now. Try again in a minute.");

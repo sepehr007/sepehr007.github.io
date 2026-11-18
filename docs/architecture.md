@@ -13,7 +13,7 @@
 | --- | --- |
 | صفحات | `index.html` (لندینگ)، `auth.html` (ورود/ثبت‌نام/بازیابی)، `profile.html`، `owner.html` (+ مسیرهای مخفی)، `room.html` |
 | طراحی | `assets/css/design-system.css` (توکن‌های واحد) سپس `style.css` و اسکین‌های `-v8` و `owner.css` |
-| منطق | `assets/js/` — `core.js`، `i18n.js`، `auth.js`، `api.js`، `site-config.js`، `feature-flags.js`، `lobbies.js`، `room.js`، `player.js`، `net.js`، `voice.js`، `owner*.js` |
+| منطق | `assets/js/` — `core.js`، `i18n.js`، `auth.js`، `api.js`، `site-config.js`، `feature-flags.js`، `lobbies.js`، `room.js`، `player.js`، `net.js`، `voice.js`، `owner*.js` (`owner-center`، `owner-god`، `owner-registry`، `owner-audit`) |
 | ذخیرهٔ محلی | `localStorage` (نشست سبک، تنظیمات ظاهر) و IndexedDB (`db.js`: حساب‌ها، لابی‌ها، پیام‌ها، فعالیت، پلن/سفارش) |
 | دو زبان | `i18n.js` با کلیدهای fa/en و سوییچ RTL/LTR |
 | آفلاین | `sw.js` — کش نسخه‌دار؛ HTML/JS/CSS با `no-cache` از شبکه و fallback کش |
@@ -21,7 +21,8 @@
 ## بک‌اند
 
 - **سرور:** `server/index.js` — CORS، محدودیت نرخ، WebSocket (`/ws`)، مسیرهای REST.
-- **مسیرها:** `/api/auth/*` (ثبت‌نام، ورود، تأیید ایمیل، بازیابی، پروفایل، اتصال ایمیل/پیامک مالک)، `/api/lobbies/*`، `/api/billing/*`، `/api/admin/*` (دیتابیس و حسابرسی، فقط مالک)، `/api/features`، `/api/health`.
+- **مسیرها:** `/api/auth/*` (ثبت‌نام، ورود، تأیید ایمیل، بازیابی، پروفایل، اتصال ایمیل/پیامک مالک)، `/api/lobbies/*`، `/api/billing/*`، `/api/admin/*` (دیتابیس، حسابرسی، نمای پلتفرم، کاربران، اتاق‌ها، پیام‌ها، گزارش‌ها، مالی، آمار، ذخیره‌سازی، تنظیمات و کنترل قابلیت‌ها؛ فقط مالک)، `/api/features`، `/api/settings/public`، `/api/health`.
+- **کنترل قابلیت:** `server/features.js` کاتالوگ، وابستگی‌ها، دامنه‌ها (سراسری/کاربر/اتاق/سرور/نقش/پلن)، زمان‌بندی و تاریخچه را نگه می‌دارد؛ `server/platformSettings.js` رجیستری تنظیمات را اعتبارسنجی می‌کند؛ `server/adminGuard.js` نقش مالک و نرخ درخواست را برای همه‌ی مسیرهای پنل اعمال می‌کند. رابط کاربری در `assets/js/owner-god.js` به همین APIها وصل است.
 - **حافظهٔ نشست:** Redis در صورت وجود، وگرنه حافظهٔ فرآیند (`server/redis.js`)؛ در حالت SQLite نشست در جدول `sessions` هم ذخیره می‌شود تا ری‌استارت سرور کاربر را بیرون نیندازد. JWT با `jti` که با خروج یا تغییر رمز باطل می‌شود.
 - **تنظیمات:** `server/settings.js` — DB-first، متغیرهای env فقط وقتی دیتابیس غیرفعال است؛ رازها هرگز به مرورگر برنمی‌گردند و فقط فلگ `passSet/apiKeySet/twilioTokenSet` برمی‌گردد.
 - **ایمیل/پیامک:** `server/mailer.js` (nodemailer + outbox JSONL) و `server/sms.js` (کاوه‌نگار/Twilio/وبهوک + outbox JSONL).
@@ -53,5 +54,5 @@
 ## شکاف‌های شناخته‌شده
 
 - GitHub Pages سرور اجرا نمی‌کند؛ کدهای ایمیل/پیامک روی سایت زنده فقط با سرور میزبانی‌شده ارسال می‌شوند.
-- آمار سراسری، بن سراسری، اشتراک چنددستگاهی و پرداخت واقعی هنوز به فاز بعد نیاز دارند.
+- درگاه پرداخت واقعی هنوز وصل نشده؛ سفارش و اشتراک در سرور ثبت و مدیریت می‌شوند اما تسویهٔ بانکی فاز بعد است.
 - Pub/Sub و کارگر پس‌زمینه برای مقیاس افقی وجود ندارد.

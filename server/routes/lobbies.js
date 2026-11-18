@@ -7,6 +7,8 @@ import { requireAuth } from "./auth.js";
 import { ensureStore } from "../userStore.js";
 import { sqlListLobbies, sqlActiveLobby, sqlCreateLobby, sqlCloseLobby, sqlTouchLobby } from "../stores/lobbies.js";
 import { audit } from "../audit.js";
+import { resolveFeatureState, isEnabled } from "../features.js";
+import { settingNumber, settingValue } from "../platformSettings.js";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_RE = /^[A-Z0-9-]{4,16}$/;
@@ -96,11 +98,25 @@ export default async function lobbyRoutes(app) {
 
   app.post("/", { preHandler: requireAuth }, async (req, reply) => {
     const body = req.body && typeof req.body === "object" ? req.body : {};
+    const access = await resolveFeatureState({ userId: req.auth.userId, role: req.auth.role });
+    if (!isEnabled(access, "access.roomCreate")) {
+      return fail(reply, 403, "rooms_closed", "Creating rooms is closed by the site owner.");
+    }
+    const wantsPassword = body.privacy === "password";
+    if (wantsPassword && !isEnabled(access, "features.roomPrivate")) {
+      return fail(reply, 403, "private_rooms_closed", "Private rooms are disabled by the site owner.");
+    }
+    if (!wantsPassword && !isEnabled(access, "features.roomPublic")) {
+      return fail(reply, 403, "public_rooms_closed", "Public rooms are disabled by the site owner.");
+    }
     let code = cleanText(body.code, 16).toUpperCase();
     if (code && !CODE_RE.test(code)) return fail(reply, 400, "invalid_code", "Lobby code is invalid.");
     const name = cleanText(body.name, 60) || "لابی من";
-    const capacity = Math.max(2, Math.min(24, Number(body.capacity) || 6));
-    const privacy = body.privacy === "password" ? "password" : "public";
+    const maxCapacity = Math.min(48, Math.max(2, Math.round(await settingNumber("limits.maxCapacity", 24))));
+    const defaultCapacity = Math.min(maxCapacity, Math.max(2, Math.round(await settingNumber("limits.defaultCapacity", 6))));
+    const capacity = Math.max(2, Math.min(maxCapacity, Number(body.capacity) || defaultCapacity));
+    const fallbackPrivacy = (await settingValue("room.defaultPrivacy", "public")) === "password" ? "password" : "public";
+    const privacy = wantsPassword ? "password" : fallbackPrivacy;
 
     if (!dbReady()) {
       if (!(await ensureStore())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");

@@ -18,7 +18,7 @@
 | پیام و پخش | `messages`، `message_reactions`، `message_reports`، `playback_states`، `playback_history`، `subtitle_preferences` |
 | ظاهر و اطلاع‌رسانی | `user_themes`، `notifications`، `announcements` |
 | مالی | `subscription_plans`، `orders`، `subscriptions`، `entitlements`، `payments`، `transactions` |
-| عملیات | `feature_flags`، `audit_logs`، `website_pages`، `analytics_events`، `automation_workflows`، `media_objects`، `backup_runs` |
+| عملیات | `feature_flags`، `feature_overrides`، `feature_schedule`، `feature_history`، `audit_logs`، `website_pages`، `analytics_events`، `automation_workflows`، `media_objects`، `backup_runs` |
 
 قاعدهٔ مالکیت: هر جدول فقط از ماژول خودش نوشته و خوانده می‌شود؛ ماژول‌های دیگر با شناسه و کوئری محدود سراغش می‌روند. رسانهٔ سنگین هرگز داخل جدول نیست و فقط در `media_objects` ثبت می‌شود.
 
@@ -35,7 +35,7 @@
 
 - مهاجرت‌ها نسخه‌دارند (`schema_migrations`) و چک‌سام هر مهاجرت ذخیره می‌شود؛ تغییر متن مهاجرتِ اجراشده هشدار می‌دهد و دوباره اجرا نمی‌شود.
 - هر مهاجرت داخل تراکنش است؛ خطا یعنی برگشت کامل، نه دیتابیس نیمه‌کاره.
-- مهاجرت روی دیتابیس‌های قدیمی تست شده: ستون‌های قدیمی حفظ می‌شوند، کاربران دست‌نخورده می‌مانند و نسخه به ۷ می‌رسد.
+- مهاجرت روی دیتابیس‌های قدیمی تست شده: ستون‌های قدیمی حفظ می‌شوند، کاربران دست‌نخورده می‌مانند و نسخه به ۸ می‌رسد.
 - بررسی سلامت: `PRAGMA integrity_check`، `foreign_key_check` و شمارش جدول‌ها از طریق `GET /api/admin/database`.
 
 ## پشتیبان، بازیابی و خروجی
@@ -53,17 +53,31 @@
 - پیام‌های چت به‌طور پیش‌فرض حذف نمی‌شوند؛ `RETENTION_MESSAGE_DAYS=0` یعنی خاموش و هر مقدار مثبت فقط آرشیو می‌کند.
 - هر عملیات مدیریتی (پشتیبان، بررسی، خروجی، پاک‌سازی) در `audit_logs` ثبت می‌شود و رمز/توکن/کد در لاگ‌ها سانسور می‌شود.
 
+## کنترل قابلیت
+
+- سه جدول مستقل: `feature_overrides` (وضعیت نهایی هر قابلیت در هر دامنه)، `feature_schedule` (تغییر آیندهٔ زمان‌دار) و `feature_history` (تاریخچهٔ تغییرها با منبع و عامل).
+- دامنه‌ها: `global`، `user`، `room`، `server`، `role`، `plan`؛ اولویت اعمال از خاص به عام است: کاربر ← اتاق ← سرور ← نقش ← پلن ← سراسری.
+- وابستگی‌ها در سرور حل می‌شوند: اگر `features.realtimeEnabled` خاموش شود، چت، پخش مشترک، صف، صدا و اشتراک صفحه هم به‌صورت مؤثر خاموش گزارش می‌شوند (منبع `dependency`).
+- زمان‌بندی‌ها با فاصلهٔ چند ثانیه و داخل تراکنش اعمال می‌شوند و در تاریخچه با منبع `schedule` ثبت می‌شوند.
+- `FEATURE_EMERGENCY_OFF` با کاما فهرست کلیدها را می‌گیرد و مستقل از دیتابیس همه را خاموش می‌کند.
+- تنظیمات سایت در `app_settings` با کلید `platform.settings` (JSON) نگه داشته می‌شوند؛ رجیستری سمت سرور نوع، بازه و اعتبار هر مقدار را کنترل می‌کند و مقدار عمومی از `GET /api/settings/public` به سایت و API می‌رسد.
+
 ## پنل مالک
 
 - `GET /api/admin/database` — وضعیت، نسخهٔ اسکیما، مسیر فایل، سلامت.
 - `GET /api/admin/database/tables` — تعداد ردیف هر جدول.
 - `POST /api/admin/database/backup|verify|export|prune` — عملیات نگهداری.
 - `GET /api/admin/audit` — تاریخچهٔ عملیات با صفحه‌بندی ساده (`limit`, `before`).
+- `GET /api/admin/overview|users|rooms|messages|reports|finance|analytics|storage` — دادهٔ زندهٔ داشبورد.
+- `PATCH /api/admin/users/:id` — تغییر نقش و وضعیت با محافظت از آخرین مالک ارشد.
+- `GET/PUT /api/admin/settings` — خواندن رجیستری و ذخیرهٔ امن تنظیمات.
+- `GET/PUT/DELETE /api/admin/features*` و `POST /api/admin/features/schedule` — کنترل دامنه‌دار قابلیت‌ها، زمان‌بندی و تاریخچه.
 
 همه فقط با نقش `owner` یا `super_owner` و با محدودیت نرخ.
 
 ## شکاف‌های صادقانه
 
 - آداپتور PostgreSQL و S3/فضای ابری برای فایل‌ها هنوز نوشته نشده؛ `media_objects` فعلاً دفتر ثبت است.
-- جدول‌های `website_pages`، `analytics_events` و `automation_workflows` ساخته شده‌اند اما تا آمدن رابط کاربری مربوطه فقط ساختارند.
+- جدول‌های `website_pages` و `automation_workflows` ساخته شده‌اند اما تا آمدن رابط کاربری مربوطه فقط ساختارند.
 - مسیر MongoDB مهاجرت داده‌ای به SQLite ندارد؛ نصب فعلی که Mongo ندارد مستقیم روی SQLite است.
+- کنترل دامنه‌ای قابلیت‌ها روی HTTP و مسیرهای اتاق کاملاً اعمال می‌شود؛ جریان‌های WebRTC که مستقیم بین مرورگرها باز شده‌اند از سمت سرور قابل قطع نیستند و فقط از لایهٔ رابط و توکن‌های اتصال بسته می‌شوند.
