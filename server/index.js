@@ -17,6 +17,7 @@ import lobbyRoutes from "./routes/lobbies.js";
 import billingRoutes from "./routes/billing.js";
 import adminRoutes from "./routes/admin.js";
 import platformRoutes from "./routes/platform.js";
+import socialRoutes from "./routes/social.js";
 import { startMaintenance, getDatabase, databaseState, stopMaintenance, closeDatabase } from "./database/index.js";
 import { Room } from "./models/Room.js";
 import { Message } from "./models/Message.js";
@@ -41,6 +42,39 @@ function cleanText(value, max = 2000) {
 
 function cleanName(value) {
   return cleanText(value, 30) || "مهمان";
+}
+
+const socialSockets = new Map();
+
+export function notifyUser(userId, payload) {
+  const key = String(userId || "");
+  const set = socialSockets.get(key);
+  if (!set || set.size === 0) return 0;
+  const raw = JSON.stringify(payload);
+  let delivered = 0;
+  for (const ws of set) {
+    if (ws.readyState !== 1) {
+      set.delete(ws);
+      continue;
+    }
+    try {
+      ws.send(raw);
+      delivered += 1;
+    } catch {
+      set.delete(ws);
+    }
+  }
+  if (set.size === 0) socialSockets.delete(key);
+  return delivered;
+}
+
+function detachSocialSocket(ws, userId) {
+  const key = String(userId || "");
+  if (!key) return;
+  const set = socialSockets.get(key);
+  if (!set) return;
+  set.delete(ws);
+  if (set.size === 0) socialSockets.delete(key);
 }
 
 function registerRealtime(app) {
@@ -101,6 +135,7 @@ function registerRealtime(app) {
       name: "مهمان",
       room: "",
       roomId: "",
+      userId: "",
       hits: [],
       ws
     };
@@ -117,6 +152,25 @@ function registerRealtime(app) {
       try {
         if (type === "ping") {
           return send(ws, { type: "pong", at: Date.now() });
+        }
+
+        if (type === "identify") {
+          const token = cleanText(msg.token, 4096);
+          const auth = token
+            ? readAuth({ headers: { authorization: `Bearer ${token}` } })
+            : null;
+          if (!auth?.sub) {
+            return send(ws, { type: "error", code: "invalid_token", message: "Identify requires a valid session token." });
+          }
+          detachSocialSocket(ws, client.userId);
+          client.userId = String(auth.sub);
+          let sockets = socialSockets.get(client.userId);
+          if (!sockets) {
+            sockets = new Set();
+            socialSockets.set(client.userId, sockets);
+          }
+          sockets.add(ws);
+          return send(ws, { type: "identified", userId: client.userId });
         }
 
         if (type === "join") {
@@ -307,8 +361,14 @@ function registerRealtime(app) {
       }
     });
 
-    ws.on("close", () => leaveRoom(client));
-    ws.on("error", () => leaveRoom(client));
+    ws.on("close", () => {
+      leaveRoom(client);
+      detachSocialSocket(ws, client.userId);
+    });
+    ws.on("error", () => {
+      leaveRoom(client);
+      detachSocialSocket(ws, client.userId);
+    });
   });
 
   const heartbeat = setInterval(() => {
@@ -332,6 +392,7 @@ function registerRealtime(app) {
       }
     }
     rooms.clear();
+    socialSockets.clear();
   });
 }
 
@@ -346,6 +407,8 @@ export async function buildServer() {
     ignoreTrailingSlash: true,
     bodyLimit: 1024 * 1024
   });
+
+  app.decorate("notifyUser", notifyUser);
 
   for (const warning of configWarnings()) {
     if (warning.level === "error") app.log.error(`[config] ${warning.message}`);
@@ -431,6 +494,7 @@ export async function buildServer() {
   await app.register(billingRoutes, { prefix: "/api/billing" });
   await app.register(adminRoutes, { prefix: "/api/admin" });
   await app.register(platformRoutes, { prefix: "/api/admin" });
+  await app.register(socialRoutes, { prefix: "/api/social" });
 
   app.get("/api/features", async (req) => {
     const auth = readAuth(req);

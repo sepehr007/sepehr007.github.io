@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#14110e">
+<title>شبکه — هم‌تماشا</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/design-system.css">
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="stylesheet" href="assets/css/atelier.css">
+<link rel="stylesheet" href="assets/css/social.css">
+<link rel="stylesheet" href="assets/css/device-compat.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23d97742'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+</head>
+<body class="page-social">
+
+<div class="bg-aurora" aria-hidden="true">
+  <span class="aurora a1"></span>
+  <span class="aurora a2"></span>
+  <span class="aurora a3"></span>
+  <div class="grid-overlay"></div>
+</div>
+
+<header class="site-header">
+  <a class="brand" href="./">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg>
+    </span>
+    <span class="brand-text">هم‌تماشا</span>
+  </a>
+  <div class="header-actions">
+    <a class="btn btn-ghost btn-sm" href="./" data-i18n="common.home">خانه</a>
+    <a class="btn btn-ghost btn-sm" href="profile.html" data-i18n="menu.profile">پروفایل</a>
+    <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="تغییر زبان" data-i18n-aria="common.language">EN</button>
+  </div>
+</header>
+
+<main class="social-shell">
+  <div class="social-head">
+    <div>
+      <h1 data-i18n="social.title">شبکهٔ هم‌تماشا</h1>
+      <p data-i18n="social.sub">دوستان، پیام خصوصی، کتابخانه و تاریخچهٔ تماشا — همه روی حساب سروری تو.</p>
+    </div>
+    <span class="badge" id="wsState" hidden><span class="online-dot"></span><span id="wsStateText" data-i18n="social.live">اتصال زنده</span></span>
+  </div>
+
+  <section class="social-gate card" id="socialGate" hidden>
+    <h2 data-i18n="social.gateTitle">برای این صفحه وارد حساب سروری شو</h2>
+    <p class="muted" id="gateText" data-i18n="social.gateText">دوستان، پیام خصوصی و اعلان‌ها به حساب متصل به سرور نیاز دارند. با همان حساب سایت وارد شو تا همه‌چیز همگام شود.</p>
+    <div class="gate-actions">
+      <a class="btn btn-primary" id="gateLogin" href="auth.html?next=social.html" data-i18n="social.gateBtn">ورود به حساب</a>
+      <button class="btn btn-secondary" id="gateRetry" type="button" data-i18n="social.retry">تلاش دوباره</button>
+    </div>
+  </section>
+
+  <div class="social-layout" id="socialLayout" hidden>
+    <nav class="social-nav" id="socialNav" aria-label="بخش‌های شبکه" data-i18n-aria="social.navAria">
+      <button type="button" data-pane="people" class="active"><span data-i18n="social.nav.people">افراد</span><span class="count" id="countRequests"></span></button>
+      <button type="button" data-pane="messages"><span data-i18n="social.nav.messages">پیام‌ها</span><span class="count" id="countMessages"></span></button>
+      <button type="button" data-pane="search"><span data-i18n="social.nav.search">جست‌وجو</span></button>
+      <button type="button" data-pane="notifications"><span data-i18n="social.nav.notifications">اعلان‌ها</span><span class="count" id="countNotifs"></span></button>
+      <button type="button" data-pane="history"><span data-i18n="social.nav.history">تاریخچه</span></button>
+      <button type="button" data-pane="library"><span data-i18n="social.nav.library">کتابخانه</span></button>
+      <button type="button" data-pane="invites"><span data-i18n="social.nav.invites">دعوت‌ها</span></button>
+      <button type="button" data-pane="support"><span data-i18n="social.nav.support">پشتیبانی</span></button>
+      <button type="button" data-pane="polls"><span data-i18n="social.nav.polls">نظرسنجی</span></button>
+      <button type="button" data-pane="reports"><span data-i18n="social.nav.reports">گزارش‌ها</span></button>
+    </nav>
+
+    <div class="social-panes">
+      <!-- people -->
+      <section class="social-pane" id="pane-people" data-pane="people">
+        <div class="pane-title"><h2 data-i18n="social.requestsTitle">درخواست‌های دوستی</h2></div>
+        <ul class="request-list" id="requestList"></ul>
+        <div class="social-empty" id="requestsEmpty" hidden>
+          <span data-i18n="social.requestsEmpty">درخواست تازه‌ای نیست.</span>
+        </div>
+
+        <div class="pane-title spaced"><h2 data-i18n="social.friendsTitle">دوستان تو</h2></div>
+        <ul class="person-list" id="friendList"></ul>
+        <div class="social-empty" id="friendsEmpty" hidden>
+          <span data-i18n="social.friendsEmpty">هنوز دوستی نداری؛ از فهرست افراد شروع کن.</span>
+        </div>
+
+        <div class="pane-title spaced">
+          <h2 data-i18n="social.directoryTitle">همهٔ افراد</h2>
+          <span class="hint" id="peopleCount"></span>
+        </div>
+        <div class="social-toolbar">
+          <input id="peopleSearch" type="search" placeholder="نام کاربری یا اسم نمایشی…" data-i18n-ph="social.peopleSearchPh">
+          <button class="btn btn-secondary btn-sm" id="peopleRefresh" type="button" data-i18n="social.refresh">تازه‌سازی</button>
+        </div>
+        <ul class="person-list" id="peopleList"></ul>
+        <div class="social-empty" id="peopleEmpty" hidden>
+          <strong data-i18n="social.peopleEmptyTitle">کسی پیدا نشد</strong>
+          <span data-i18n="social.peopleEmpty">اسم دیگری امتحان کن یا بعداً دوباره سر بزن.</span>
+        </div>
+
+        <div class="pane-title spaced"><h2 data-i18n="social.blocksTitle">کاربران مسدود</h2></div>
+        <ul class="person-list" id="blockList"></ul>
+        <div class="social-empty" id="blocksEmpty" hidden>
+          <span data-i18n="social.blocksEmpty">هیچ کاربری را مسدود نکرده‌ای.</span>
+        </div>
+      </section>
+
+      <!-- messages -->
+      <section class="social-pane" id="pane-messages" data-pane="messages" hidden>
+        <div class="pane-title">
+          <h2 data-i18n="social.nav.messages">پیام‌ها</h2>
+        </div>
+        <div class="dm-layout" id="dmLayout">
+          <aside class="dm-side" id="dmSide">
+            <div class="social-toolbar">
+              <input id="dmSearch" type="search" placeholder="جست‌وجوی گفتگو…" data-i18n-ph="social.dmSearchPh">
+            </div>
+            <label class="dm-arch-toggle hint"><input type="checkbox" id="dmShowArchived"> <span data-i18n="social.showArchived">نمایش آرشیو</span></label>
+            <ul class="conv-list" id="convList"></ul>
+            <div class="social-empty" id="convEmpty" hidden>
+              <span data-i18n="social.convEmpty">هنوز گفتگویی نداری.</span>
+            </div>
+          </aside>
+          <section class="dm-thread" id="dmThread">
+            <div class="dm-head" id="dmHead" hidden>
+              <button class="dm-back" id="dmBack" type="button" aria-label="بازگشت">‹</button>
+              <span class="person-avatar" id="dmPeerAvatar"></span>
+              <div class="person-main">
+                <strong id="dmPeerName"></strong>
+                <small id="dmPeerUser"></small>
+              </div>
+              <div class="person-actions">
+                <button class="btn btn-ghost btn-sm" id="dmMuteBtn" type="button"></button>
+                <button class="btn btn-ghost btn-sm" id="dmArchiveBtn" type="button"></button>
+              </div>
+            </div>
+            <div class="dm-stream" id="dmStream"></div>
+            <div class="dm-empty" id="dmEmpty">
+              <div>
+                <strong data-i18n="social.dmEmptyTitle">گفتگویی انتخاب نشده</strong>
+                <p data-i18n="social.dmEmpty">از فهرست گفتگوها یکی را باز کن یا از بخش افراد پیام بفرست.</p>
+              </div>
+            </div>
+            <form class="dm-compose" id="dmForm" autocomplete="off" hidden>
+              <textarea id="dmInput" rows="1" maxlength="4000" placeholder="پیامت را بنویس… (Enter برای ارسال)" data-i18n-ph="social.dmPlaceholder"></textarea>
+              <button class="btn btn-primary btn-sm" type="submit" data-i18n="social.send">ارسال</button>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <!-- search -->
+      <section class="social-pane" id="pane-search" data-pane="search" hidden>
+        <div class="pane-title"><h2 data-i18n="social.searchTitle">جست‌وجوی سراسری</h2></div>
+        <div class="social-toolbar">
+          <input id="globalSearch" type="search" placeholder="کاربر، اتاق یا متن پیام…" data-i18n-ph="social.searchPh">
+          <select id="searchType">
+            <option value="all" data-i18n="social.searchAll">همه</option>
+            <option value="users" data-i18n="social.searchUsers">کاربران</option>
+            <option value="friends" data-i18n="social.searchFriends">دوستان</option>
+            <option value="rooms" data-i18n="social.searchRooms">اتاق‌ها</option>
+            <option value="messages" data-i18n="social.searchMessages">پیام‌ها</option>
+          </select>
+        </div>
+        <p class="hint spaced-hint" data-i18n="social.searchHint">حداقل ۲ حرف بنویس؛ نتیجه‌ها فقط از چیزهایی می‌آید که اجازهٔ دیدنشان را داری.</p>
+        <div id="searchResults"></div>
+        <div class="social-empty" id="searchEmpty" hidden>
+          <strong data-i18n="social.searchEmptyTitle">نتیجه‌ای نبود</strong>
+          <span data-i18n="social.searchEmpty">عبارت دیگری را امتحان کن.</span>
+        </div>
+      </section>
+
+      <!-- notifications -->
+      <section class="social-pane" id="pane-notifications" data-pane="notifications" hidden>
+        <div class="pane-title">
+          <h2 data-i18n="social.notifTitle">اعلان‌ها</h2>
+          <button class="btn btn-secondary btn-sm" id="notifReadAll" type="button" data-i18n="social.notifReadAll">همه خوانده شد</button>
+        </div>
+        <ul class="request-list" id="notifList"></ul>
+        <div class="social-empty" id="notifEmpty" hidden>
+          <span data-i18n="social.notifEmpty">اعلان تازه‌ای نیست.</span>
+        </div>
+        <form class="social-form card" id="notifPrefsForm" autocomplete="off">
+          <h3 data-i18n="social.notifPrefs">تنظیمات اعلان</h3>
+          <p class="hint" data-i18n="social.notifPrefsHint">هر مورد را خاموش کنی، اعلان آن نوع ساخته نمی‌شود. ساعت سکوت، اعلان‌ها را در آن بازه نگه می‌دارد.</p>
+          <div class="pref-grid" id="notifKindGrid">
+            <label class="pref-check"><input type="checkbox" data-kind="all"> <span data-i18n="social.kind.all">همهٔ اعلان‌ها</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="dm_message"> <span data-i18n="social.kind.dm_message">پیام خصوصی</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="friend_request"> <span data-i18n="social.kind.friend_request">درخواست دوستی</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="friend_accept"> <span data-i18n="social.kind.friend_accept">پذیرش دوستی</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="mention"> <span data-i18n="social.kind.mention">منشن در چت</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="room_invite"> <span data-i18n="social.kind.room_invite">دعوت به اتاق</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="support_reply"> <span data-i18n="social.kind.support_reply">پاسخ پشتیبانی</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="system"> <span data-i18n="social.kind.system">اطلاعیهٔ سایت</span></label>
+          </div>
+          <div class="look-grid">
+            <label class="look-field">
+              <span data-i18n="social.quietFrom">شروع سکوت</span>
+              <input type="time" id="quietFrom">
+            </label>
+            <label class="look-field">
+              <span data-i18n="social.quietTo">پایان سکوت</span>
+              <input type="time" id="quietTo">
+            </label>
+          </div>
+          <p class="form-msg" id="notifPrefsMsg" role="alert"></p>
+          <button class="btn btn-primary btn-sm" type="submit" data-i18n="social.save">ذخیره</button>
+        </form>
+      </section>
+
+      <!-- history -->
+      <section class="social-pane" id="pane-history" data-pane="history" hidden>
+        <div class="pane-title">
+          <h2 data-i18n="social.historyTitle">تاریخچهٔ تماشا</h2>
+          <button class="btn btn-ghost btn-sm" id="historyClear" type="button" data-i18n="social.historyClear">پاک کردن تاریخچه</button>
+        </div>
+        <ul class="history-list" id="historyList"></ul>
+        <div class="social-empty" id="historyEmpty" hidden>
+          <span data-i18n="social.historyEmpty">هنوز چیزی تماشا نکرده‌ای.</span>
+        </div>
+      </section>
+
+      <!-- library -->
+      <section class="social-pane" id="pane-library" data-pane="library" hidden>
+        <div class="pane-title"><h2 data-i18n="social.libraryTitle">کتابخانهٔ رسانه</h2></div>
+        <form class="social-form card" id="libraryForm" autocomplete="off">
+          <div class="form-row">
+            <label class="field">
+              <span data-i18n="social.libraryKind">نوع</span>
+              <select id="libraryKind">
+                <option value="saved" data-i18n="social.kind.saved">ذخیره‌شده</option>
+                <option value="favorite" data-i18n="social.kind.favorite">موردعلاقه</option>
+                <option value="recent" data-i18n="social.kind.recent">اخیر</option>
+                <option value="upload" data-i18n="social.kind.upload">آپلود</option>
+                <option value="subtitle" data-i18n="social.kind.subtitle">زیرنویس</option>
+              </select>
+            </label>
+            <label class="field">
+              <span data-i18n="social.libraryTitleField">عنوان</span>
+              <input id="libraryTitle" type="text" maxlength="200" placeholder="شب فیلم">
+            </label>
+          </div>
+          <label class="field">
+            <span data-i18n="social.libraryUrl">نشانی رسانه</span>
+            <input id="libraryUrl" type="url" dir="ltr" maxlength="2000" placeholder="https://…">
+          </label>
+          <p class="form-msg" id="libraryMsg" role="alert"></p>
+          <button class="btn btn-primary btn-sm" type="submit" data-i18n="social.libraryAdd">افزودن به کتابخانه</button>
+        </form>
+        <div class="social-toolbar spaced-toolbar">
+          <select id="libraryFilter">
+            <option value="" data-i18n="social.searchAll">همه</option>
+            <option value="saved" data-i18n="social.kind.saved">ذخیره‌شده</option>
+            <option value="favorite" data-i18n="social.kind.favorite">موردعلاقه</option>
+            <option value="recent" data-i18n="social.kind.recent">اخیر</option>
+            <option value="upload" data-i18n="social.kind.upload">آپلود</option>
+            <option value="subtitle" data-i18n="social.kind.subtitle">زیرنویس</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" id="libraryRefresh" type="button" data-i18n="social.refresh">تازه‌سازی</button>
+        </div>
+        <ul class="library-grid" id="libraryList"></ul>
+        <div class="social-empty" id="libraryEmpty" hidden>
+          <span data-i18n="social.libraryEmpty">کتابخانه خالی است.</span>
+        </div>
+      </section>
+
+      <!-- invites -->
+      <section class="social-pane" id="pane-invites" data-pane="invites" hidden>
+        <div class="pane-title"><h2 data-i18n="social.invitesTitle">دعوت‌نامه‌ها</h2></div>
+        <div class="social-cols">
+          <form class="social-form card" id="inviteForm" autocomplete="off">
+            <h3 data-i18n="social.inviteCreate">ساخت دعوت</h3>
+            <div class="form-row">
+              <label class="field">
+                <span data-i18n="social.inviteRoom">کد اتاق</span>
+                <input id="inviteRoom" type="text" dir="ltr" maxlength="16" placeholder="AB12-CD">
+              </label>
+              <label class="field">
+                <span data-i18n="social.inviteHours">اعتبار (ساعت)</span>
+                <input id="inviteHours" type="number" min="1" max="720" step="1" value="24" dir="ltr">
+              </label>
+            </div>
+            <label class="field">
+              <span data-i18n="social.inviteUses">حداکثر استفاده (۰ = نامحدود)</span>
+              <input id="inviteUses" type="number" min="0" max="1000" step="1" value="1" dir="ltr">
+            </label>
+            <p class="form-msg" id="inviteMsg" role="alert"></p>
+            <button class="btn btn-primary btn-sm" type="submit" data-i18n="social.inviteCreate">ساخت دعوت</button>
+          </form>
+          <form class="social-form card" id="inviteAcceptForm" autocomplete="off">
+            <h3 data-i18n="social.inviteAccept">پیوستن با کد</h3>
+            <label class="field">
+              <span data-i18n="social.inviteCode">کد دعوت</span>
+              <input id="inviteAcceptCode" type="text" dir="ltr" maxlength="32" placeholder="XXXX-XXXX" data-i18n-ph="social.inviteAcceptPh">
+            </label>
+            <p class="form-msg" id="inviteAcceptMsg" role="alert"></p>
+            <button class="btn btn-secondary btn-sm" type="submit" data-i18n="social.inviteAccept">پیوستن با کد</button>
+          </form>
+        </div>
+        <div class="invite-created card" id="inviteCreated" hidden>
+          <p class="hint" data-i18n="social.inviteCreated">دعوت ساخته شد — این کد فقط یک‌بار نشان داده می‌شود.</p>
+          <div class="code-row">
+            <code id="inviteCreatedCode"></code>
+            <button class="btn btn-secondary btn-sm" id="inviteCopyBtn" type="button" data-i18n="social.copy">کپی</button>
+          </div>
+        </div>
+        <ul class="request-list spaced-list" id="inviteList"></ul>
+        <div class="social-empty" id="inviteEmpty" hidden>
+          <span data-i18n="social.inviteEmpty">هنوز دعوت‌نامه‌ای نساخته‌ای.</span>
+        </div>
+      </section>
+
+      <!-- support -->
+      <section class="social-pane" id="pane-support" data-pane="support" hidden>
+        <div class="pane-title">
+          <h2 data-i18n="social.supportTitle">مرکز پشتیبانی</h2>
+          <span class="badge" id="supportStaffBadge" hidden data-i18n="social.supportStaffAll">نمای کارکنان</span>
+        </div>
+        <form class="social-form card" id="ticketForm" autocomplete="off">
+          <h3 data-i18n="social.supportNew">تیکت تازه</h3>
+          <label class="field">
+            <span data-i18n="social.supportSubject">موضوع</span>
+            <input id="ticketSubject" type="text" maxlength="160" required>
+          </label>
+          <div class="form-row">
+            <label class="field">
+              <span data-i18n="social.supportCategory">دسته</span>
+              <select id="ticketCategory">
+                <option value="general" data-i18n="social.category.general">عمومی</option>
+                <option value="technical" data-i18n="social.category.technical">فنی</option>
+                <option value="billing" data-i18n="social.category.billing">پرداخت</option>
+                <option value="abuse" data-i18n="social.category.abuse">گزارش تخلف</option>
+                <option value="other" data-i18n="social.category.other">دیگر</option>
+              </select>
+            </label>
+            <label class="field">
+              <span data-i18n="social.supportPriority">اولویت</span>
+              <select id="ticketPriority">
+                <option value="low" data-i18n="social.priority.low">کم</option>
+                <option value="normal" selected data-i18n="social.priority.normal">معمولی</option>
+                <option value="high" data-i18n="social.priority.high">زیاد</option>
+                <option value="urgent" data-i18n="social.priority.urgent">فوری</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">
+            <span data-i18n="social.supportBody">توضیح</span>
+            <textarea id="ticketBody" rows="4" maxlength="4000"></textarea>
+          </label>
+          <p class="form-msg" id="ticketMsg" role="alert"></p>
+          <button class="btn btn-primary btn-sm" type="submit" data-i18n="social.supportCreate">ثبت تیکت</button>
+        </form>
+        <ul class="ticket-list spaced-list" id="ticketList"></ul>
+        <div class="social-empty" id="ticketEmpty" hidden>
+          <span data-i18n="social.supportEmpty">تیکتی نداری.</span>
+        </div>
+        <section class="ticket-detail" id="ticketDetail" hidden>
+          <div class="ticket-detail-head">
+            <div>
+              <h3 id="ticketDetailTitle"></h3>
+              <p class="hint" id="ticketDetailMeta"></p>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="ticketCloseDetail" type="button" data-i18n="social.close">بستن</button>
+          </div>
+          <div class="ticket-msgs" id="ticketMsgs"></div>
+          <form class="social-form ticket-reply" id="ticketReplyForm" autocomplete="off">
+            <label class="field">
+              <span data-i18n="social.supportReply">ارسال پاسخ</span>
+              <textarea id="ticketReplyBody" rows="3" maxlength="4000" placeholder="پاسخ یا توضیح تکمیلی…" data-i18n-ph="social.supportReplyPh"></textarea>
+            </label>
+            <div class="ticket-staff-row" id="ticketStaffRow" hidden>
+              <label class="field">
+                <span data-i18n="social.supportStatus">وضعیت</span>
+                <select id="ticketStatus">
+                  <option value="open" data-i18n="social.status.open">باز</option>
+                  <option value="pending" data-i18n="social.status.pending">در انتظار</option>
+                  <option value="resolved" data-i18n="social.status.resolved">حل‌شده</option>
+                  <option value="closed" data-i18n="social.status.closed">بسته</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="social.supportPriority">اولویت</span>
+                <select id="ticketStatusPriority">
+                  <option value="low" data-i18n="social.priority.low">کم</option>
+                  <option value="normal" data-i18n="social.priority.normal">معمولی</option>
+                  <option value="high" data-i18n="social.priority.high">زیاد</option>
+                  <option value="urgent" data-i18n="social.priority.urgent">فوری</option>
+                </select>
+              </label>
+              <button class="btn btn-secondary btn-sm" id="ticketStatusSave" type="button" data-i18n="social.save">ذخیره</button>
+            </div>
+            <button class="btn btn-primary btn-sm" type="submit" data-i18n="social.supportReply">ارسال پاسخ</button>
+          </form>
+        </section>
+      </section>
+
+      <!-- polls -->
+      <section class="social-pane" id="pane-polls" data-pane="polls" hidden>
+        <div class="pane-title"><h2 data-i18n="social.pollsTitle">نظرسنجی اتاق</h2></div>
+        <div class="social-toolbar">
+          <input id="pollRoom" type="text" dir="ltr" maxlength="16" placeholder="کد اتاق" data-i18n-ph="social.pollsRoom">
+          <button class="btn btn-secondary btn-sm" id="pollLoad" type="button" data-i18n="social.pollsLoad">بارگذاری</button>
+        </div>
+        <form class="social-form card" id="pollForm" autocomplete="off">
+          <h3 data-i18n="social.pollsCreate">ساخت نظرسنجی</h3>
+          <label class="field">
+            <span data-i18n="social.pollsQuestion">پرسش</span>
+            <input id="pollQuestion" type="text" maxlength="200">
+          </label>
+          <label class="field">
+            <span data-i18n="social.pollsOptions">گزینه‌ها (هر خط یک گزینه، ۲ تا ۱۰ مورد)</span>
+            <textarea id="pollOptions" rows="3" maxlength="1000"></textarea>
+          </label>
+          <div class="form-row">
+            <label class="field">
+              <span data-i18n="social.pollsMinutes">مدت (دقیقه، ۰ = بدون محدودیت)</span>
+              <input id="pollMinutes" type="number" min="0" max="10080" step="1" value="0" dir="ltr">
+            </label>
+            <div class="pref-grid poll-prefs">
+              <label class="pref-check"><input type="checkbox" id="pollMulti"> <span data-i18n="social.pollsMulti">چند انتخابی</span></label>
+              <label class="pref-check"><input type="checkbox" id="pollAnonymous" checked> <span data-i18n="social.pollsAnonymous">ناشناس</span></label>
+            </div>
+          </div>
+          <p class="form-msg" id="pollMsg" role="alert"></p>
+          <button class="btn btn-primary btn-sm" type="submit" data-i18n="social.pollsCreate">ساخت نظرسنجی</button>
+        </form>
+        <div id="pollList"></div>
+        <div class="social-empty" id="pollEmpty" hidden>
+          <span data-i18n="social.pollsEmpty">در این اتاق نظرسنجی‌ای نیست.</span>
+        </div>
+      </section>
+
+      <!-- reports -->
+      <section class="social-pane" id="pane-reports" data-pane="reports" hidden>
+        <div class="pane-title"><h2 data-i18n="social.reportsTitle">گزارش‌های من</h2></div>
+        <ul class="request-list" id="myReports"></ul>
+        <div class="social-empty" id="reportsEmpty" hidden>
+          <span data-i18n="social.reportsEmpty">گزارشی ثبت نکرده‌ای.</span>
+        </div>
+        <div id="staffReportsWrap" hidden>
+          <div class="pane-title spaced"><h2 data-i18n="social.reportsMod">صف بازبینی</h2></div>
+          <div class="social-toolbar">
+            <select id="staffReportFilter">
+              <option value="" data-i18n="social.searchAll">همه</option>
+              <option value="open" data-i18n="social.reportStatus.open">باز</option>
+              <option value="reviewing" data-i18n="social.reportStatus.reviewing">در حال بررسی</option>
+              <option value="resolved" data-i18n="social.reportStatus.resolved">حل‌شده</option>
+              <option value="dismissed" data-i18n="social.reportStatus.dismissed">ردشده</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" id="staffReportRefresh" type="button" data-i18n="social.refresh">تازه‌سازی</button>
+          </div>
+          <ul class="request-list" id="staffReports"></ul>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<div class="modal-backdrop hidden" id="modalBackdrop">
+  <div class="modal card" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h2 id="modalTitle"></h2>
+    <p id="modalText"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="modalCancel" type="button" data-i18n="common.cancel">انصراف</button>
+      <button class="btn btn-primary" id="modalOk" type="button" data-i18n="common.ok">تأیید</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="socialModal">
+  <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="socialModalTitle">
+    <h2 id="socialModalTitle"></h2>
+    <div id="socialModalBody"></div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
+<script type="module" src="assets/js/social.js"></script>
+</body>
+</html>

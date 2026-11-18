@@ -3,17 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#07080d">
+<meta name="theme-color" content="#14110e">
 <title>پروفایل — هم‌تماشا</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/css/design-system.css">
 <link rel="stylesheet" href="assets/css/style.css">
 <link rel="stylesheet" href="assets/css/profile-v8.css">
+<link rel="stylesheet" href="assets/css/atelier.css">
 <link rel="stylesheet" href="assets/css/device-compat.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%233d6bff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23d97742'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
 </head>
 <body class="page-profile">
@@ -37,6 +38,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>
       <span data-i18n="common.back">بازگشت</span>
     </a>
+    <a class="btn btn-ghost btn-sm" href="social.html" data-i18n="social.nav">شبکه</a>
     <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="تغییر زبان" data-i18n-aria="common.language">EN</button>
   </div>
 </header>
@@ -244,13 +246,24 @@
             <div class="hex-row">
               <label class="hex-field">
                 <span data-i18n="profile.hexAccent">کد رنگ لهجه</span>
-                <input id="accentHex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#3d6bff">
+                <input id="accentHex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#d97742">
               </label>
               <label class="hex-field">
                 <span data-i18n="profile.hexAccent2">کد رنگ دوم</span>
-                <input id="accent2Hex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#f5b23e">
+                <input id="accent2Hex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#7fb6a0">
               </label>
             </div>
+            <div class="hex-row">
+              <label class="hex-field">
+                <span data-i18n="profile.hexBg">کد رنگ پس‌زمینه</span>
+                <input id="bgColorHex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#14110e">
+              </label>
+              <label class="hex-field">
+                <span data-i18n="profile.hexText">کد رنگ متن</span>
+                <input id="textColorHex" type="text" dir="ltr" maxlength="7" spellcheck="false" inputmode="text" placeholder="#f4ede1">
+              </label>
+            </div>
+            <p class="hint" data-i18n="profile.hexOptionalHint">خالی گذاشتن کد پس‌زمینه یا متن، رنگ پیش‌فرض تم را برمی‌گرداند.</p>
           </div>
 
           <div class="field">

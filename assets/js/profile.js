@@ -639,6 +639,34 @@ function wireAppearance() {
   wireHex(hex1, "accent");
   wireHex(hex2, "accent2");
 
+  function wireOptionalHex(input, key) {
+    if (!input) return;
+    const commit = (silent) => {
+      if (!guard()) { paint(); return; }
+      const raw = input.value.trim();
+      const hex = raw ? normalizeHex(raw) : "";
+      if (raw && !hex) {
+        if (!silent) {
+          note(t("profile.hexInvalid"), "err");
+          paint();
+        }
+        return;
+      }
+      if (hex !== (getPrefs()[key] || "")) savePrefs({ [key]: hex });
+      paint();
+      if (!silent) note(t("profile.themeApplied"), "ok");
+    };
+    input.addEventListener("input", () => commit(true));
+    input.addEventListener("change", () => commit(false));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(false); }
+    });
+  }
+  const bgInput = $("#bgColorHex");
+  const textInput = $("#textColorHex");
+  wireOptionalHex(bgInput, "bgColor");
+  wireOptionalHex(textInput, "textColor");
+
   function renderSaved() {
     savedList.textContent = "";
     const items = listUserThemes();
@@ -700,6 +728,11 @@ function wireAppearance() {
     }
     if (hex1 && document.activeElement !== hex1) hex1.value = prefs.accent;
     if (hex2 && document.activeElement !== hex2) hex2.value = prefs.accent2;
+    if (bgInput && document.activeElement !== bgInput) bgInput.value = prefs.bgColor || "";
+    if (textInput && document.activeElement !== textInput) textInput.value = prefs.textColor || "";
+    const darkMode = prefs.theme !== "light";
+    if (bgInput) bgInput.placeholder = darkMode ? "#14110e" : "#f5f0e6";
+    if (textInput) textInput.placeholder = darkMode ? "#f4ede1" : "#1b1712";
     const saved = listUserThemes().find((x) => x.id === cur);
     const preset = THEME_PRESETS.find((p) => p.id === cur);
     $("#themePreviewName").textContent = saved

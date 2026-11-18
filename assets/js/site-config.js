@@ -27,8 +27,8 @@ export const SITE_CONFIG_DEFAULTS = {
     metaDescFa: "",
     metaDescEn: "",
     defaultTheme: "dark",
-    accent: "#3d6bff",
-    accent2: "#f5b23e",
+    accent: "#d97742",
+    accent2: "#7fb6a0",
     supportUrl: ""
   },
   announcement: {
@@ -131,8 +131,8 @@ export function normalizeSiteConfig(raw) {
   merged.limits.roomWindowMs = num(merged.limits.roomWindowMs, 1800, 500, 30000);
   if (!["info", "warn", "critical"].includes(merged.announcement.type)) merged.announcement.type = "info";
   if (!["dark", "light"].includes(merged.site.defaultTheme)) merged.site.defaultTheme = "dark";
-  if (!/^#[0-9a-f]{6}$/i.test(merged.site.accent)) merged.site.accent = "#3d6bff";
-  if (!/^#[0-9a-f]{6}$/i.test(merged.site.accent2)) merged.site.accent2 = "#f5b23e";
+  if (!/^#[0-9a-f]{6}$/i.test(merged.site.accent)) merged.site.accent = "#d97742";
+  if (!/^#[0-9a-f]{6}$/i.test(merged.site.accent2)) merged.site.accent2 = "#7fb6a0";
   if (!/^[\w.-]+\/[\w.-]+$/.test(merged.owner.repo)) merged.owner.repo = SITE_CONFIG_DEFAULTS.owner.repo;
   if (!/^[A-Za-z0-9_.-]+$/.test(merged.owner.branch)) merged.owner.branch = "main";
   if (!/^[A-Za-z0-9-]+$/.test(merged.owner.login)) merged.owner.login = SITE_CONFIG_DEFAULTS.owner.login;
@@ -349,10 +349,24 @@ function announceDismissKey(text) {
   return `wt.announce.${h}`;
 }
 
+function mixHex(a, b, t = 0.5) {
+  const pa = /^#?([0-9a-f]{6})$/i.exec(String(a || "").trim());
+  const pb = /^#?([0-9a-f]{6})$/i.exec(String(b || "").trim());
+  if (!pa || !pb) return a;
+  const na = parseInt(pa[1], 16);
+  const nb = parseInt(pb[1], 16);
+  const ch = (shift) => {
+    const av = (na >> shift) & 255;
+    const bv = (nb >> shift) & 255;
+    return Math.round(av + (bv - av) * t).toString(16).padStart(2, "0");
+  };
+  return `#${ch(16)}${ch(8)}${ch(0)}`;
+}
+
 export function applyGlobalTheme(cfg = current, root = document) {
   const theme = cfg?.site?.defaultTheme === "light" ? "light" : "dark";
-  const accent = /^#[0-9a-f]{6}$/i.test(cfg?.site?.accent || "") ? cfg.site.accent : "#3d6bff";
-  const accent2 = /^#[0-9a-f]{6}$/i.test(cfg?.site?.accent2 || "") ? cfg.site.accent2 : "#f5b23e";
+  const accent = /^#[0-9a-f]{6}$/i.test(cfg?.site?.accent || "") ? cfg.site.accent : "#d97742";
+  const accent2 = /^#[0-9a-f]{6}$/i.test(cfg?.site?.accent2 || "") ? cfg.site.accent2 : "#7fb6a0";
   root.documentElement.dataset.theme = theme;
   const rootStyle = root.documentElement.style;
   rootStyle.setProperty("--accent", accent);
@@ -367,9 +381,10 @@ export function applyGlobalTheme(cfg = current, root = document) {
   const rgb2 = toRgb(accent2);
   if (rgb1) rootStyle.setProperty("--brand-rgb", rgb1);
   if (rgb2) rootStyle.setProperty("--brand-2-rgb", rgb2);
-  rootStyle.setProperty("--grad", `linear-gradient(135deg,${accent} 0%,#38bdf8 58%,${accent2} 100%)`);
+  rootStyle.setProperty("--accent-strong", mixHex(accent, "#000000", 0.2));
+  rootStyle.setProperty("--grad", `linear-gradient(90deg,${accent} 0%,${mixHex(accent, "#ffffff", 0.22)} 100%)`);
   const meta = root.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = theme === "light" ? "#f3f5fa" : "#07080d";
+  if (meta) meta.content = theme === "light" ? "#f5f0e6" : "#14110e";
 }
 
 export function applySiteConfig(cfg = current, { root = document } = {}) {

@@ -1,10 +1,11 @@
-const CACHE = "wt-v95";
+const CACHE = "wt-v99";
 const SHELL = [
   "./",
   "./index.html",
   "./auth.html",
   "./profile.html",
   "./room.html",
+  "./social.html",
   "./owner.html",
   "./offline.html",
   "./assets/css/design-system.css",
@@ -13,6 +14,8 @@ const SHELL = [
   "./assets/css/auth-v8.css",
   "./assets/css/profile-v8.css",
   "./assets/css/owner.css",
+  "./assets/css/atelier.css",
+  "./assets/css/social.css",
   "./assets/css/device-compat.css",
   "./assets/data/site-config.json",
   "./assets/js/site-config.js",
@@ -35,6 +38,7 @@ const SHELL = [
   "./assets/js/transcode.js",
   "./assets/js/capabilities.js",
   "./assets/js/notifications.js",
+  "./assets/js/social.js",
   "./assets/icon.svg",
   "./assets/img/icon-192.png",
   "./assets/img/icon-512.png",

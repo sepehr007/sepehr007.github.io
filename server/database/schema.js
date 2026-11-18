@@ -544,6 +544,183 @@ const governance = String.raw`
   CREATE INDEX IF NOT EXISTS idx_feature_history_created ON feature_history(created_at DESC);
 `;
 
+const social = String.raw`
+  CREATE TABLE IF NOT EXISTS friendships (
+    id TEXT PRIMARY KEY,
+    user_a TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_b TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    UNIQUE (user_a, user_b),
+    CHECK (user_a < user_b)
+  );
+  CREATE TABLE IF NOT EXISTS friend_requests (
+    id TEXT PRIMARY KEY,
+    from_user TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    to_user TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    message TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','rejected','cancelled')),
+    created_at INTEGER NOT NULL,
+    responded_at INTEGER,
+    CHECK (from_user <> to_user)
+  );
+  CREATE TABLE IF NOT EXISTS blocks (
+    id TEXT PRIMARY KEY,
+    blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    UNIQUE (blocker_id, blocked_id),
+    CHECK (blocker_id <> blocked_id)
+  );
+  CREATE TABLE IF NOT EXISTS dm_conversations (
+    id TEXT PRIMARY KEY,
+    user_a TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_b TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (user_a, user_b),
+    CHECK (user_a < user_b)
+  );
+  CREATE TABLE IF NOT EXISTS dm_messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,
+    sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body TEXT NOT NULL DEFAULT '',
+    attachment_json TEXT NOT NULL DEFAULT '',
+    edited_at INTEGER,
+    deleted_at INTEGER,
+    created_at INTEGER NOT NULL,
+    CHECK (length(body) <= 4000)
+  );
+  CREATE TABLE IF NOT EXISTS dm_reads (
+    conversation_id TEXT NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_read_at INTEGER NOT NULL,
+    PRIMARY KEY (conversation_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS dm_prefs (
+    conversation_id TEXT NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0,1)),
+    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
+    PRIMARY KEY (conversation_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS dm_reactions (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL REFERENCES dm_messages(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE (message_id, user_id, emoji),
+    CHECK (length(emoji) BETWEEN 1 AND 32)
+  );
+  CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY,
+    reporter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL CHECK (target_type IN ('user','message','room','server','content','activity')),
+    target_id TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'other',
+    details TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','reviewing','resolved','dismissed')),
+    assigned_to TEXT REFERENCES users(id) ON DELETE SET NULL,
+    resolution TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS moderation_notes (
+    id TEXT PRIMARY KEY,
+    report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    body TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS room_polls (
+    id TEXT PRIMARY KEY,
+    room_code TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    question TEXT NOT NULL,
+    multi INTEGER NOT NULL DEFAULT 0 CHECK (multi IN (0,1)),
+    anonymous INTEGER NOT NULL DEFAULT 0 CHECK (anonymous IN (0,1)),
+    closes_at INTEGER,
+    closed_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS poll_options (
+    id TEXT PRIMARY KEY,
+    poll_id TEXT NOT NULL REFERENCES room_polls(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS poll_votes (
+    id TEXT PRIMARY KEY,
+    poll_id TEXT NOT NULL REFERENCES room_polls(id) ON DELETE CASCADE,
+    option_id TEXT NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    UNIQUE (poll_id, option_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS media_library (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('saved','favorite','recent','upload','subtitle')),
+    title TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL,
+    meta_json TEXT NOT NULL DEFAULT '{}',
+    last_used_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS support_tickets (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subject TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'general',
+    priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high','urgent')),
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','pending','resolved','closed')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS support_messages (
+    id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+    author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    body TEXT NOT NULL,
+    attachment_json TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS notification_prefs (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    prefs_json TEXT NOT NULL DEFAULT '{}',
+    quiet_from INTEGER,
+    quiet_to INTEGER,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_friend_requests_pending ON friend_requests(from_user, to_user) WHERE status = 'pending';
+  CREATE INDEX IF NOT EXISTS idx_friend_requests_to ON friend_requests(to_user, status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_friend_requests_from ON friend_requests(from_user, status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_friend_requests_pair ON friend_requests(from_user, to_user, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_friendships_b ON friendships(user_b, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_dm_conversations_a ON dm_conversations(user_a, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_dm_conversations_b ON dm_conversations(user_b, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_dm_messages_conversation ON dm_messages(conversation_id, created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_dm_messages_sender ON dm_messages(sender_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_dm_reads_user ON dm_reads(user_id);
+  CREATE INDEX IF NOT EXISTS idx_dm_reactions_message ON dm_reactions(message_id);
+  CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports(reporter_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_type, target_id);
+  CREATE INDEX IF NOT EXISTS idx_moderation_notes_report ON moderation_notes(report_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_room_polls_room ON room_polls(room_code, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_poll_options_poll ON poll_options(poll_id, position);
+  CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes(poll_id, option_id);
+  CREATE INDEX IF NOT EXISTS idx_poll_votes_user ON poll_votes(user_id, poll_id);
+  CREATE INDEX IF NOT EXISTS idx_media_library_user ON media_library(user_id, kind, last_used_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON support_tickets(user_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_support_messages_ticket ON support_messages(ticket_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_invitations_created_by ON invitations(created_by, created_at DESC);
+`;
+
 function seed(db) {
   const now = Date.now();
   const roles = [
@@ -683,6 +860,14 @@ export const MIGRATIONS = [
     name: "feature-governance",
     up(db) {
       db.exec(governance);
+    }
+  },
+  {
+    version: 9,
+    name: "social-and-moderation",
+    up(db) {
+      db.exec(social);
+      addColumn(db, "invitations", "code_hint", "TEXT NOT NULL DEFAULT ''");
     }
   }
 ];
