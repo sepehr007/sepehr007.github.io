@@ -10,6 +10,7 @@ import { Player, parseSubtitles } from "./player.js";
 import { Voice } from "./voice.js";
 import { currentUser, isLocallyBanned } from "./auth.js";
 import { touchLobby, forceCloseLobby } from "./lobbies.js";
+import { dbPut, dbGetByIndex, dbDelete, recordActivity } from "./db.js";
 import { avatarSrc } from "./avatars.js";
 import { loadSiteConfig, applySiteConfig, featureOn, accessOn, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
 import {
@@ -423,6 +424,7 @@ function wireNet() {
     $("#netLabel").textContent = t("net.online");
     $("#connLostBar")?.classList.add("hidden");
     if (isHost) touchLobby(currentUser(), code).catch(() => {});
+    recordActivity(authUser, isHost ? "room.host" : "room.join", { room: code }).catch(() => {});
     const ping = $("#netPing");
     if (ping && me.role === "owner") {
       ping.textContent = t("net.host");
@@ -445,6 +447,7 @@ function wireNet() {
   });
 
   net.on("chat", (msg) => {
+    persistChatEntry(msg);
     const near = isChatNearBottom();
     const mine = msg.by === me.id;
     const follow = mine || near || (alwaysScroll && !chatUserPaused);
@@ -1307,6 +1310,36 @@ function wireChatTimer() {
   document.addEventListener("visibilitychange", () => { if (document.hidden) saveChatTimer(); });
   window.addEventListener("beforeunload", saveChatTimer);
   saveChatTimer();
+}
+
+/* Every chat event (own and remote) reaches each client exactly once, so the
+   messages store mirrors the live conversation of this room. */
+const MESSAGE_LIMIT_PER_ROOM = 300;
+let savedMessageCount = 0;
+
+function persistChatEntry(entry) {
+  if (!entry?.id || !entry.text) return;
+  dbPut("messages", {
+    id: String(entry.id),
+    room: code,
+    by: entry.by || "",
+    nick: entry.nick || "",
+    text: String(entry.text).slice(0, 500),
+    createdAt: Number(entry.at) || Date.now(),
+    replyTo: entry.replyTo || null
+  }).then(() => {
+    savedMessageCount += 1;
+    if (savedMessageCount % 40 === 0) pruneRoomMessages();
+  }).catch(() => {});
+}
+
+async function pruneRoomMessages() {
+  try {
+    const rows = await dbGetByIndex("messages", "room", code);
+    if (rows.length <= MESSAGE_LIMIT_PER_ROOM) return;
+    rows.sort((a, b) => b.createdAt - a.createdAt);
+    for (const row of rows.slice(MESSAGE_LIMIT_PER_ROOM)) await dbDelete("messages", row.id);
+  } catch {}
 }
 
 function sendChatText(text) {
