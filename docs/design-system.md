@@ -16,6 +16,7 @@
 - `nebula.css` پوست واقعی همهٔ صفحات است و با پیشوند `html[data-theme]` کلاس‌های واقعی هر صفحه را هدف می‌گیرد (لندینگ، ورود، پروفایل، اتاق، شبکه، کنسول مالک، آفلاین). انیمیشن‌ها با `prefers-reduced-motion` و فلگ `flag-no-motion` خاموش می‌شوند.
 - پرامپت کامل طراحی در `docs/nebula-prompt.md` است.
 - کارایی: `backdrop-filter` فقط روی اجزای شناور (هدر، ریل، منو، مودال، شیت، توست) مجاز است؛ لکه‌های پس‌زمینه بدون `filter`/`mix-blend-mode` و فقط با `transform` متحرک‌اند؛ روی دستگاه لمسی انیمیشن‌های تزئینی متوقف می‌شوند. `html` و `body` با `overflow-x: clip` جلوی لغزش افقی اندروید را می‌گیرند. جزئیات در `docs/nebula-perf-prompt.md`.
+- بارگذاری بدون پرش: تگ `<html>` همیشه `data-theme="dark"` دارد. `assets/js/theme-boot.js` (هم‌زمان، داخل `<head>`) آخرین ظاهر ذخیره‌شده در `wt.boot` را قبل از اولین نقاشی اعمال می‌کند؛ `applyUIPrefs` و `applyGlobalTheme` با `saveBootSnapshot()` این عکس فوری را به‌روز می‌کنند. کنسول مالک با `data-force="dark"` همیشه تیره است. جزئیات در `docs/nebula-boot-prompt.md`.
 
 ## ۱) توکن‌ها
 

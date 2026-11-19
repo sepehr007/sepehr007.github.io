@@ -1,4 +1,4 @@
-import { store, hasPersonalTheme } from "./core.js";
+import { store, hasPersonalTheme, saveBootSnapshot } from "./core.js";
 import { apiFetch } from "./api.js";
 import { renderPricingSection } from "./pricing.js";
 import { FLAGS, normalizeFeatureRules, scheduleState, isFlagOn } from "./feature-flags.js";
@@ -385,6 +385,7 @@ export function applyGlobalTheme(cfg = current, root = document) {
   rootStyle.setProperty("--grad", `linear-gradient(135deg,${accent} 0%,${accent2} 100%)`);
   const meta = root.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = theme === "light" ? "#f4f2ff" : "#0c0b1d";
+  if (root === document) saveBootSnapshot();
 }
 
 export function applySiteConfig(cfg = current, { root = document } = {}) {

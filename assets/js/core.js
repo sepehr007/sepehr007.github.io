@@ -441,6 +441,17 @@ export function applyUIPrefs(prefs = getPrefs()) {
   root.setProperty("--cine-alpha", (0.3 + 0.42 * (cineBright / 100)).toFixed(2));
   const video = document.getElementById("video");
   if (video) video.style.filter = prefs.brightness === 100 ? "" : `brightness(${prefs.brightness / 100})`;
+  saveBootSnapshot();
+}
+
+export function saveBootSnapshot() {
+  try {
+    const d = document.documentElement;
+    const vars = {};
+    for (const name of d.style) if (name.startsWith("--")) vars[name] = d.style.getPropertyValue(name).trim();
+    const meta = document.querySelector('meta[name="theme-color"]')?.content || "";
+    localStorage.setItem("wt.boot", JSON.stringify({ theme: d.dataset.theme === "light" ? "light" : "dark", vars, meta }));
+  } catch {}
 }
 
 export function lightenHex(hex, amount = 0.35) {
