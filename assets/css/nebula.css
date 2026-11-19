@@ -11,7 +11,7 @@
 @keyframes nxDrift1{0%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(-6vw,4vh,0) scale(1.12)}100%{transform:translate3d(4vw,-3vh,0) scale(.94)}}
 @keyframes nxDrift2{0%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(5vw,-5vh,0) scale(.9)}100%{transform:translate3d(-3vw,6vh,0) scale(1.1)}}
 @keyframes nxTwinkle{0%,100%{opacity:.55}50%{opacity:1}}
-@keyframes nxStarDrift{from{background-position:0 0,0 0,0 0}to{background-position:0 -520px,0 -340px,0 -900px}}
+@keyframes nxStarDrift{from{transform:translate3d(0,0,0)}to{transform:translate3d(0,140px,0)}}
 @keyframes nxGradFlow{0%{background-position:0% 50%}100%{background-position:200% 50%}}
 @keyframes nxSpin{to{--nx-angle:360deg}}
 @keyframes nxPulse{0%{box-shadow:0 0 0 0 rgba(var(--brand-2-rgb),.55)}70%{box-shadow:0 0 0 10px rgba(var(--brand-2-rgb),0)}100%{box-shadow:0 0 0 0 rgba(var(--brand-2-rgb),0)}}
@@ -24,7 +24,6 @@ html[data-theme] body{
     radial-gradient(1200px 700px at 85% -10%,rgba(var(--brand-rgb),.22),transparent 60%),
     radial-gradient(900px 600px at 0% 105%,rgba(var(--brand-2-rgb),.16),transparent 60%),
     var(--bg);
-  background-attachment:fixed;
   color:var(--text);
   font-family:var(--font);
   -webkit-font-smoothing:antialiased;
@@ -38,12 +37,12 @@ html[data-theme] .owner-body .owner-bg{
 html[data-theme] .owner-body .owner-bg{z-index:0}
 html[data-theme] .bg-aurora .aurora,
 html[data-theme] .owner-body .owner-bg .aurora{
-  position:absolute;border-radius:50%;filter:blur(90px);opacity:.5;mix-blend-mode:screen;
+  position:absolute;border-radius:50%;opacity:.5;
   will-change:transform;
 }
-html[data-theme] .aurora.a1{width:52vw;height:52vw;top:-18vw;inset-inline-end:-12vw;background:radial-gradient(circle,rgba(var(--brand-rgb),.95),transparent 68%);animation:nxDrift1 26s ease-in-out infinite alternate}
-html[data-theme] .aurora.a2{width:44vw;height:44vw;bottom:-16vw;inset-inline-start:-10vw;background:radial-gradient(circle,rgba(var(--brand-2-rgb),.85),transparent 68%);animation:nxDrift2 30s ease-in-out infinite alternate}
-html[data-theme] .aurora.a3{width:30vw;height:30vw;top:38%;inset-inline-start:34%;background:radial-gradient(circle,rgba(59,232,255,.55),transparent 70%);opacity:.28;animation:nxDrift1 34s ease-in-out infinite alternate-reverse}
+html[data-theme] .aurora.a1{width:52vw;height:52vw;top:-18vw;inset-inline-end:-12vw;background:radial-gradient(circle,rgba(var(--brand-rgb),.85) 0%,rgba(var(--brand-rgb),.4) 30%,rgba(var(--brand-rgb),.12) 52%,transparent 70%);animation:nxDrift1 26s ease-in-out infinite alternate}
+html[data-theme] .aurora.a2{width:44vw;height:44vw;bottom:-16vw;inset-inline-start:-10vw;background:radial-gradient(circle,rgba(var(--brand-2-rgb),.75) 0%,rgba(var(--brand-2-rgb),.35) 30%,rgba(var(--brand-2-rgb),.1) 52%,transparent 70%);animation:nxDrift2 30s ease-in-out infinite alternate}
+html[data-theme] .aurora.a3{width:30vw;height:30vw;top:38%;inset-inline-start:34%;background:radial-gradient(circle,rgba(59,232,255,.5) 0%,rgba(59,232,255,.22) 32%,transparent 70%);opacity:.28;animation:nxDrift1 34s ease-in-out infinite alternate-reverse}
 html[data-theme] .bg-aurora .grid-overlay,
 html[data-theme] .owner-body .owner-bg .grid-overlay{
   position:absolute;inset:-10%;mask-image:none;-webkit-mask-image:none;
@@ -56,15 +55,16 @@ html[data-theme] .owner-body .owner-bg .grid-overlay{
     radial-gradient(1px 1px at 200px 330px,rgba(255,255,255,.6),transparent 70%);
   background-size:360px 360px;
   animation:nxTwinkle 5.5s ease-in-out infinite;
+  will-change:opacity;
 }
 html[data-theme] .bg-aurora .grid-overlay::after{
-  content:"";position:absolute;inset:0;
+  content:"";position:absolute;inset:-160px 0 0;will-change:transform,opacity;
   background-image:
     radial-gradient(1px 1px at 60px 120px,rgba(255,255,255,.9),transparent 70%),
     radial-gradient(1.6px 1.6px at 180px 20px,rgba(160,240,255,.85),transparent 70%),
     radial-gradient(1px 1px at 300px 300px,rgba(255,255,255,.7),transparent 70%);
   background-size:520px 520px,340px 340px,900px 900px;
-  animation:nxStarDrift 120s linear infinite,nxTwinkle 7s ease-in-out infinite reverse;
+  animation:nxStarDrift 60s ease-in-out infinite alternate,nxTwinkle 7s ease-in-out infinite reverse;
 }
 html[data-theme] ::-webkit-scrollbar{width:10px;height:10px}
 html[data-theme] ::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--accent) 35%,var(--border-strong));border-radius:99px;border:2px solid transparent;background-clip:padding-box}
@@ -265,8 +265,11 @@ html[data-theme] .stat-dot{width:7px;height:7px;background:var(--nx-green);box-s
 html[data-theme] .v8-hero-visual{padding:0;position:relative}
 html[data-theme] .hv-glow{
   display:block;position:absolute;inset:-12% -8%;z-index:-1;border-radius:50%;
-  background:conic-gradient(from 200deg,rgba(var(--brand-rgb),.55),rgba(var(--brand-2-rgb),.5),rgba(59,232,255,.35),rgba(var(--brand-rgb),.55));
-  filter:blur(70px);opacity:.75;
+  background:
+    radial-gradient(closest-side at 32% 42%,rgba(var(--brand-rgb),.55),rgba(var(--brand-rgb),.18) 55%,transparent),
+    radial-gradient(closest-side at 70% 62%,rgba(var(--brand-2-rgb),.5),rgba(var(--brand-2-rgb),.15) 55%,transparent),
+    radial-gradient(closest-side at 58% 22%,rgba(59,232,255,.3),transparent);
+  opacity:.8;
 }
 html[data-theme] .hv-frame{
   border-radius:24px;overflow:hidden;
@@ -1245,10 +1248,52 @@ html[data-theme="light"] .modal-backdrop{background:rgba(40,30,110,.28)}
   html[data-theme] .stage-controls{margin:0 6px 6px;border-radius:14px}
   html[data-theme] .video-frame{border-radius:16px}
   html[data-theme] .stage-empty .empty-ico{width:110px;height:110px}
-  html[data-theme] .bg-aurora .aurora{filter:blur(60px)}
 }
 @media (hover:none){
   html[data-theme] :is(.why-card,.audience-card,.price-card,.how-step,.v8-feature):hover{transform:none}
+}
+
+/* ---------- performance: glass blur only on floating chrome ---------- */
+html[data-theme]{overflow-x:clip;overscroll-behavior-x:none}
+html[data-theme] body{overflow-x:clip}
+html[data-theme] body:is(.page-landing,.page-auth,.page-profile,.page-social){height:auto;min-height:100%}
+html[data-theme] .bg-aurora{contain:strict}
+html[data-theme] :is(.card,.why-card,.audience-card,.how-step,.v8-feature,.price-card,.faq-item,.lobby-strip,.owner-body .ocard,.owner-body .ostat,
+  .btn-secondary,.hv-frame,.hv-play,.hv-sync,.hv-bubble,.hv-reactions,.hv-float,.auth-side-badge,.auth-perks li,#wsState,
+  .person-row,.request-row,.conv-row,.ticket-row,.history-row,.library-row,.search-result,.dm-layout,.msg-actions,
+  .player-big-play,.stage-controls,.person-tools,.react-tray,.chat-fab,.voice-tile,.owner-side){
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+html[data-theme] .stage-controls{background:color-mix(in srgb,#0c0b1d 80%,transparent)}
+html[data-theme] :is(.player-big-play,.hv-play){background:rgba(12,11,29,.5)}
+html[data-theme] .auth-side-badge{background:rgba(12,11,29,.5)}
+html[data-theme] .auth-perks li{background:rgba(12,11,29,.42)}
+html[data-theme] .owner-side{background:color-mix(in srgb,var(--bg-2) 94%,transparent)}
+html[data-theme] .dm-layout{background-color:var(--glass-bg-strong)}
+@media (max-width:900px){
+  html[data-theme] .hv-glow{inset:-6% 0}
+}
+@media (max-width:400px){
+  html[data-theme] :is(.site-header,.v8-header,.v8-auth-header){padding-inline:10px}
+  html[data-theme] .header-actions{gap:4px}
+  html[data-theme] .header-actions .btn{padding-inline:11px}
+  html[data-theme] .brand{gap:7px}
+  html[data-theme] .brand-mark{width:34px;height:34px;border-radius:12px}
+  html[data-theme] .brand-text{font-size:18px}
+}
+@media (hover:none),(pointer:coarse){
+  html[data-theme] .aurora,
+  html[data-theme] .grid-overlay::after,
+  html[data-theme] .grad-text,
+  html[data-theme] .v8-price-popular,
+  html[data-theme] .hv-float,
+  html[data-theme] .social-empty::before,
+  html[data-theme] .stage-empty .empty-ico{animation:none!important}
+  html[data-theme] .aurora,html[data-theme] .grid-overlay,html[data-theme] .grid-overlay::after{will-change:auto}
+  html[data-theme] .grad-text{filter:none}
+  html[data-theme] :is(.site-header,.v8-header,.v8-auth-header,.nx-rail,.top-menu,.owner-body .owner-top,.owner-header){
+    backdrop-filter:blur(12px) saturate(140%);-webkit-backdrop-filter:blur(12px) saturate(140%);
+  }
 }
 
 /* ---------- motion preferences ---------- */
