@@ -1,5 +1,6 @@
 import { validateMediaUrl, uid } from "./core.js";
 import { avatarId } from "./avatars.js";
+import { apiConnectSocket, apiGetToken, getApiBase } from "./api.js";
 
 const DEFAULT_SIGNAL_BASE = "https://ntfy.sh";
 const SIGNAL_BASE = (() => {
@@ -165,6 +166,123 @@ class Signal {
   }
 }
 
+/* ---------- server relay transport (room WebSocket) ---------- */
+class WsSignal {
+  constructor(net, code) {
+    this.net = net;
+    this.code = code;
+    this.handlers = new Set();
+    this.ws = null;
+    this.ready = false;
+    this.closed = false;
+    this.fatal = false;
+    this.selfId = "";
+    this.retryTimer = null;
+  }
+  on(fn) { this.handlers.add(fn); }
+  start() {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (ok) => { if (settled) return; settled = true; resolve(ok); };
+      const token = apiGetToken();
+      if (!token) return done(false);
+      const base = getApiBase();
+      if (!base) return done(false);
+      const full = base.startsWith("http") ? base : `${location.origin}${base.startsWith("/") ? "" : "/"}${base}`;
+      const wsUrl = `${full.replace(/^http/, "ws").replace(/\/api\/?$/, "").replace(/\/+$/, "")}/ws`;
+      let ws;
+      try {
+        ws = apiConnectSocket({
+          url: wsUrl,
+          onOpen: () => { try { ws.send(JSON.stringify({ type: "identify", token })); } catch {} },
+          onMessage: (msg) => {
+            if (!msg || typeof msg !== "object") return;
+            if (msg.type === "identified") {
+              try { ws.send(JSON.stringify({ type: "join", room: this.code, name: this.net.nick })); } catch {}
+              return;
+            }
+            if (msg.type === "joined") {
+              this.ready = true;
+              this.selfId = String(msg.self || "");
+              done(true);
+              return;
+            }
+            if (msg.type === "rt") {
+              const event = { from: String(msg.from || ""), data: msg.data };
+              this.handlers.forEach((fn) => { try { fn(event); } catch {} });
+              return;
+            }
+            if (msg.type === "error") {
+              const code = String(msg.code || "");
+              if (/^(verification_required|realtime_disabled|rooms_closed|room_)/.test(code)) this.fatal = true;
+              done(false);
+            }
+          },
+          onClose: () => this.#lost(),
+          onError: () => {}
+        });
+      } catch { return done(false); }
+      if (!ws) return done(false);
+      this.ws = ws;
+      setTimeout(() => done(false), 8000);
+    });
+  }
+  #lost() {
+    this.ws = null;
+    this.ready = false;
+    if (this.closed) return;
+    this.net.emit("status", "connecting");
+    clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => {
+      this.start().then((ok) => { if (ok) this.net.relayReconnected(); });
+    }, 2500);
+  }
+  #raw(frame) {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== 1) return Promise.resolve(false);
+    try { ws.send(JSON.stringify(frame)); return Promise.resolve(true); } catch { return Promise.resolve(false); }
+  }
+  send(obj) { return this.#raw({ type: "rt", data: obj }); }
+  sendTo(to, obj) { return this.#raw({ type: "rt", to, data: obj }); }
+  close() {
+    this.closed = true;
+    clearTimeout(this.retryTimer);
+    try { this.ws?.close(); } catch {}
+  }
+}
+
+/* Virtual peer link: same shape as an RTCDataChannel, carried by the server relay. */
+class RtLink {
+  constructor(net, peer) {
+    this.net = net;
+    this.peer = peer;
+    this.label = "wt";
+    this.binaryType = "";
+    this.readyState = "connecting";
+    this.bufferedAmount = 0;
+    this.onopen = null;
+    this.onmessage = null;
+    this.onclose = null;
+    this.onerror = null;
+  }
+  open() {
+    this.readyState = "open";
+    this.onopen?.();
+  }
+  send(data) {
+    if (this.readyState !== "open") return;
+    if (typeof data !== "string") { this.onerror?.({ reason: "binary" }); return; }
+    let msg;
+    try { msg = JSON.parse(data); } catch { return; }
+    this.net.relaySend(msg, this.peer);
+  }
+  close() {
+    if (this.readyState === "closed") return;
+    this.readyState = "closed";
+    this.onclose?.();
+  }
+}
+
 /* ---------- media connection shim (matches the shape voice.js expects) ---------- */
 class MediaConn {
   constructor(net, peer, pc) {
@@ -227,6 +345,8 @@ export class Net {
     this.hostPingTimer = null;
     this.pingRtt = 0;
     this.lastLink = "";
+    this.relayMode = false;
+    this.relay = null;
 
     if (isHost) this.#initHostState();
   }
@@ -268,6 +388,29 @@ export class Net {
     if (this.started) return;    this.started = true;
     this.emit("status", "connecting");
     this.selfId = (this.isHost ? "h" : "g") + uid().slice(0, 7);
+
+    const relay = new WsSignal(this, this.code);
+    relay.on((ev) => this.#onRelay(ev));
+    const relayOk = await relay.start();
+    if (this.destroyed) { relay.close(); return; }
+    if (relayOk) {
+      this.relayMode = true;
+      this.relay = relay;
+      this.signal = relay;
+      this.selfId = relay.selfId || this.selfId;
+      if (this.isHost) {
+        if (this.privacy === "password" && this.password) this.pwdHash = await sha256hex(this.password);
+        this.#hostOnline();
+      } else this.#guestJoin();
+      return;
+    }
+    if (relay.fatal) {
+      this.emit("status", "offline");
+      this.emit("deny", "room_unavailable");
+      return;
+    }
+    relay.close();
+
     this.topic = await topicFor(this.code);
     this.signal = new Signal(this.topic);
     this.signal.on((msg) => this.#onSignal(msg));
@@ -292,6 +435,8 @@ export class Net {
 
   /* ================= host ================= */
   #hostOnline() {
+    clearInterval(this.presenceTimer);
+    this.presenceTimer = null;
     const owner = { id: this.selfId, nick: this.nick, avatar: this.avatar, role: "owner", muted: false, voice: false, joinedAt: Date.now() };
     this.members.set(this.selfId, owner);
     this.ready = true;
@@ -316,6 +461,65 @@ export class Net {
     this.presenceTimer = setInterval(beat, PRESENCE_MS);
   }
 
+  relaySend(obj, to = "") {
+    if (!this.relayMode) return;
+    if (to && this.relay?.sendTo) return this.relay.sendTo(to, obj);
+    this.relay?.send(obj);
+  }
+
+  #onRelay(ev) {
+    const data = ev?.data;
+    if (!data || typeof data !== "object" || !ev.from) return;
+    if (data.k) return this.#onSignal({ ...data, from: ev.from });
+    if (!data.t) return;
+    if (this.isHost) {
+      const conn = this.conns.get(ev.from);
+      if (conn) this.#onGuestMessage(conn, data);
+    } else {
+      this.#onHostMessage(data);
+    }
+  }
+
+  relayReconnected() {
+    if (this.destroyed) return;
+    this.relayMode = true;
+    this.signal = this.relay;
+    this.selfId = this.relay?.selfId || this.selfId;
+    if (this.isHost) {
+      for (const conn of this.conns.values()) { try { conn.dc?.close?.(); } catch {} }
+      this.conns.clear();
+      for (const id of [...this.members.keys()]) if (id !== this.selfId) this.members.delete(id);
+      this.#hostOnline();
+    } else {
+      this.joined = false;
+      this.ready = false;
+      this.hostId = "";
+      this.hostConn = null;
+      this.dc = null;
+      this.#guestJoin();
+    }
+  }
+
+  #relayLinkToHost() {
+    if (!this.relayMode || this.hostConn || !this.hostId) return;
+    const link = new RtLink(this, this.hostId);
+    const conn = { dc: link, pc: null, peer: this.hostId, open: false };
+    this.hostConn = conn;
+    this.dc = link;
+    link.onopen = () => { conn.open = true; this.sendHello(); };
+    link.onmessage = (e) => {
+      let m;
+      try { m = JSON.parse(e.data); } catch { return; }
+      this.#onHostMessage(m);
+    };
+    link.onclose = () => {
+      this.hostConn = null;
+      this.dc = null;
+      if (this.joined) { this.emit("status", "offline"); this.emit("disconnected"); }
+    };
+    link.open();
+  }
+
   async #guestJoin() {
     let sendFails = 0;
     const giveUp = () => {
@@ -333,6 +537,7 @@ export class Net {
         pwdHash: this.password ? await sha256hex(this.password) : null
       });
       if (this.joined || this.destroyed) return;
+      if (this.relayMode && this.dc?.readyState === "open") this.sendHello();
       sendFails = ok ? 0 : sendFails + 1;
       if (sendFails >= 4) return giveUp();
       this.joinTimer = setTimeout(beat, ok ? JOIN_RETRY_MS : Math.min(6000, 1500 * sendFails));
@@ -350,13 +555,19 @@ export class Net {
 
     switch (msg.k) {
       case "presence":
-        if (!this.isHost && !this.hostId) {
-          this.hostId = msg.from;
-          if (!this.conns.get("host-pending")) { /* join loop already running */ }
+        if (!this.isHost) {
+          if (!this.hostId) this.hostId = msg.from;
+          if (this.relayMode) {
+            this.#relayLinkToHost();
+            if (!this.joined && this.dc?.readyState === "open") this.sendHello();
+          }
         }
         return;
       case "join":
-        if (this.isHost) return this.#hostHandleJoin(msg);
+        if (this.isHost) {
+          if (this.relayMode) this.#sig({ k: "presence", from: this.selfId, nick: this.nick, host: true });
+          return this.#hostHandleJoin(msg);
+        }
         return;
       case "deny":
         if (!this.isHost) {
@@ -428,6 +639,21 @@ export class Net {
         });
         if (!ok) return this.#denyGuest(msg.from, "rejected");
       }
+    }
+
+    if (this.relayMode) {
+      const link = new RtLink(this, msg.from);
+      const conn = { dc: link, pc: null, peer: msg.from, nick, avatar: cleanAvatar(msg.avatar), hello: false, createdAt: Date.now(), open: false };
+      link.onopen = () => { conn.open = true; };
+      link.onmessage = (e) => {
+        let m;
+        try { m = JSON.parse(e.data); } catch { return; }
+        this.#onGuestMessage(conn, m);
+      };
+      link.onclose = () => this.#dropMember(msg.from);
+      this.conns.set(msg.from, conn);
+      link.open();
+      return;
     }
 
     const { pc } = this.#createPc(`d:${msg.from}`);
@@ -620,7 +846,7 @@ export class Net {
     const member = { id: conn.peer, nick: finalNick, avatar: cleanAvatar(msg.avatar || conn.avatar), role: "member", muted: false, voice: false, joinedAt: Date.now() };
     this.members.set(conn.peer, member);
     this.#sendTo(conn.peer, { t: "welcome", ...this.#snapshot(member) });
-    if (this.localFile) {
+    if (this.localFile && !this.relayMode) {
       const f = this.localFile;
       this.#sendTo(conn.peer, { t: "fileOffer", id: f.id, name: f.name, size: f.size });
     }
@@ -1021,11 +1247,13 @@ export class Net {
 
   sendHello() {
     const send = () => {
+      if (this.joined || this.destroyed) return;
       if (this.dc?.readyState !== "open") return;
       this.dc.send(JSON.stringify({ t: "hello", nick: this.nick, avatar: this.avatar }));
     };
     send();
-    setTimeout(send, 400);
+    setTimeout(send, 500);
+    setTimeout(send, 1500);
   }
 
   #startHostPing() {
@@ -1142,6 +1370,10 @@ export class Net {
   }
 
   async #hostFileSend(peerId, id) {
+    if (this.relayMode) {
+      this.#sendTo(peerId, { t: "denied", reason: "file" });
+      return;
+    }
     const f = this.localFile;
     const conn = this.conns.get(peerId);
     if (!f || !conn || f.id !== id) return;
@@ -1343,6 +1575,7 @@ export class Net {
     clearTimeout(this.joinDeadline);
     if (!this.isHost) this.signal?.send({ k: "bye", from: this.selfId });
     this.signal?.close();
+    this.relay?.close();
     for (const [, rec] of this.pcs) { try { rec.pc.close(); } catch {} }
     this.pcs.clear();
   }

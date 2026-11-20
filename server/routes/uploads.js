@@ -1,7 +1,7 @@
 import { requireAuth } from "./auth.js";
 import { dbReady } from "../db.js";
 import { ensureStore } from "../userStore.js";
-import { KINDS, saveUpload, usageFor, removeUpload } from "../storage.js";
+import { KINDS, saveUpload, usageFor, removeUpload, mediaMaxBytes } from "../storage.js";
 import { audit } from "../audit.js";
 import { permissionGranted } from "../adminGuard.js";
 import { createRateLimiter } from "../redis.js";
@@ -25,17 +25,23 @@ async function ready(reply) {
 export default async function uploadRoutes(app) {
   app.get("/usage", { preHandler: [requireAuth] }, async (req) => {
     const usage = await usageFor(req.auth.userId);
+    const mediaBytes = await mediaMaxBytes();
     return {
       ok: true,
       usedBytes: usage.used,
       quotaBytes: usage.quota,
       globalUsedBytes: usage.globalUsed,
       globalQuotaBytes: usage.globalQuota,
-      kinds: Object.entries(KINDS).map(([key, value]) => ({ key, label: value.label, maxBytes: value.maxBytes, types: value.types }))
+      kinds: Object.entries(KINDS).map(([key, value]) => ({
+        key,
+        label: value.label,
+        maxBytes: key === "media" ? mediaBytes : value.maxBytes,
+        types: value.types
+      }))
     };
   });
 
-  app.post("/", { preHandler: [requireAuth, uploadLimit], bodyLimit: 55 * 1024 * 1024 }, async (req, reply) => {
+  app.post("/", { preHandler: [requireAuth, uploadLimit], bodyLimit: 101 * 1024 * 1024 }, async (req, reply) => {
     if (!(await ready(reply))) return undefined;
     if (!Buffer.isBuffer(req.body)) return fail(reply, 415, "unsupported_body", "Send the file as a raw binary body.");
     const kind = String(req.query?.kind || req.headers["x-file-kind"] || "").trim();
@@ -45,7 +51,7 @@ export default async function uploadRoutes(app) {
     if (!result.ok) {
       const message =
         result.error === "file_too_large"
-          ? "File is larger than the allowed limit."
+          ? `File is larger than the allowed ${Math.round((result.maxBytes || 0) / 1048576)} MB limit.`
           : result.error === "unsupported_type"
             ? "File type is not allowed for this upload."
             : result.error === "user_quota_exceeded"

@@ -181,7 +181,7 @@ export default async function roomRoutes(app) {
         kind: "room_activity",
         title: "عضو تازه در اتاق",
         body: `${req.auth.username || "کاربر"} به «${result.room.name || result.room.code}» پیوست.`,
-        link: "room.html?code=" + encodeURIComponent(result.room.code),
+        link: "room.html?room=" + encodeURIComponent(result.room.code),
         dedupeKey: `room_join:${result.room.code}:${req.auth.userId}`,
         dedupeWindowMs: 10 * 60_000,
         room: result.room.code

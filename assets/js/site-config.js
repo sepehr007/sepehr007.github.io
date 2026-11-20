@@ -74,6 +74,15 @@ export const SITE_CONFIG_DEFAULTS = {
     currency: "IRT",
     plans: []
   },
+  upload: {
+    maxFileMB: 50,
+    deleteAfterWatch: true,
+    deleteGraceMinutes: 30,
+    mediaKeepHours: 48
+  },
+  room: {
+    allowFileUpload: true
+  },
   featureRules: {}
 };
 
@@ -138,6 +147,13 @@ export function normalizeSiteConfig(raw) {
   };
   merged.site.supportUrl = httpUrl(merged.site.supportUrl);
   merged.plans.premiumUrl = httpUrl(merged.plans.premiumUrl);
+  merged.upload = merged.upload && typeof merged.upload === "object" ? merged.upload : {};
+  merged.upload.maxFileMB = num(merged.upload.maxFileMB, 50, 1, 100);
+  merged.upload.deleteGraceMinutes = num(merged.upload.deleteGraceMinutes, 30, 1, 1440);
+  merged.upload.mediaKeepHours = num(merged.upload.mediaKeepHours, 48, 0, 720);
+  merged.upload.deleteAfterWatch = merged.upload.deleteAfterWatch !== false;
+  merged.room = merged.room && typeof merged.room === "object" ? merged.room : {};
+  merged.room.allowFileUpload = merged.room.allowFileUpload !== false;
   if (!["IRT", "USD"].includes(merged.billing.currency)) merged.billing.currency = "IRT";
   if (!Array.isArray(merged.billing.plans)) merged.billing.plans = [];
   merged.billing.plans = merged.billing.plans.slice(0, 60);

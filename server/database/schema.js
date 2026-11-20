@@ -12,6 +12,10 @@ const identity = String.raw`
     email_verified INTEGER NOT NULL DEFAULT 0,
     email_verified_at INTEGER,
     phone TEXT NOT NULL DEFAULT '',
+    phone_verified INTEGER NOT NULL DEFAULT 0,
+    phone_verified_at INTEGER,
+    verified_channel TEXT NOT NULL DEFAULT '',
+    recovery_channel TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL,
     recovery_hash TEXT NOT NULL DEFAULT '',
     nick TEXT NOT NULL DEFAULT '',
@@ -81,6 +85,7 @@ const identity = String.raw`
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     kind TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'email',
     code_hash TEXT NOT NULL DEFAULT '',
     link_hash TEXT NOT NULL DEFAULT '',
     expires_at INTEGER NOT NULL,
@@ -480,6 +485,7 @@ const operations = String.raw`
     kind TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     deleted_at INTEGER,
+    watched_at INTEGER,
     UNIQUE (bucket, object_key)
   );
   CREATE TABLE IF NOT EXISTS backup_runs (
@@ -1107,6 +1113,38 @@ export const MIGRATIONS = [
       db.exec(`
         CREATE INDEX IF NOT EXISTS idx_users_active_created ON users(created_at DESC) WHERE deleted_at IS NULL;
         CREATE INDEX IF NOT EXISTS idx_rooms_last_activity ON rooms(last_activity_at DESC);
+      `);
+    }
+  },
+  {
+    version: 17,
+    name: "media-watch-tracking",
+    up(db) {
+      addColumn(db, "media_objects", "watched_at", "INTEGER");
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_media_watched ON media_objects(kind, watched_at);
+        CREATE INDEX IF NOT EXISTS idx_media_created_kind ON media_objects(kind, created_at);
+      `);
+    }
+  },
+  {
+    version: 18,
+    name: "account-verification-and-room-access",
+    up(db) {
+      addColumn(db, "users", "phone_verified", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "users", "phone_verified_at", "INTEGER");
+      addColumn(db, "users", "verified_channel", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "users", "recovery_channel", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "email_tokens", "channel", "TEXT NOT NULL DEFAULT 'email'");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS room_access (
+          room_code TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (room_code, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_room_access_expiry ON room_access(expires_at);
       `);
     }
   }

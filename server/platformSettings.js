@@ -38,6 +38,7 @@ export const SETTINGS_REGISTRY = [
   { id: "limits.defaultCapacity", label: "ظرفیت پیش‌فرض اتاق", category: "rooms", ...number(2, 24) },
   { id: "limits.maxCapacity", label: "بیشترین ظرفیت اتاق", category: "rooms", ...number(2, 48) },
   { id: "room.defaultPrivacy", label: "حریم پیش‌فرض اتاق", category: "rooms", ...pick("public", "password") },
+  { id: "room.allowFileUpload", label: "آپلود و اشتراک فایل در اتاق", category: "rooms", ...bool() },
   { id: "chat.maxLength", label: "حداکثر طول پیام", category: "chat", ...number(100, 4000) },
   { id: "limits.chatPerWindow", label: "پیام مجاز در بازه", category: "chat", ...number(2, 60) },
   { id: "limits.chatWindowMs", label: "طول بازهٔ چت (ms)", category: "chat", ...number(1000, 30000) },
@@ -54,8 +55,11 @@ export const SETTINGS_REGISTRY = [
   { id: "subtitle.background", label: "پس‌زمینهٔ زیرنویس", category: "subtitles", ...pick("none", "shadow", "dark") },
   { id: "subtitle.autoLoad", label: "بارگذاری خودکار زیرنویس", category: "subtitles", ...bool() },
 
-  { id: "upload.maxFileMB", label: "حداکثر حجم فایل (MB)", category: "storage", ...number(1, 4096) },
+  { id: "upload.maxFileMB", label: "حداکثر حجم ویدیو (MB)", category: "storage", ...number(1, 100) },
   { id: "upload.storageQuotaMB", label: "سهمیهٔ ذخیره‌سازی هر کاربر (MB)", category: "storage", ...number(10, 1000000) },
+  { id: "upload.deleteAfterWatch", label: "حذف خودکار ویدیو پس از تماشا", category: "storage", ...bool() },
+  { id: "upload.deleteGraceMinutes", label: "مهلت حذف بعد از آخرین تماشا (دقیقه)", category: "storage", ...number(1, 1440) },
+  { id: "upload.mediaKeepHours", label: "حذف ویدیوهای تماشانشده پس از (ساعت، ۰=خاموش)", category: "storage", ...number(0, 720) },
 
   { id: "notify.emailEnabled", label: "اعلان ایمیلی", category: "notifications", ...bool() },
   { id: "notify.browserPush", label: "اعلان مرورگر", category: "notifications", ...bool() },

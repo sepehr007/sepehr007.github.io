@@ -151,6 +151,13 @@ export function sendResetSms({ to, code, minutes }) {
   return sendSms({ to, text: resetSmsText(code, minutes) });
 }
 
+export function sendVerifySms({ to, code, minutes }) {
+  return sendSms({
+    to,
+    text: `${SITE_NAME}: کد تأیید حساب ${code} — ${minutes} دقیقه معتبر است. اگر خودت ثبت‌نام نکردی، نادیده بگیر.`
+  });
+}
+
 export function sendTestSms({ to }) {
   return sendSms({ to, text: `${SITE_NAME}: این یک پیام آزمایشی از کنسول مالک است. اتصال پیامک درست کار می‌کند.` });
 }

@@ -40,7 +40,25 @@ if (!code) {
 const roomNameParam = params.get("name") || "";
 const capacityParam = Number(params.get("cap")) || 6;
 let privacyParam = params.get("privacy") === "password" ? "password" : "public";
-let roomPassword = sessionStorage.getItem(`pwd:${code}`) || "";
+const ROOM_PWD_TTL_MS = 30 * 60_000;
+function readRoomPassword() {
+  try {
+    const raw = sessionStorage.getItem(`pwd:${code}`);
+    if (!raw) return "";
+    const saved = JSON.parse(raw);
+    if (saved?.pwd && Number(saved.exp) > Date.now()) return String(saved.pwd);
+  } catch {}
+  sessionStorage.removeItem(`pwd:${code}`);
+  return "";
+}
+function saveRoomPassword(pwd) {
+  roomPassword = pwd;
+  try {
+    sessionStorage.setItem(`pwd:${code}`, JSON.stringify({ pwd, exp: Date.now() + ROOM_PWD_TTL_MS }));
+  } catch {}
+  window.dispatchEvent(new CustomEvent("wt:room-pwd", { detail: pwd }));
+}
+let roomPassword = readRoomPassword();
 
 let nick = (authUser?.nick || params.get("nick") || store.get("wt.nick") || "").trim();
 const me = { id: "", role: "member", nick: "", avatar: authUser?.avatar || "" };
@@ -123,6 +141,10 @@ function allow(flagId, message) {
   if (flagOn(flagStates, flagId)) return true;
   if (message) toast(message, "error");
   return false;
+}
+
+function fileUploadAllowed() {
+  return siteCfg?.room?.allowFileUpload !== false && flagOn(flagStates, "watch.localFile");
 }
 
 function refreshRuntimeFlags() {
@@ -404,6 +426,9 @@ function applyFeatureFlags() {
   if (!flagOn(flagStates, "watch.subtitles")) {
     $("#subsPickBtn")?.closest(".setting")?.classList.add("feature-off");
   }
+  const uploadOff = !fileUploadAllowed();
+  $("#pickFileBtn")?.classList.toggle("feature-off", uploadOff);
+  $("#fileInput")?.classList.toggle("feature-off", uploadOff);
   applyReactionVis();
   applyCineChat();
   const userAudioOn = flagOn(flagStates, "voice.volume");
@@ -666,9 +691,7 @@ function wireNet() {
     if (reason === "password") {
       const pwd = await askPassword();
       if (!pwd) { location.replace("./"); return; }
-      roomPassword = pwd;
-      sessionStorage.setItem(`pwd:${code}`, pwd);
-      window.dispatchEvent(new CustomEvent("wt:room-pwd", { detail: pwd }));
+      saveRoomPassword(pwd);
       try { net.destroy(); } catch {}
       createNet();
       return;
@@ -1521,8 +1544,13 @@ function hidePrep() {
 
 async function loadLocalFile(file) {
   if (!isHost) return toast(t("toast.hostOnlyFile"), "error");
+  if (!fileUploadAllowed()) return toast(t("toast.fileUploadOff"), "error", 5000);
   if (!/^video\//.test(file.type) && !/\.(mkv|avi|mov|flv|wmv|ts|m2ts|mpg|mpeg|webm|ogv|mp4|m4v)$/i.test(file.name)) {
     return toast(t("toast.videoInvalid"), "error");
+  }
+  const maxMB = Math.max(1, Number(siteCfg?.upload?.maxFileMB) || 50);
+  if (file.size > maxMB * 1024 * 1024) {
+    return toast(t("toast.fileTooLarge", { max: maxMB }), "error", 6000);
   }
   showPrep();
   try {
@@ -4219,6 +4247,10 @@ function cleanup() {
   try { voice?.leave(); } catch {}
   try { player?.destroy(); } catch {}
   try { net?.destroy(); } catch {}
+  if (currentLocalUrl) {
+    try { URL.revokeObjectURL(currentLocalUrl); } catch {}
+    currentLocalUrl = null;
+  }
 }
 
 /* keep sidebar accessible on mobile */

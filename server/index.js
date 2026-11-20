@@ -13,7 +13,7 @@ import { resolveFeatureState, isEnabled, summarizeFeatures, featureStatus } from
 import { publicPlatformSettings, settingNumber } from "./platformSettings.js";
 import { mailState } from "./mailer.js";
 import { smsState } from "./sms.js";
-import authRoutes, { authenticateToken } from "./routes/auth.js";
+import authRoutes, { authenticateToken, verificationRequired } from "./routes/auth.js";
 import lobbyRoutes from "./routes/lobbies.js";
 import billingRoutes from "./routes/billing.js";
 import adminRoutes from "./routes/admin.js";
@@ -28,6 +28,8 @@ import adminAnalyticsRoutes from "./routes/adminAnalytics.js";
 import adminStorageRoutes from "./routes/adminStorage.js";
 import uploadRoutes from "./routes/uploads.js";
 import fileRoutes from "./routes/files.js";
+import { sweepMedia } from "./storage.js";
+import { scheduleOwnerBootstrap } from "./ownerBootstrap.js";
 import { sqlSweepExpired } from "./stores/billing.js";
 import { emitEvent } from "./automation.js";
 import { startMaintenance, getDatabase, databaseState, stopMaintenance, closeDatabase } from "./database/index.js";
@@ -43,6 +45,7 @@ const CHAT_WINDOW_MS = 5000;
 const CHAT_MAX = 10;
 const WS_VERSION = 1;
 const WS_MAX_FRAME = 64 * 1024;
+const WS_RT_MAX = 32 * 1024;
 const WS_FLOOD_MAX = 60;
 const WS_FLOOD_WINDOW_MS = 10_000;
 const WS_BUFFER_MAX = 200;
@@ -304,6 +307,13 @@ function registerRealtime(app) {
           if (!auth?.userId) {
             return send(ws, { type: "error", code: "invalid_token", message: "Identify requires a valid session token." });
           }
+          if ((await verificationRequired()) && Number(auth.verified) === 0) {
+            return send(ws, {
+              type: "error",
+              code: "verification_required",
+              message: "Verify your email or phone before joining rooms."
+            });
+          }
           detachSocialSocket(ws, client.userId);
           client.userId = String(auth.userId);
           client.username = String(auth.username || "");
@@ -416,6 +426,34 @@ function registerRealtime(app) {
 
         if (!client.room) {
           return send(ws, { type: "error", code: "not_joined", message: "Join a room first." });
+        }
+
+        if (type === "rt") {
+          const st = rooms.get(client.room);
+          if (!st) return undefined;
+          const data = msg.data;
+          if (!data || typeof data !== "object" || Array.isArray(data)) {
+            return send(ws, { type: "error", code: "bad_relay", message: "Relay payload must be a JSON object." });
+          }
+          let raw = "";
+          try { raw = JSON.stringify(data); } catch {}
+          if (!raw || raw.length > WS_RT_MAX) {
+            return send(ws, { type: "error", code: "relay_too_large", message: "Relay payload is too large." });
+          }
+          const out = { type: "rt", from: client.id, data };
+          const to = cleanText(msg.to, 32);
+          if (to && to !== "*") {
+            let delivered = false;
+            for (const peer of st.clients) {
+              if (peer.id === to) { send(peer.ws, out); delivered = true; break; }
+            }
+            if (!delivered) app.log.warn({ rtTo: to, from: client.id, room: client.room, size: raw.length, clients: st.clients.size }, "rt relay target missing");
+          } else {
+            for (const peer of st.clients) {
+              if (peer !== client) send(peer.ws, out);
+            }
+          }
+          return undefined;
         }
 
         if (type === "status") {
@@ -847,6 +885,7 @@ async function start() {
         startMaintenance(app.log).catch((err) => app.log.warn(`[db] maintenance unavailable: ${err.message}`));
       }
     });
+  scheduleOwnerBootstrap(app.log);
 
   const expirySweep = setInterval(async () => {
     if (dbReady()) return;
@@ -859,12 +898,22 @@ async function start() {
   }, 5 * 60_000);
   expirySweep.unref?.();
 
+  const mediaSweep = setInterval(async () => {
+    try {
+      await sweepMedia();
+    } catch (err) {
+      app.log.warn(`[storage] media sweep failed: ${err.message}`);
+    }
+  }, 60_000);
+  mediaSweep.unref?.();
+
   let closing = false;
   const shutdown = async (signal) => {
     if (closing) return;
     closing = true;
     app.log.info(`Received ${signal}, shutting down`);
     clearInterval(expirySweep);
+    clearInterval(mediaSweep);
     stopMaintenance();
     try {
       await app.close();

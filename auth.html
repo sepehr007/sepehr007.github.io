@@ -89,6 +89,7 @@
     <h1 id="authTitle">ساخت حساب</h1>
     <p class="muted" id="authSub">چند ثانیه وقت می‌گیرد؛ بعدش مستقیم می‌روی سراغ لابی.</p>
     <p class="auth-notice hidden" id="authNotice" role="status"></p>
+    <p class="hint hidden" id="inviteNotice" role="status"></p>
 
     <form id="authForm" autocomplete="on">
       <label class="field">
@@ -102,8 +103,16 @@
       <label class="field hidden" id="phoneField">
         <span data-i18n="auth.phone">شماره موبایل</span>
         <input id="phone" type="tel" maxlength="16" dir="ltr" inputmode="tel" autocomplete="tel" spellcheck="false" data-i18n-ph="auth.phonePh" placeholder="09121234567">
-        <p class="hint" data-i18n="auth.phoneHint">اختیاری؛ برای بازیابی رمز با پیامک به کار می‌آید.</p>
+        <p class="hint" data-i18n="auth.phoneHint">برای تأیید حساب یا بازیابی رمز با پیامک به کار می‌آید.</p>
       </label>
+      <div class="field hidden" id="verifyChannelField">
+        <span data-i18n="auth.verifyMethod">روش تأیید حساب</span>
+        <div class="auth-seg" role="tablist" id="verifyChannelTabs">
+          <button class="active" type="button" data-channel="email" data-i18n="auth.emailChannel">ایمیل</button>
+          <button type="button" data-channel="sms" data-i18n="auth.smsChannel">پیامک</button>
+        </div>
+        <p class="hint" id="verifyChannelHint" data-i18n="auth.verifyMethodHint">برای فعال‌سازی حساب یک کد ۸ رقمی برایت می‌فرستیم.</p>
+      </div>
       <label class="field">
         <span data-i18n="auth.password">رمز عبور</span>
         <input id="password" type="password" maxlength="64" autocomplete="new-password">
@@ -138,14 +147,14 @@
     <form id="verifyForm" class="hidden" autocomplete="off" novalidate>
       <p class="hint verify-hint" id="verifyHint"></p>
       <label class="field">
-        <span data-i18n="auth.verifyCode">کد ۸ رقمی ایمیل</span>
+        <span id="verifyCodeLabel" data-i18n="auth.verifyCode">کد ۸ رقمی ایمیل</span>
         <input id="verifyCode" class="code-input" type="text" inputmode="numeric" maxlength="8" dir="ltr" autocomplete="one-time-code" placeholder="12345678">
       </label>
       <p class="code-timer" id="verifyTimer" hidden></p>
       <button class="btn btn-primary btn-block btn-lg" id="verifySubmit" type="submit" data-i18n="auth.verifyCta">تأیید ایمیل</button>
       <p class="auth-error" id="verifyError" role="alert"></p>
       <button class="link-btn" id="verifyResend" type="button" data-i18n="auth.verifyResend">ارسال دوبارهٔ کد</button>
-      <button class="link-btn" id="verifyLater" type="button" data-i18n="auth.verifyLater">فعلاً رد کن</button>
+      <p class="hint" data-i18n="auth.verifyRequiredNote">بدون تأیید حساب، دسترسی به اتاق‌ها و امکانات سایت باز نمی‌شود.</p>
     </form>
 
     <form id="resetForm" class="hidden" autocomplete="off" novalidate>
@@ -159,6 +168,16 @@
         <span data-i18n="auth.password2">تکرار رمز</span>
         <input id="resetPassword2" type="password" maxlength="64" autocomplete="new-password">
       </label>
+      <div class="field">
+        <span data-i18n="auth.captcha">کپچا — حاصل را بنویس</span>
+        <div class="captcha-row">
+          <span class="captcha-q" id="resetCaptchaQ">?</span>
+          <button class="icon-btn" id="resetCaptchaRefresh" type="button" title="کپچای تازه" aria-label="کپچای تازه" data-i18n-title="common.captchaNew" data-i18n-aria="common.captchaNew">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+          </button>
+          <input id="resetCaptchaA" type="text" inputmode="numeric" maxlength="4" dir="ltr" placeholder="13" autocomplete="off">
+        </div>
+      </div>
       <button class="btn btn-primary btn-block btn-lg" id="resetSubmit" type="submit" data-i18n="auth.resetCta">تعیین رمز جدید</button>
       <p class="auth-error" id="resetError" role="alert"></p>
       <button class="link-btn" id="resetNewCode" type="button" data-i18n="auth.getNewCode">دریافت کد جدید</button>
@@ -180,6 +199,16 @@
           <input id="recPhone" type="tel" maxlength="16" dir="ltr" inputmode="tel" autocomplete="tel" data-i18n-ph="auth.phonePh" placeholder="09121234567">
         </label>
         <p class="hint" id="recSendHint" data-i18n="auth.forgotEmailHint">کد ۸ رقمی به این ایمیل می‌رسد؛ با آن رمز تازه می‌گذاری.</p>
+        <div class="field">
+          <span data-i18n="auth.captcha">کپچا — حاصل را بنویس</span>
+          <div class="captcha-row">
+            <span class="captcha-q" id="recSendCaptchaQ">?</span>
+            <button class="icon-btn" id="recSendCaptchaRefresh" type="button" title="کپچای تازه" aria-label="کپچای تازه" data-i18n-title="common.captchaNew" data-i18n-aria="common.captchaNew">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+            </button>
+            <input id="recSendCaptchaA" type="text" inputmode="numeric" maxlength="4" dir="ltr" placeholder="13" autocomplete="off">
+          </div>
+        </div>
         <button class="btn btn-primary btn-block btn-lg" id="recSendCode" type="button" data-i18n="auth.sendCodeEmail">ارسال کد به ایمیل</button>
         <p class="form-msg" id="recStep1Msg" role="status"></p>
         <p class="auth-error" id="recStep1Error" role="alert"></p>

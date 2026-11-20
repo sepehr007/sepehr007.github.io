@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { fileRecord } from "../storage.js";
+import { fileRecord, touchWatched } from "../storage.js";
 import { requireAuth } from "./auth.js";
 import { permissionGranted } from "../adminGuard.js";
 import { dbReady } from "../db.js";
@@ -25,6 +25,7 @@ export default async function fileRoutes(app) {
         return reply.code(403).send({ error: "forbidden", message: "You do not have access to this file." });
       }
     }
+    if (row.kind === "media") touchWatched(row.id).catch(() => {});
     const total = Number(row.size_bytes) || 0;
     const type = row.mime || "application/octet-stream";
     reply.header("content-type", type);

@@ -15,6 +15,10 @@ function toUser(row) {
     emailVerified: Boolean(row.emailVerified),
     emailVerifiedAt: row.emailVerifiedAt ? new Date(row.emailVerifiedAt) : null,
     phone: row.phone || "",
+    phoneVerified: Boolean(row.phoneVerified),
+    phoneVerifiedAt: row.phoneVerifiedAt ? new Date(row.phoneVerifiedAt) : null,
+    verifiedChannel: row.verifiedChannel || "",
+    recoveryChannel: row.recoveryChannel || "",
     passwordHash: row.passwordHash || "",
     recoveryHash: row.recoveryHash || "",
     nick: row.nick || row.username || "",
@@ -40,6 +44,10 @@ function fromSql(row) {
     emailVerified: row.email_verified,
     emailVerifiedAt: row.email_verified_at,
     phone: row.phone,
+    phoneVerified: row.phone_verified,
+    phoneVerifiedAt: row.phone_verified_at,
+    verifiedChannel: row.verified_channel,
+    recoveryChannel: row.recovery_channel,
     passwordHash: row.password_hash,
     recoveryHash: row.recovery_hash,
     nick: row.nick,
@@ -177,6 +185,10 @@ export async function createUser(data) {
       emailVerified: Boolean(data.emailVerified),
       emailVerifiedAt: data.emailVerifiedAt ? new Date(data.emailVerifiedAt) : null,
       phone: data.phone || "",
+      phoneVerified: Boolean(data.phoneVerified),
+      phoneVerifiedAt: data.phoneVerifiedAt ? new Date(data.phoneVerifiedAt) : null,
+      verifiedChannel: data.verifiedChannel || "",
+      recoveryChannel: data.recoveryChannel || "",
       passwordHash: data.passwordHash,
       recoveryHash: data.recoveryHash || "",
       nick: data.nick || data.username,
@@ -197,9 +209,10 @@ export async function createUser(data) {
     conn
       .prepare(
         `INSERT INTO users
-         (id, username, username_lower, email, email_verified, email_verified_at, phone, password_hash,
+         (id, username, username_lower, email, email_verified, email_verified_at, phone, phone_verified,
+          phone_verified_at, verified_channel, recovery_channel, password_hash,
           recovery_hash, nick, birthdate, city, bio, avatar, role, status, locale, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'fa', ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'fa', ?, ?)`
       )
       .run(
         id,
@@ -209,6 +222,10 @@ export async function createUser(data) {
         data.emailVerified ? 1 : 0,
         data.emailVerifiedAt ? new Date(data.emailVerifiedAt).getTime() : null,
         data.phone || "",
+        data.phoneVerified ? 1 : 0,
+        data.phoneVerifiedAt ? new Date(data.phoneVerifiedAt).getTime() : null,
+        data.verifiedChannel || "",
+        data.recoveryChannel || "",
         data.passwordHash,
         data.recoveryHash || "",
         data.nick || data.username,
@@ -236,6 +253,10 @@ const PATCH_COLUMNS = {
   emailVerified: "email_verified",
   emailVerifiedAt: "email_verified_at",
   phone: "phone",
+  phoneVerified: "phone_verified",
+  phoneVerifiedAt: "phone_verified_at",
+  verifiedChannel: "verified_channel",
+  recoveryChannel: "recovery_channel",
   passwordHash: "password_hash",
   recoveryHash: "recovery_hash",
   nick: "nick",
@@ -247,7 +268,7 @@ const PATCH_COLUMNS = {
   lastLoginAt: "last_login_at"
 };
 
-const DATE_FIELDS = new Set(["lastLoginAt", "emailVerifiedAt"]);
+const DATE_FIELDS = new Set(["lastLoginAt", "emailVerifiedAt", "phoneVerifiedAt"]);
 
 export async function updateUser(id, patch) {
   if (!id) return null;
@@ -323,6 +344,7 @@ function fromTokenSql(row) {
     id: String(row.id),
     userId: String(row.user_id),
     kind: row.kind,
+    channel: row.channel || "email",
     codeHash: row.code_hash || "",
     linkHash: row.link_hash || "",
     expiresAt: Number(row.expires_at),
@@ -338,6 +360,7 @@ function fromTokenDoc(doc) {
     id: String(doc._id),
     userId: String(doc.userId),
     kind: doc.kind,
+    channel: doc.channel || "email",
     codeHash: doc.codeHash || "",
     linkHash: doc.linkHash || "",
     expiresAt: doc.expiresAt ? new Date(doc.expiresAt).getTime() : 0,
@@ -347,13 +370,14 @@ function fromTokenDoc(doc) {
   };
 }
 
-export async function createEmailToken({ userId, kind, codeHash, linkHash, expiresAt }) {
+export async function createEmailToken({ userId, kind, channel = "email", codeHash, linkHash, expiresAt }) {
   const id = crypto.randomUUID();
   const now = Date.now();
   if (dbReady()) {
     const doc = await EmailToken.create({
       userId,
       kind,
+      channel,
       codeHash: codeHash || "",
       linkHash: linkHash || "",
       expiresAt: new Date(expiresAt),
@@ -364,13 +388,14 @@ export async function createEmailToken({ userId, kind, codeHash, linkHash, expir
   const db = await getDatabase();
   if (!db) throw new Error("store_unavailable");
   db.prepare(
-    `INSERT INTO email_tokens (id, user_id, kind, code_hash, link_hash, expires_at, attempts, consumed_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?)`
-  ).run(id, String(userId), kind, codeHash || "", linkHash || "", Number(expiresAt), now);
+    `INSERT INTO email_tokens (id, user_id, kind, channel, code_hash, link_hash, expires_at, attempts, consumed_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)`
+  ).run(id, String(userId), kind, channel === "sms" ? "sms" : "email", codeHash || "", linkHash || "", Number(expiresAt), now);
   return {
     id,
     userId: String(userId),
     kind,
+    channel: channel === "sms" ? "sms" : "email",
     codeHash: codeHash || "",
     linkHash: linkHash || "",
     expiresAt: Number(expiresAt),

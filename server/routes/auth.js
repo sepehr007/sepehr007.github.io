@@ -18,7 +18,7 @@ import {
   softDeleteUser
 } from "../userStore.js";
 import { sendVerificationMail, sendResetMail, sendTestMail, sendSystemMail, mailMode, mailState, applyMailSettings } from "../mailer.js";
-import { sendResetSms, sendTestSms, sendSms, smsMode, smsState } from "../sms.js";
+import { sendResetSms, sendVerifySms, sendTestSms, sendSms, smsMode, smsState } from "../sms.js";
 import { loadConnections, saveConnections, safeConnections } from "../settings.js";
 import {
   saveDbSession,
@@ -84,6 +84,7 @@ const connectionsLimit = createRateLimiter({ max: 20, windowMs: 60_000, prefix: 
 const connectionsTestLimit = createRateLimiter({ max: 6, windowMs: 60_000, prefix: "wt:rl:constest:" });
 const ownerCodeLimit = createRateLimiter({ max: 8, windowMs: 60_000, prefix: "wt:rl:ownercode:" });
 const ownerConfirmLimit = createRateLimiter({ max: 12, windowMs: 60_000, prefix: "wt:rl:ownerconfirm:" });
+const captchaLimit = createRateLimiter({ max: 60, windowMs: 60_000, prefix: "wt:rl:captcha:" });
 
 const mailCooldowns = new Map();
 
@@ -99,10 +100,12 @@ function devSecretsAllowed() {
   return process.env.NODE_ENV !== "production";
 }
 
-async function verificationRequired() {
+export async function verificationRequired() {
   const flag = String(process.env.REQUIRE_EMAIL_VERIFICATION || "").trim().toLowerCase();
-  const envValue = !(flag === "false" || flag === "off" || flag === "0");
-  return settingBool("security.requireEmailVerify", envValue);
+  const explicit = flag === "true" || flag === "on" || flag === "1" ? true
+    : flag === "false" || flag === "off" || flag === "0" ? false : null;
+  const fallback = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+  return settingBool("security.requireEmailVerify", explicit ?? fallback);
 }
 
 function maskEmail(email) {
@@ -141,6 +144,55 @@ function hashLinkToken(token) {
   return crypto.createHash("sha256").update(String(token || "")).digest("hex");
 }
 
+const CAPTCHA_TTL_MS = 5 * 60_000;
+
+function captchaRequired() {
+  const flag = String(process.env.CAPTCHA_REQUIRED || "").trim().toLowerCase();
+  if (flag === "true" || flag === "on" || flag === "1") return true;
+  if (flag === "false" || flag === "off" || flag === "0") return false;
+  return process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+}
+
+function captchaSign(payload) {
+  return crypto.createHmac("sha256", `${getSecret()}:captcha`).update(payload).digest("base64url");
+}
+
+function makeCaptcha() {
+  const a = crypto.randomInt(2, 10);
+  const b = crypto.randomInt(1, 9);
+  const exp = Date.now() + CAPTCHA_TTL_MS;
+  const nonce = crypto.randomBytes(8).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ a, b, exp, n: nonce })).toString("base64url");
+  return { id: `${payload}.${captchaSign(payload)}`, question: `${a} + ${b}` };
+}
+
+function verifyCaptcha(id, answer) {
+  const raw = String(id || "");
+  const [payload, signature] = raw.split(".");
+  if (!payload || !signature) return false;
+  const expected = captchaSign(payload);
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+  let data;
+  try {
+    data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return false;
+  }
+  if (!data || Number(data.exp) < Date.now()) return false;
+  return Number(String(answer ?? "").replace(/\D/g, "")) === Number(data.a) + Number(data.b);
+}
+
+function captchaOk(body) {
+  if (!captchaRequired() && !body?.captchaId && !body?.captchaAnswer) return true;
+  return verifyCaptcha(body?.captchaId, body?.captchaAnswer);
+}
+
+function captchaError(reply) {
+  return fail(reply, 400, "captcha", "The captcha answer is wrong or expired. Refresh it and try again.");
+}
+
 function appOrigin(req) {
   const configured = String(process.env.APP_ORIGIN || process.env.PUBLIC_URL || "").trim();
   if (configured) return configured.replace(/\/+$/, "");
@@ -151,13 +203,14 @@ function appOrigin(req) {
 
 async function issueEmailToken(user, kind, req, channel = "email") {
   const minutes = kind === "reset" ? RESET_TTL_MINUTES : VERIFY_TTL_MINUTES;
-  const useSms = channel === "sms" && kind === "reset";
+  const useSms = channel === "sms" && Boolean(user.phone) && (kind === "reset" || kind === "verify");
   const code = newNumericCode();
   const linkToken = useSms ? "" : newLinkToken();
   await deleteEmailTokens(user.id, kind);
   const record = await createEmailToken({
     userId: user.id,
     kind,
+    channel: useSms ? "sms" : "email",
     codeHash: await bcrypt.hash(code, CODE_HASH_ROUNDS),
     linkHash: linkToken ? hashLinkToken(linkToken) : "",
     expiresAt: Date.now() + minutes * 60_000
@@ -171,7 +224,9 @@ async function issueEmailToken(user, kind, req, channel = "email") {
         ? `${base}/auth.html?reset=${encodeURIComponent(linkToken)}`
         : `${base}/auth.html?verify=${encodeURIComponent(linkToken)}`;
   const delivery = useSms
-    ? await sendResetSms({ to: user.phone, code, minutes })
+    ? kind === "reset"
+      ? await sendResetSms({ to: user.phone, code, minutes })
+      : await sendVerifySms({ to: user.phone, code, minutes })
     : kind === "reset"
       ? await sendResetMail({ to: user.email, username: user.nick || user.username, code, link, minutes })
       : await sendVerificationMail({ to: user.email, username: user.nick || user.username, code, link, minutes });
@@ -343,6 +398,7 @@ async function resolveSession(token) {
       userId: String(payload.sub),
       role: account?.role || session.role || payload.role || "user",
       username: String(payload.username || account?.username || ""),
+      verified: payload.verified,
       jti: payload.jti
     }
   };
@@ -375,6 +431,9 @@ function publicUser(user) {
     username: user.username,
     email: user.email,
     phone: user.phone || "",
+    phoneVerified: Boolean(user.phoneVerified),
+    verifiedChannel: user.verifiedChannel || "",
+    recoveryChannel: user.recoveryChannel || user.verifiedChannel || (user.emailVerified ? "email" : ""),
     role: user.role || "user",
     avatar: user.avatar || "",
     nick: user.nick || user.username,
@@ -458,6 +517,7 @@ export async function issueToken(user, req) {
       sub: userId,
       role: user.role || "user",
       username: user.username,
+      verified: (await verificationRequired()) ? (user.emailVerified || user.phoneVerified ? 1 : 0) : 1,
       jti
     },
     getSecret(),
@@ -508,6 +568,14 @@ export async function requireAuth(req, reply) {
     }
     return fail(reply, 401, "invalid_token", "Session expired or invalid. Please log in again.");
   }
+  const url = String(req.raw?.url || req.url || "");
+  if (
+    (await verificationRequired()) &&
+    Number(resolved.auth.verified) === 0 &&
+    !url.startsWith("/api/auth/")
+  ) {
+    return fail(reply, 403, "verification_required", "Verify your email or phone before using this feature.");
+  }
   req.auth = resolved.auth;
   return undefined;
 }
@@ -525,6 +593,7 @@ export default async function authRoutes(app) {
     const email = cleanString(body.email, 160).toLowerCase();
     const phoneRaw = cleanString(body.phone, 20);
     const phone = phoneRaw ? normalizePhone(phoneRaw) : "";
+    const verifyChannel = body.verifyChannel === "sms" ? "sms" : "email";
     const password = String(body.password ?? "");
     const nick = cleanNick(body.nick, username);
     const birthdate = cleanString(body.birthdate, 10);
@@ -541,6 +610,10 @@ export default async function authRoutes(app) {
     if (phoneRaw && !phone) {
       return fail(reply, 400, "invalid_phone", "Phone must be a valid Iranian mobile number like 09121234567.");
     }
+    if (verifyChannel === "sms" && !phone) {
+      return fail(reply, 400, "phone_required", "Enter a mobile number to verify your account by SMS.");
+    }
+    if (!captchaOk(body)) return captchaError(reply);
     if (password.length < 8 || password.length > 128) {
       return fail(reply, 400, "invalid_password", "Password must be between 8 and 128 characters.");
     }
@@ -569,14 +642,15 @@ export default async function authRoutes(app) {
         city,
         bio,
         avatar,
+        recoveryChannel: verifyChannel,
         role: "user"
       });
       let verification = null;
       try {
-        verification = publicDelivery(user, await issueEmailToken(user, "verify", req));
+        verification = publicDelivery(user, await issueEmailToken(user, "verify", req, verifyChannel));
       } catch (err) {
-        req.log.error({ err }, "verification email failed at register");
-        verification = { sent: false, mode: mailMode(), email: maskEmail(user.email), error: "send_failed" };
+        req.log.error({ err }, "verification delivery failed at register");
+        verification = { sent: false, mode: verifyChannel === "sms" ? smsMode() : mailMode(), channel: verifyChannel, error: "send_failed" };
       }
       const issued = await issueToken(user, req);
       await audit("auth.register", req, {
@@ -656,25 +730,29 @@ export default async function authRoutes(app) {
       return fail(reply, 403, "account_inactive", "This account is suspended or disabled.");
     }
 
-    if (await verificationRequired() && !user.emailVerified) {
+    if (await verificationRequired() && !user.emailVerified && !user.phoneVerified) {
+      const channel = user.recoveryChannel === "sms" && user.phone ? "sms" : "email";
       let verification = {
-        sent: Boolean(mailMode() === "outbox"),
-        mode: mailMode(),
-        email: maskEmail(user.email),
+        sent: Boolean((channel === "sms" ? smsMode() : mailMode()) === "outbox"),
+        mode: channel === "sms" ? smsMode() : mailMode(),
+        channel,
+        email: channel === "email" ? maskEmail(user.email) : "",
+        phone: channel === "sms" ? maskPhone(user.phone) : "",
         minutes: VERIFY_TTL_MINUTES
       };
       if (takeCooldown(`verify:${user.id}`, 60_000)) {
         try {
-          verification = publicDelivery(user, await issueEmailToken(user, "verify", req));
+          verification = publicDelivery(user, await issueEmailToken(user, "verify", req, channel));
         } catch (err) {
-          req.log.error({ err }, "verification email failed at login");
-          verification = { sent: false, mode: mailMode(), email: maskEmail(user.email), error: "send_failed" };
+          req.log.error({ err }, "verification delivery failed at login");
+          verification = { sent: false, mode: channel === "sms" ? smsMode() : mailMode(), channel, error: "send_failed" };
         }
       }
       return reply.code(403).send({
-        error: "email_not_verified",
-        message: "This email is not verified yet. Enter the code we sent to it.",
+        error: "verification_required",
+        message: "Verify your email or phone before signing in.",
         email: maskEmail(user.email),
+        phone: maskPhone(user.phone),
         verification
       });
     }
@@ -715,7 +793,11 @@ export default async function authRoutes(app) {
     }
     const safe = publicUser(user);
     await cacheSet(`user:${safe.id}`, safe, USER_CACHE_TTL);
-    return { user: safe };
+    return {
+      user: safe,
+      verificationRequired: await verificationRequired(),
+      verified: Boolean(user.emailVerified || user.phoneVerified)
+    };
   });
 
   app.patch("/me", { preHandler: [requireAuth] }, async (req, reply) => {
@@ -760,6 +842,7 @@ export default async function authRoutes(app) {
         patch.email = email;
         patch.emailVerified = false;
         patch.emailVerifiedAt = null;
+        if (current?.verifiedChannel === "email") patch.verifiedChannel = "";
       }
     }
 
@@ -771,6 +854,13 @@ export default async function authRoutes(app) {
         patch.phone = phone;
       } else {
         patch.phone = "";
+      }
+      const current = await findUserById(req.auth.userId);
+      if (!current || current.phone !== (patch.phone || "")) {
+        patch.phoneVerified = false;
+        patch.phoneVerifiedAt = null;
+        if (current?.verifiedChannel === "sms") patch.verifiedChannel = "";
+        if (!patch.phone && current?.recoveryChannel === "sms") patch.recoveryChannel = "email";
       }
     }
     if (!Object.keys(patch).length) return fail(reply, 400, "nothing_to_update", "No profile fields were sent.");
@@ -932,6 +1022,7 @@ export default async function authRoutes(app) {
       return fail(reply, 403, "recovery_disabled", "Password recovery is disabled by the site owner.");
     }
     const body = req.body && typeof req.body === "object" ? req.body : {};
+    if (!captchaOk(body)) return captchaError(reply);
     const identifier = cleanString(body.identifier || body.username || body.email, 160).toLowerCase();
     const code = normalizeCode(body.code);
     const next = String(body.password ?? "");
@@ -1009,6 +1100,29 @@ export default async function authRoutes(app) {
     return { ok: true, recoveryCode };
   });
 
+  app.get("/captcha", { preHandler: [captchaLimit] }, async () => makeCaptcha());
+
+  app.patch("/recovery-method", { preHandler: [requireAuth] }, async (req, reply) => {
+    if (!(await storeReady())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const channel = body.channel === "sms" ? "sms" : body.channel === "email" ? "email" : "";
+    if (!channel) return fail(reply, 400, "invalid_channel", "Choose email or SMS as the recovery method.");
+    const user = await findUserById(req.auth.userId);
+    if (!user) return fail(reply, 401, "user_missing", "Account not found.");
+    if (channel === "sms" && (!user.phone || !user.phoneVerified)) {
+      return fail(reply, 409, "recovery_not_verified", "Verify a mobile number before choosing SMS recovery.");
+    }
+    if (channel === "email" && !user.emailVerified) {
+      return fail(reply, 409, "recovery_not_verified", "Verify your email before choosing email recovery.");
+    }
+    const updated = await updateUser(user.id, { recoveryChannel: channel });
+    const safe = publicUser(updated);
+    await cacheDel(`user:${safe.id}`);
+    await cacheSet(`user:${safe.id}`, safe, USER_CACHE_TTL);
+    await audit("auth.recovery_method", req, { targetType: "user", targetId: user.id, meta: { channel } });
+    return { ok: true, user: safe };
+  });
+
   app.post("/verify/send", { preHandler: [verifySendLimit] }, async (req, reply) => {
     if (!(await storeReady())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
     const body = req.body && typeof req.body === "object" ? req.body : {};
@@ -1034,15 +1148,28 @@ export default async function authRoutes(app) {
         };
       }
     }
-    if (user.emailVerified) return { ok: true, already: true, user: authenticated ? publicUser(user) : null };
+    const requested = body.channel === "sms" ? "sms" : body.channel === "email" ? "email" : "";
+    const channel = requested || "email";
+    if (channel === "sms" && !user.phone) {
+      return fail(reply, 400, "phone_missing", "Add a mobile number to your account before using SMS verification.");
+    }
+    const already = channel === "sms" ? user.phoneVerified : user.emailVerified;
+    if (already) return { ok: true, already: true, channel, user: authenticated ? publicUser(user) : null };
     if (!takeCooldown(`verify:${user.id}`, 45_000)) {
       return {
         ok: true,
         cooldown: true,
-        verification: { sent: true, mode: mailMode(), email: maskEmail(user.email), minutes: VERIFY_TTL_MINUTES }
+        verification: {
+          sent: true,
+          mode: channel === "sms" ? smsMode() : mailMode(),
+          channel,
+          email: channel === "email" ? maskEmail(user.email) : "",
+          phone: channel === "sms" ? maskPhone(user.phone) : "",
+          minutes: VERIFY_TTL_MINUTES
+        }
       };
     }
-    const verification = publicDelivery(user, await issueEmailToken(user, "verify", req));
+    const verification = publicDelivery(user, await issueEmailToken(user, "verify", req, channel));
     return { ok: true, verification };
   });
 
@@ -1069,7 +1196,7 @@ export default async function authRoutes(app) {
       user = rows[0] || null;
       if (!user) return fail(reply, 400, "invalid_code", "The code is not correct.");
     }
-    if (user.emailVerified) return { ok: true, already: true, user: publicUser(user) };
+    if (user.emailVerified && user.phoneVerified) return { ok: true, already: true, user: publicUser(user) };
 
     const token = await findActiveEmailToken(user.id, "verify");
     if (!token) return fail(reply, 400, "code_expired", "The code expired. Request a new one.");
@@ -1083,19 +1210,28 @@ export default async function authRoutes(app) {
       return fail(reply, 400, "invalid_code", "The code is not correct.");
     }
 
+    const channel = token.channel === "sms" ? "sms" : "email";
     await consumeEmailToken(token.id);
-    const updated = await updateUser(user.id, { emailVerified: true, emailVerifiedAt: new Date() });
+    const patch =
+      channel === "sms"
+        ? { phoneVerified: true, phoneVerifiedAt: new Date(), verifiedChannel: "sms" }
+        : { emailVerified: true, emailVerifiedAt: new Date(), verifiedChannel: "email" };
+    const updated = await updateUser(user.id, patch);
     const safe = publicUser(updated);
     await cacheDel(`user:${safe.id}`);
     await cacheSet(`user:${safe.id}`, safe, USER_CACHE_TTL);
-    await audit("auth.email_verified", req, { targetType: "user", targetId: user.id, meta: { via: "code" } });
-    if (authenticated) return { ok: true, user: safe };
+    await audit("auth.account_verified", req, {
+      targetType: "user",
+      targetId: user.id,
+      meta: { via: "code", channel }
+    });
     const issued = await issueToken(updated, req);
     return {
       ok: true,
       token: issued.token,
       tokenType: "Bearer",
       expiresIn: issued.expiresIn,
+      channel,
       user: safe
     };
   });
@@ -1111,7 +1247,11 @@ export default async function authRoutes(app) {
     if (!user) return fail(reply, 404, "user_missing", "Account not found.");
 
     await consumeEmailToken(record.id);
-    const updated = await updateUser(user.id, { emailVerified: true, emailVerifiedAt: new Date() });
+    const updated = await updateUser(user.id, {
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
+      verifiedChannel: "email"
+    });
     await cacheDel(`user:${user.id}`);
     const issued = await issueToken(updated, req);
     await audit("auth.email_verified", req, { targetType: "user", targetId: user.id, meta: { via: "link" } });
@@ -1130,6 +1270,7 @@ export default async function authRoutes(app) {
       return fail(reply, 403, "recovery_disabled", "Password recovery is disabled by the site owner.");
     }
     const body = req.body && typeof req.body === "object" ? req.body : {};
+    if (!captchaOk(body)) return captchaError(reply);
     const phoneRaw = cleanString(body.phone, 20);
     const email = cleanString(body.email, 160).toLowerCase();
 
@@ -1181,6 +1322,7 @@ export default async function authRoutes(app) {
   app.post("/password/reset", { preHandler: [resetLimit] }, async (req, reply) => {
     if (!(await storeReady())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
     const body = req.body && typeof req.body === "object" ? req.body : {};
+    if (!captchaOk(body)) return captchaError(reply);
     const linkToken = String(body.token ?? "").trim();
     const email = cleanString(body.email, 160).toLowerCase();
     const phoneRaw = cleanString(body.phone, 20);

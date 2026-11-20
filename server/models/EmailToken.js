@@ -4,6 +4,7 @@ const emailTokenSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
     kind: { type: String, enum: ["verify", "reset"], required: true, index: true },
+    channel: { type: String, enum: ["email", "sms"], default: "email" },
     codeHash: { type: String, default: "", select: false },
     linkHash: { type: String, default: "", index: true, sparse: true },
     expiresAt: { type: Date, required: true },

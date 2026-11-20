@@ -8,6 +8,7 @@ const GUEST_ROLES = ["moderator", "guest", "member"];
 const STALE_MS = 24 * 60 * 60 * 1000;
 const MAX_CAPACITY = 48;
 const MAX_ICON_BYTES = 300 * 1024;
+const ROOM_ACCESS_MS = 30 * 60_000;
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
 const MEDIA_URL_RE = /^(https:\/\/|assets\/|data:image\/(png|jpe?g|webp);base64,)/i;
 
@@ -26,6 +27,36 @@ function fail(status, code, message) {
 
 function nowMs() {
   return Date.now();
+}
+
+function hasRoomAccess(db, roomCode, userId) {
+  const row = db
+    .prepare("SELECT expires_at FROM room_access WHERE room_code = ? AND user_id = ?")
+    .get(String(roomCode || "").toUpperCase(), String(userId));
+  if (!row) return false;
+  if (Number(row.expires_at) <= Date.now()) {
+    db.prepare("DELETE FROM room_access WHERE room_code = ? AND user_id = ?").run(
+      String(roomCode || "").toUpperCase(),
+      String(userId)
+    );
+    return false;
+  }
+  return true;
+}
+
+function grantRoomAccess(db, roomCode, userId) {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO room_access (room_code, user_id, expires_at, created_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(room_code, user_id) DO UPDATE SET
+       expires_at = excluded.expires_at,
+       created_at = excluded.created_at`
+  ).run(String(roomCode || "").toUpperCase(), String(userId), now + ROOM_ACCESS_MS, now);
+}
+
+function clearRoomAccess(db, roomCode) {
+  db.prepare("DELETE FROM room_access WHERE room_code = ?").run(String(roomCode || "").toUpperCase());
 }
 
 function cleanText(value, max = 200) {
@@ -336,19 +367,26 @@ export async function joinRoom(userId, staffRole, code, { password = "", inviteC
     member = roleRow(db, row.id, userId);
   }
 
-  if (!alreadyIn && !grantedByInvite && !staff) {
-    const hostAllowed = String(row.host_id) === String(userId);
-    if (!hostAllowed) {
-      if (row.visibility === "private") {
-        fail(403, "private_room", "This room is private. Ask the Manager for an invite link.");
+  const hostAllowed = String(row.host_id) === String(userId);
+  if (!grantedByInvite && !staff && !hostAllowed) {
+    if (!alreadyIn && row.visibility === "private") {
+      fail(403, "private_room", "This room is private. Ask the Manager for an invite link.");
+    }
+    if (row.password_hash) {
+      const supplied = String(password || "");
+      let ok = false;
+      if (supplied) {
+        ok = await bcrypt.compare(supplied, row.password_hash);
+        if (ok) grantRoomAccess(db, row.room_code, userId);
+      } else {
+        ok = hasRoomAccess(db, row.room_code, userId);
       }
-      if (row.password_hash) {
-        const ok = await bcrypt.compare(String(password || ""), row.password_hash);
-        if (!ok) fail(403, "wrong_password", "The room password is incorrect.");
-      }
-      if (activeMembers(db, row.id) >= Number(row.capacity || 6)) {
-        fail(409, "room_full", "This room is full right now.");
-      }
+      if (!ok) fail(403, "wrong_password", "The room password is incorrect.");
+    }
+  }
+  if (!alreadyIn && !grantedByInvite && !staff && !hostAllowed) {
+    if (activeMembers(db, row.id) >= Number(row.capacity || 6)) {
+      fail(409, "room_full", "This room is full right now.");
     }
   }
 
@@ -478,6 +516,7 @@ export async function updateRoom(userId, staffRole, code, patch = {}) {
       push("password_hash", await bcrypt.hash(raw, 10));
       push("privacy", "password");
     }
+    clearRoomAccess(db, row.room_code);
   }
   if (!sets.length) return getRoom(code, userId, staffRole);
 

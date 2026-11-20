@@ -3,7 +3,7 @@ import {
   $, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt,
   createLimiter, confirmDialog, copyText
 } from "./core.js";
-import { currentUser, mountUserChip, isDisplayName } from "./auth.js";
+import { currentUser, mountUserChip, isDisplayName, syncRemoteSession } from "./auth.js";
 import { seedAccountsFromLocal } from "./db.js";
 import {
   createLobby, getActiveLobby, closeLobby, touchLobby, lobbyStats,
@@ -38,6 +38,11 @@ function refreshFlags() {
 }
 
 async function bootSite() {
+  const remote = await syncRemoteSession();
+  if (remote?.verificationRequired && !remote.verified) {
+    location.replace(`auth.html?mode=login&verify=1&next=${encodeURIComponent("index.html")}`);
+    return;
+  }
   siteCfg = await loadSiteConfig();
   applySiteConfig(siteCfg);
   roomCreateOpen = accessOn("roomCreate", siteCfg);

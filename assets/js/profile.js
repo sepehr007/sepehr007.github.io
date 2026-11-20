@@ -1,5 +1,5 @@
 import { initI18n, t, fmtDateTime } from "./i18n.js";
-import { apiFetch } from "./api.js";
+import { apiFetch, authApi } from "./api.js";
 import {
   $, $$, el, toast, initials, applyUIPrefs, getPrefs, savePrefs, resetPrefs,
   ACCENTS, lightenHex, registerServiceWorker, RateGuard,
@@ -31,6 +31,7 @@ let profile = null;
 let remoteProfile = null;
 let saving = false;
 let avatarGender = "girl";
+let recoveryMethodChoice = "email";
 let siteCfg = null;
 let flagStates = {};
 let flagContext = { role: "member", user: "", plan: "", room: "", server: "local" };
@@ -100,6 +101,7 @@ async function boot(me) {
   renderDeviceCard();
   wireAccount();
   wirePassword();
+  wireRecoveryMethod();
   wireDetails();
   wireFriends();
   wireAvatar();
@@ -123,6 +125,7 @@ async function boot(me) {
     refreshNotifUI();
     paintMemberSince();
     paintAppearance();
+    paintRecoveryMethod();
     renderSessions();
   });
 }
@@ -458,6 +461,68 @@ function wireAccount() {
     msg(out, t("profile.saved"), true);
     toast(t("profile.saved"), "success");
   });
+}
+
+/* ---------- recovery method ---------- */
+function recoveryChannelOf(remote) {
+  if (remote?.recoveryChannel === "sms" || remote?.recoveryChannel === "email") return remote.recoveryChannel;
+  return remote?.phoneVerified && !remote?.emailVerified ? "sms" : "email";
+}
+
+function paintRecoveryMethod() {
+  const card = $("#recoveryMethodCard");
+  if (!card) return;
+  if (!remoteProfile) {
+    card.classList.add("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+  recoveryMethodChoice = recoveryChannelOf(remoteProfile);
+  const status = $("#recoveryMethodStatus");
+  if (status) {
+    const emailState = t(remoteProfile.emailVerified ? "profile.recoveryVerified" : "profile.recoveryUnverified");
+    const smsState = t(remoteProfile.phoneVerified ? "profile.recoveryVerified" : "profile.recoveryUnverified");
+    status.textContent = [
+      t("profile.recoveryCurrent", { method: t(recoveryMethodChoice === "sms" ? "auth.smsChannel" : "auth.emailChannel") }),
+      t("profile.recoveryEmailState", { status: emailState }),
+      t("profile.recoverySmsState", { status: smsState })
+    ].join(" · ");
+  }
+  for (const btn of document.querySelectorAll("#recoveryMethodTabs button")) {
+    btn.classList.toggle("active", btn.dataset.channel === recoveryMethodChoice);
+  }
+}
+
+function wireRecoveryMethod() {
+  const tabs = document.querySelectorAll("#recoveryMethodTabs button");
+  if (!tabs.length) return;
+  for (const btn of tabs) {
+    btn.addEventListener("click", () => {
+      recoveryMethodChoice = btn.dataset.channel === "sms" ? "sms" : "email";
+      for (const other of tabs) other.classList.toggle("active", other === btn);
+      clearMsg($("#recoveryMethodMsg"));
+    });
+  }
+  $("#recoveryMethodSave")?.addEventListener("click", async () => {
+    const out = $("#recoveryMethodMsg");
+    clearMsg(out);
+    const btn = $("#recoveryMethodSave");
+    btn.disabled = true;
+    try {
+      const res = await authApi.updateRecoveryMethod({ channel: recoveryMethodChoice });
+      if (res?.user) remoteProfile = { ...(remoteProfile || {}), ...res.user };
+      else if (remoteProfile) remoteProfile.recoveryChannel = recoveryMethodChoice;
+      paintRecoveryMethod();
+      msg(out, t("profile.recoveryMethodSaved"), true);
+      toast(t("profile.recoveryMethodSaved"), "success");
+    } catch (err) {
+      const code = err?.payload?.error || "";
+      msg(out, code === "recovery_not_verified" ? t("profile.recoveryMethodNotVerified") : t("profile.saveFailed"));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  paintRecoveryMethod();
 }
 
 /* ---------- password ---------- */

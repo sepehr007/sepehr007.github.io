@@ -134,6 +134,18 @@
         </form>
       </section>
 
+      <section class="card profile-card" id="recoveryMethodCard">
+        <h2 data-i18n="profile.recoveryMethodTitle">روش بازیابی رمز</h2>
+        <p class="hint" id="recoveryMethodStatus"></p>
+        <div class="auth-seg" role="tablist" id="recoveryMethodTabs">
+          <button class="active" type="button" data-channel="email" data-i18n="auth.emailChannel">ایمیل</button>
+          <button type="button" data-channel="sms" data-i18n="auth.smsChannel">پیامک</button>
+        </div>
+        <p class="hint" data-i18n="profile.recoveryMethodHint">فقط روشی را انتخاب کن که قبلاً تأیید شده باشد؛ برای روش تأییدنشده اول از صفحهٔ ورود تأیید بگیر.</p>
+        <p class="form-msg" id="recoveryMethodMsg" role="alert"></p>
+        <button class="btn btn-secondary btn-sm" id="recoveryMethodSave" type="button" data-i18n="profile.save">ذخیره</button>
+      </section>
+
       <section class="card profile-card" id="sessionsCard">
         <h2 data-i18n="profile.sessionsTitle">دستگاه‌ها و نشست‌ها</h2>
         <p class="hint" data-i18n="profile.sessionsHint">هر جا با این حساب وارد شده‌اید اینجا دیده می‌شود. نشست مشکوک را همان‌جا ببندید.</p>

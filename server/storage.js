@@ -4,6 +4,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { appConfig } from "./config.js";
 import { getDatabase, get, all, run } from "./database/index.js";
+import { settingNumber, settingBool } from "./platformSettings.js";
 
 const ROOT = path.join(appConfig.dataDir, "uploads");
 
@@ -14,11 +15,24 @@ export const KINDS = {
   "page-image": { bucket: "pages", maxBytes: 5 * 1024 * 1024, public: true, types: ["image/png", "image/jpeg", "image/webp", "image/gif"], label: "تصویر صفحهٔ سایت" },
   subtitle: { bucket: "subtitles", maxBytes: 1024 * 1024, public: false, types: ["text/vtt", "application/x-subrip"], label: "زیرنویس" },
   attachment: { bucket: "support", maxBytes: 5 * 1024 * 1024, public: false, types: ["image/png", "image/jpeg", "image/webp", "application/pdf", "text/plain"], label: "پیوست پشتیبانی" },
-  media: { bucket: "media", maxBytes: 50 * 1024 * 1024, public: false, types: ["video/mp4", "video/webm"], label: "رسانه" }
+  media: { bucket: "media", maxBytes: 100 * 1024 * 1024, public: false, types: ["video/mp4", "video/webm"], label: "رسانه" }
 };
 
-const USER_QUOTA_BYTES = Number(process.env.UPLOAD_USER_QUOTA_MB || 60) * 1024 * 1024;
-const GLOBAL_QUOTA_BYTES = Number(process.env.UPLOAD_GLOBAL_QUOTA_MB || 2048) * 1024 * 1024;
+const MB = 1024 * 1024;
+const DEFAULT_MEDIA_MAX_MB = 50;
+const MEDIA_MAX_MB = 100;
+const USER_QUOTA_BYTES = Number(process.env.UPLOAD_USER_QUOTA_MB || 60) * MB;
+const GLOBAL_QUOTA_BYTES = Number(process.env.UPLOAD_GLOBAL_QUOTA_MB || 2048) * MB;
+
+export async function mediaMaxBytes() {
+  const mb = await settingNumber("upload.maxFileMB", DEFAULT_MEDIA_MAX_MB);
+  return Math.max(1, Math.min(MEDIA_MAX_MB, Math.round(mb))) * MB;
+}
+
+async function userQuotaBytes() {
+  const mb = await settingNumber("upload.storageQuotaMB", USER_QUOTA_BYTES / MB);
+  return Math.max(10, Math.round(mb)) * MB;
+}
 
 const EXT = {
   "image/png": "png",
@@ -72,18 +86,20 @@ export function uploadRoot() {
 }
 
 export async function usageFor(userId) {
+  const quota = await userQuotaBytes();
   const db = await getDatabase();
-  if (!db) return { used: 0, quota: USER_QUOTA_BYTES, globalUsed: 0, globalQuota: GLOBAL_QUOTA_BYTES };
+  if (!db) return { used: 0, quota, globalUsed: 0, globalQuota: GLOBAL_QUOTA_BYTES };
   const used = Number(get("SELECT COALESCE(SUM(size_bytes),0) AS n FROM media_objects WHERE owner_id = ? AND deleted_at IS NULL", userId)?.n || 0);
   const globalUsed = Number(get("SELECT COALESCE(SUM(size_bytes),0) AS n FROM media_objects WHERE deleted_at IS NULL")?.n || 0);
-  return { used, quota: USER_QUOTA_BYTES, globalUsed, globalQuota: GLOBAL_QUOTA_BYTES };
+  return { used, quota, globalUsed, globalQuota: GLOBAL_QUOTA_BYTES };
 }
 
 export async function saveUpload({ buffer, kind, declaredType = "", fileName = "", userId }) {
   const meta = KINDS[kind];
   if (!meta) return { ok: false, status: 400, error: "unknown_kind" };
   if (!buffer || !buffer.length) return { ok: false, status: 400, error: "empty_file" };
-  if (buffer.length > meta.maxBytes) return { ok: false, status: 413, error: "file_too_large", maxBytes: meta.maxBytes };
+  const maxBytes = kind === "media" ? await mediaMaxBytes() : meta.maxBytes;
+  if (buffer.length > maxBytes) return { ok: false, status: 413, error: "file_too_large", maxBytes };
   const type = resolveType(buffer, String(declaredType || "").toLowerCase(), meta.types);
   if (!type) return { ok: false, status: 415, error: "unsupported_type" };
   const usage = await usageFor(userId);
@@ -130,6 +146,57 @@ export async function fileRecord(id) {
   return { row, filePath: normalized };
 }
 
+export async function touchWatched(id) {
+  const db = await getDatabase();
+  if (!db) return false;
+  const now = Date.now();
+  const info = run(
+    "UPDATE media_objects SET watched_at = ? WHERE id = ? AND kind = 'media' AND deleted_at IS NULL AND (watched_at IS NULL OR watched_at < ?)",
+    now,
+    String(id),
+    now - 60_000
+  );
+  return Number(info?.changes || 0) > 0;
+}
+
+export async function sweepMedia() {
+  const db = await getDatabase();
+  if (!db) return { ok: false, error: "database_unavailable" };
+  const deleteAfterWatch = await settingBool("upload.deleteAfterWatch", true);
+  const graceMinutes = Math.max(1, Math.round(await settingNumber("upload.deleteGraceMinutes", 30)));
+  const keepHours = Math.max(0, Math.round(await settingNumber("upload.mediaKeepHours", 48)));
+  const now = Date.now();
+  const rows = [];
+  if (deleteAfterWatch) {
+    rows.push(
+      ...all(
+        "SELECT * FROM media_objects WHERE kind = 'media' AND deleted_at IS NULL AND watched_at IS NOT NULL AND watched_at <= ? LIMIT 200",
+        now - graceMinutes * 60_000
+      )
+    );
+  }
+  if (keepHours > 0) {
+    rows.push(
+      ...all(
+        "SELECT * FROM media_objects WHERE kind = 'media' AND deleted_at IS NULL AND watched_at IS NULL AND created_at <= ? LIMIT 200",
+        now - keepHours * 3_600_000
+      )
+    );
+  }
+  let removed = 0;
+  let freedBytes = 0;
+  for (const row of rows) {
+    try {
+      const filePath = path.join(ROOT, row.object_key);
+      if (path.resolve(filePath).startsWith(path.resolve(ROOT) + path.sep)) await fsp.rm(filePath, { force: true });
+    } catch {}
+    run("DELETE FROM media_objects WHERE id = ?", row.id);
+    removed += 1;
+    freedBytes += Number(row.size_bytes) || 0;
+  }
+  return { ok: true, removed, freedBytes };
+}
+
 export async function removeUpload(id, { actorId = "", isStaff = false } = {}) {
   const db = await getDatabase();
   if (!db) return { ok: false, error: "database_unavailable" };
@@ -170,7 +237,7 @@ export async function storageSummary() {
     diskBytes,
     byKind: byKind.map((row) => ({ kind: row.kind, files: Number(row.files), bytes: Number(row.bytes), label: KINDS[row.kind]?.label || row.kind })),
     deleted: { files: Number(deleted.files), bytes: Number(deleted.bytes) },
-    quota: { user: USER_QUOTA_BYTES, global: GLOBAL_QUOTA_BYTES }
+    quota: { user: await userQuotaBytes(), global: GLOBAL_QUOTA_BYTES }
   };
 }
 

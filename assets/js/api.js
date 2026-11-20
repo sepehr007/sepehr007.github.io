@@ -213,6 +213,15 @@ export async function apiFetch(path, options = {}) {
         globalThis.dispatchEvent?.(new CustomEvent("wt:api-unauthorized"));
       } catch {}
     }
+    if (res.status === 403 && code === "verification_required") {
+      try {
+        globalThis.dispatchEvent?.(new CustomEvent("wt:verification-required"));
+        if (!/auth\.html$/i.test(location.pathname)) {
+          const next = `${location.pathname.replace(/^.*\//, "")}${location.search}`;
+          location.replace(`auth.html?mode=login&verify=1&next=${encodeURIComponent(next)}`);
+        }
+      } catch {}
+    }
     throw new ApiError(message, { status: res.status, code, payload: data });
   }
 
@@ -224,11 +233,14 @@ export function apiHealth() {
 }
 
 export const authApi = {
-  register({ username, email, phone, password, avatar, nick }) {
+  captcha() {
+    return apiFetch("/auth/captcha", { auth: false });
+  },
+  register({ username, email, phone, password, avatar, nick, verifyChannel, captchaId, captchaAnswer }) {
     return apiFetch("/auth/register", {
       method: "POST",
       auth: false,
-      body: { username, email, phone, password, avatar, nick }
+      body: { username, email, phone, password, avatar, nick, verifyChannel, captchaId, captchaAnswer }
     });
   },
   login({ identifier, email, username, password }) {
@@ -253,11 +265,11 @@ export const authApi = {
       return res;
     });
   },
-  recover({ identifier, code, password }) {
+  recover({ identifier, code, password, captchaId, captchaAnswer }) {
     return apiFetch("/auth/recover", {
       method: "POST",
       auth: false,
-      body: { identifier, code, password }
+      body: { identifier, code, password, captchaId, captchaAnswer }
     }).then((res) => {
       if (res?.token) apiSetToken(res.token);
       return res;
@@ -266,8 +278,11 @@ export const authApi = {
   newRecoveryCode({ password }) {
     return apiFetch("/auth/recovery-code", { method: "POST", body: { password } });
   },
-  sendEmailCode({ identifier } = {}) {
-    return apiFetch("/auth/verify/send", { method: "POST", body: { identifier } });
+  updateRecoveryMethod({ channel }) {
+    return apiFetch("/auth/recovery-method", { method: "PATCH", body: { channel } });
+  },
+  sendEmailCode({ identifier, channel } = {}) {
+    return apiFetch("/auth/verify/send", { method: "POST", body: { identifier, channel } });
   },
   confirmEmailCode({ code, identifier }) {
     return apiFetch("/auth/verify/confirm", { method: "POST", body: { code, identifier } }).then((res) => {
@@ -281,18 +296,22 @@ export const authApi = {
       return res;
     });
   },
-  forgotPassword({ email, phone }) {
+  forgotPassword({ email, phone, captchaId, captchaAnswer }) {
     return apiFetch("/auth/password/forgot", {
       method: "POST",
       auth: false,
-      body: phone ? { phone } : { email }
+      body: phone ? { phone, captchaId, captchaAnswer } : { email, captchaId, captchaAnswer }
     });
   },
-  resetPassword({ token, email, phone, code, password }) {
+  resetPassword({ token, email, phone, code, password, captchaId, captchaAnswer }) {
     return apiFetch("/auth/password/reset", {
       method: "POST",
       auth: false,
-      body: token ? { token, password } : phone ? { phone, code, password } : { email, code, password }
+      body: token
+        ? { token, password, captchaId, captchaAnswer }
+        : phone
+          ? { phone, code, password, captchaId, captchaAnswer }
+          : { email, code, password, captchaId, captchaAnswer }
     }).then((res) => {
       if (res?.token) apiSetToken(res.token);
       return res;

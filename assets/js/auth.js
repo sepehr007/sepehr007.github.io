@@ -339,6 +339,8 @@ export async function syncRemoteSession() {
     const user = res?.user;
     if (!user?.username) return null;
     writeApiUser(user);
+    if (typeof res.verificationRequired === "boolean") user.verificationRequired = res.verificationRequired;
+    user.verified = Boolean(res.verified);
     const key = await mirrorApiAccount(user);
     if (key) saveSession(key);
     return user;
@@ -587,7 +589,7 @@ function clearThrottle(u) {
   writeThrottle(map);
 }
 
-export async function register({ username, email, phone, password }) {
+export async function register({ username, email, phone, password, verifyChannel = "email", captchaId = "", captchaAnswer = "" }) {
   const u = String(username || "").trim().toLowerCase();
   const mail = String(email || "").trim().toLowerCase();
   const phoneRaw = String(phone || "").trim();
@@ -606,7 +608,7 @@ export async function register({ username, email, phone, password }) {
       method: "POST",
       auth: false,
       timeoutMs: 12000,
-      body: { username: u, email: mail, phone: mobile, password }
+      body: { username: u, email: mail, phone: mobile, password, verifyChannel, captchaId, captchaAnswer }
     });
     if (res?.token && res.user) {
       apiSetToken(res.token);
@@ -691,11 +693,13 @@ export async function login({ username, password }) {
     }
   } catch (err) { apiErr = err; }
   if (apiErr?.status === 429) return { ok: false, error: "rate" };
-  if (apiErr?.payload?.error === "email_not_verified") {
+  if (apiErr?.payload?.error === "verification_required" || apiErr?.payload?.error === "email_not_verified") {
     return {
       ok: false,
       error: "verify",
       email: apiErr.payload.email || "",
+      phone: apiErr.payload.phone || "",
+      channel: apiErr.payload.verification?.channel || "email",
       verification: apiErr.payload.verification || null
     };
   }
@@ -716,7 +720,7 @@ export async function login({ username, password }) {
   return { ok: true, nick: rec.nick };
 }
 
-export async function recover({ username, code, password }) {
+export async function recover({ username, code, password, captchaId = "", captchaAnswer = "" }) {
   const identifier = String(username || "").trim();
   const u = identifier.toLowerCase();
   const recoveryCode = normalizeRecoveryCode(code);
@@ -730,7 +734,7 @@ export async function recover({ username, code, password }) {
   if (recoveryCode) {
     let apiErr = null;
     try {
-      const res = await authApi.recover({ identifier, code: recoveryCode, password });
+      const res = await authApi.recover({ identifier, code: recoveryCode, password, captchaId, captchaAnswer });
       if (res?.token && res.user) {
         apiSetToken(res.token);
         writeApiUser(res.user);
@@ -816,7 +820,10 @@ function mailError(err, fallback = "server") {
   if (code === "invalid_password") return "password";
   if (code === "mail_failed") return "mail";
   if (code === "invalid_phone") return "phone";
+  if (code === "phone_required" || code === "phone_missing") return "phone";
   if (code === "sms_failed") return "sms";
+  if (code === "captcha") return "captcha";
+  if (code === "verification_required") return "verify";
   return fallback;
 }
 
@@ -840,20 +847,21 @@ export async function verifyEmailCode(code, identifier = "") {
   if (!/^\d{8}$/.test(digits)) return { ok: false, error: "code" };
   try {
     const res = await authApi.confirmEmailCode({ code: digits, identifier: String(identifier || "").trim() });
+    if (res?.token) apiSetToken(res.token);
     if (res?.user) {
       writeApiUser(res.user);
       const key = await mirrorApiAccount(res.user, { force: true });
       if (key) saveSession(key);
     }
-    return { ok: true, user: res?.user || null, already: Boolean(res?.already) };
+    return { ok: true, user: res?.user || null, already: Boolean(res?.already), channel: res?.channel || "" };
   } catch (err) {
     return { ok: false, error: mailError(err) };
   }
 }
 
-export async function resendVerificationEmail(identifier = "") {
+export async function resendVerificationEmail(identifier = "", channel = "email") {
   try {
-    const res = await authApi.sendEmailCode({ identifier: String(identifier || "").trim() });
+    const res = await authApi.sendEmailCode({ identifier: String(identifier || "").trim(), channel });
     return { ok: true, already: Boolean(res?.already), verification: res?.verification || null };
   } catch (err) {
     return { ok: false, error: mailError(err) };
@@ -876,7 +884,7 @@ export async function verifyEmailWithLink(token) {
   }
 }
 
-export async function requestPasswordCode({ email = "", phone = "" } = {}) {
+export async function requestPasswordCode({ email = "", phone = "", captchaId = "", captchaAnswer = "" } = {}) {
   const channel = phone ? "sms" : "email";
   const mail = String(email || "").trim().toLowerCase();
   const mobile = channel === "sms" ? normalizePhone(phone) : "";
@@ -884,7 +892,7 @@ export async function requestPasswordCode({ email = "", phone = "" } = {}) {
     return { ok: false, error: channel === "sms" ? "phone" : "email" };
   }
   try {
-    const res = await authApi.forgotPassword(channel === "sms" ? { phone: mobile } : { email: mail });
+    const res = await authApi.forgotPassword(channel === "sms" ? { phone: mobile, captchaId, captchaAnswer } : { email: mail, captchaId, captchaAnswer });
     return {
       ok: true,
       channel,
@@ -901,38 +909,38 @@ export async function requestPasswordCode({ email = "", phone = "" } = {}) {
   }
 }
 
-export async function resetPasswordWithEmail({ email, code, password }) {
+export async function resetPasswordWithEmail({ email, code, password, captchaId = "", captchaAnswer = "" }) {
   const mail = String(email || "").trim().toLowerCase();
   const digits = String(code || "").replace(/\D/g, "");
   if (!emailLooksValid(mail)) return { ok: false, error: "email" };
   if (!/^\d{8}$/.test(digits)) return { ok: false, error: "code" };
   if (!isPassword(password)) return { ok: false, error: "password" };
   try {
-    const res = await authApi.resetPassword({ email: mail, code: digits, password });
+    const res = await authApi.resetPassword({ email: mail, code: digits, password, captchaId, captchaAnswer });
     return await adoptResetSession(res, password);
   } catch (err) {
     return { ok: false, error: mailError(err) };
   }
 }
 
-export async function resetPasswordWithPhone({ phone, code, password }) {
+export async function resetPasswordWithPhone({ phone, code, password, captchaId = "", captchaAnswer = "" }) {
   const mobile = normalizePhone(phone);
   const digits = String(code || "").replace(/\D/g, "");
   if (!mobile) return { ok: false, error: "phone" };
   if (!/^\d{8}$/.test(digits)) return { ok: false, error: "code" };
   if (!isPassword(password)) return { ok: false, error: "password" };
   try {
-    const res = await authApi.resetPassword({ phone: mobile, code: digits, password });
+    const res = await authApi.resetPassword({ phone: mobile, code: digits, password, captchaId, captchaAnswer });
     return await adoptResetSession(res, password);
   } catch (err) {
     return { ok: false, error: mailError(err) };
   }
 }
 
-export async function resetPasswordWithLink({ token, password }) {
+export async function resetPasswordWithLink({ token, password, captchaId = "", captchaAnswer = "" }) {
   if (!isPassword(password)) return { ok: false, error: "password" };
   try {
-    const res = await authApi.resetPassword({ token: String(token || "").trim(), password });
+    const res = await authApi.resetPassword({ token: String(token || "").trim(), password, captchaId, captchaAnswer });
     return await adoptResetSession(res, password);
   } catch (err) {
     return { ok: false, error: mailError(err) };
@@ -941,15 +949,9 @@ export async function resetPasswordWithLink({ token, password }) {
 
 /* ---------- captcha ---------- */
 export function makeCaptcha() {
-  const plus = Math.random() < 0.6;
-  if (plus) {
-    const a = 2 + Math.floor(Math.random() * 11);
-    const b = 1 + Math.floor(Math.random() * 9);
-    return { q: `${a} + ${b}`, a: a + b };
-  }
-  const b = 2 + Math.floor(Math.random() * 8);
-  const a = b + 1 + Math.floor(Math.random() * 9);
-  return { q: `${a} − ${b}`, a: a - b };
+  const a = 2 + Math.floor(Math.random() * 9);
+  const b = 1 + Math.floor(Math.random() * 8);
+  return { q: `${a} + ${b}`, a: a + b };
 }
 
 /* ---------- user chip ---------- */
@@ -992,10 +994,13 @@ export async function initAuthPage() {
   let mode = new URLSearchParams(location.search).get("mode") === "login" ? "login" : "register";
   let captcha = makeCaptcha();
   let recCaptcha = makeCaptcha();
+  let recSendCaptcha = makeCaptcha();
+  let resetCaptcha = makeCaptcha();
   let busy = false;
   let recovering = false;
   let lastRecoveryCode = "";
   let verifyEmail = "";
+  let verifyChannel = "email";
   let verifyIdentifier = "";
   let verifyDone = null;
   let resetToken = new URLSearchParams(location.search).get("reset") || "";
@@ -1007,8 +1012,14 @@ export async function initAuthPage() {
 
   const nextRaw = new URLSearchParams(location.search).get("next") || "";
   const next = safeNext(nextRaw);
+  const inviteNotice = $("#inviteNotice");
+  if (inviteNotice && /^room\.html(\?|$)/i.test(next)) {
+    inviteNotice.textContent = t("auth.inviteNotice");
+    inviteNotice.classList.remove("hidden");
+  }
 
   const phoneField = $("#phoneField");
+  const verifyChannelField = $("#verifyChannelField");
   const confirmField = $("#confirmField");
   const captchaField = $("#captchaField");
   const errLine = $("#authError");
@@ -1019,39 +1030,50 @@ export async function initAuthPage() {
   function renderPwMeter(pw) {
     const score = passwordScore(pw);
     if (meter) {
-      meter.classList.toggle("hidden", !pw);
+      meter.classList.toggle("hidden", !pw || mode === "login");
       meter.dataset.score = String(score);
       const fill = meter.firstElementChild;
       if (fill) fill.style.width = `${score * 25}%`;
     }
-    if (pwLabel) pwLabel.textContent = pw ? t(`auth.pwLevel${Math.max(1, score)}`) : "";
+    if (pwLabel) pwLabel.textContent = pw && mode !== "login" ? t(`auth.pwLevel${Math.max(1, score)}`) : "";
   }
   $("#password")?.addEventListener("input", (e) => renderPwMeter(e.target.value));
 
-  function drawCaptcha() {
-    captcha = makeCaptcha();
-    const q = $("#captchaQ");
-    if (q) q.textContent = `${captcha.q} = ?`;
-    const inp = $("#captchaA");
+  async function paintCaptcha(setter, qSel, aSel) {
+    const local = makeCaptcha();
+    setter(local);
+    const q = $(qSel);
+    const inp = $(aSel);
+    if (q) q.textContent = `${local.q} = ?`;
     if (inp) inp.value = "";
+    try {
+      const res = await authApi.captcha();
+      if (!res?.id || !res?.question) return;
+      if (inp && inp.value) return;
+      setter({ q: String(res.question), id: String(res.id) });
+      if (q) q.textContent = `${res.question} = ?`;
+    } catch {}
   }
 
-  function drawRecCaptcha() {
-    recCaptcha = makeCaptcha();
-    const q = $("#recCaptchaQ");
-    if (q) q.textContent = `${recCaptcha.q} = ?`;
-    const inp = $("#recCaptchaA");
-    if (inp) inp.value = "";
+  const drawCaptcha = () => paintCaptcha((v) => { captcha = v; }, "#captchaQ", "#captchaA");
+  const drawRecCaptcha = () => paintCaptcha((v) => { recCaptcha = v; }, "#recCaptchaQ", "#recCaptchaA");
+  const drawRecSendCaptcha = () => paintCaptcha((v) => { recSendCaptcha = v; }, "#recSendCaptchaQ", "#recSendCaptchaA");
+  const drawResetCaptcha = () => paintCaptcha((v) => { resetCaptcha = v; }, "#resetCaptchaQ", "#resetCaptchaA");
+  const drawLegacyCaptcha = () => paintCaptcha((v) => { legacyCaptcha = v; }, "#recLegacyCaptchaQ", "#recLegacyCaptchaA");
+
+  function captchaCheck(set, inputId) {
+    const answer = normalizeDigits($(inputId)?.value || "").replace(/\D/g, "");
+    if (!answer) return false;
+    return set?.id ? true : Number(answer) === set?.a;
+  }
+  function captchaBody(set, inputId) {
+    return {
+      captchaId: set?.id || "",
+      captchaAnswer: normalizeDigits($(inputId)?.value || "").replace(/\D/g, "")
+    };
   }
 
   let legacyCaptcha = makeCaptcha();
-  function drawLegacyCaptcha() {
-    legacyCaptcha = makeCaptcha();
-    const q = $("#recLegacyCaptchaQ");
-    if (q) q.textContent = `${legacyCaptcha.q} = ?`;
-    const inp = $("#recLegacyCaptchaA");
-    if (inp) inp.value = "";
-  }
 
   const timers = new WeakMap();
   function stopCodeTimer(node) {
@@ -1087,6 +1109,17 @@ export async function initAuthPage() {
     timers.set(node, setInterval(tick, 1000));
   }
 
+  function setVerifyChannel(channel) {
+    verifyChannel = channel === "sms" ? "sms" : "email";
+    for (const btn of document.querySelectorAll("#verifyChannelTabs button")) {
+      btn.classList.toggle("active", btn.dataset.channel === verifyChannel);
+    }
+    const hint = $("#verifyChannelHint");
+    if (hint) hint.textContent = t(verifyChannel === "sms" ? "auth.verifyMethodHintSms" : "auth.verifyMethodHint");
+    const phone = $("#phone");
+    if (phone) phone.required = verifyChannel === "sms";
+  }
+
   function setMode(m) {
     mode = m;
     recovering = false;
@@ -1096,13 +1129,19 @@ export async function initAuthPage() {
       document.getElementById(id)?.classList.add("hidden");
     }
     form.classList.remove("hidden");
+    document.querySelector(".auth-back")?.classList.remove("hidden");
     const fa = document.documentElement.lang === "fa";
     $("#tabLogin")?.classList.toggle("active", m === "login");
     $("#tabRegister")?.classList.toggle("active", m === "register");
     phoneField?.classList.toggle("hidden", m === "login");
+    verifyChannelField?.classList.toggle("hidden", m === "login");
     confirmField?.classList.toggle("hidden", m === "login");
     captchaField?.classList.toggle("hidden", m === "login");
     $("#emailField")?.classList.toggle("hidden", m === "login");
+    const pwInput = $("#password");
+    if (pwInput) pwInput.setAttribute("autocomplete", m === "login" ? "current-password" : "new-password");
+    document.querySelector(".pw-hint")?.classList.toggle("hidden", m === "login");
+    renderPwMeter(pwInput?.value || "");
     const idLabel = $("#usernameLabel");
     const idInput = $("#username");
     if (idLabel) idLabel.textContent = t(m === "login" ? "auth.identifier" : "auth.username");
@@ -1114,7 +1153,7 @@ export async function initAuthPage() {
     if (submit) submit.textContent = t(m === "login" ? "auth.login" : "auth.register");
     if (errLine) errLine.textContent = "";
     $("#forgotLink")?.classList.toggle("hidden", m !== "login" || !featureOn("passwordReset", cfg));
-    if (m === "register") drawCaptcha();
+    if (m === "register") { setVerifyChannel(verifyChannel); drawCaptcha(); }
     $("#username")?.focus();
   }
 
@@ -1178,14 +1217,32 @@ export async function initAuthPage() {
     } else {
       $("#recStep1Error").textContent = "";
       setRecoverChannel(recoverChannel);
+      drawRecSendCaptcha();
       (recoverChannel === "sms" ? $("#recPhone") : $("#recEmail"))?.focus();
     }
   }
 
-  function showVerify(email, done, { required = false, identifier = "", minutes = 0 } = {}) {
+  function paintVerifyTexts() {
+    const sms = verifyChannel === "sms";
+    $("#authTitle").textContent = t(sms ? "auth.verifyTitleSms" : "auth.verifyTitle");
+    $("#authSub").textContent = t(sms ? "auth.verifySubSms" : "auth.verifySub");
+    const label = $("#verifyCodeLabel");
+    if (label) label.textContent = t(sms ? "auth.verifyCodeSms" : "auth.verifyCode");
+    const cta = $("#verifySubmit");
+    if (cta) cta.textContent = t(sms ? "auth.verifyCtaSms" : "auth.verifyCta");
+    const hint = $("#verifyHint");
+    if (hint) {
+      hint.textContent = verifyEmail
+        ? t(sms ? "auth.codeSentToPhone" : "auth.codeSentTo", sms ? { phone: verifyEmail } : { email: verifyEmail })
+        : "";
+    }
+  }
+
+  function showVerify(email, done, { required = false, identifier = "", channel = "email", minutes = 0 } = {}) {
     recovering = false;
+    document.querySelector(".auth-back")?.classList.toggle("hidden", required);
     verifyIdentifier = identifier;
-    $("#verifyLater")?.classList.toggle("hidden", Boolean(required));
+    verifyChannel = channel === "sms" ? "sms" : "email";
     for (const id of ["authForm", "recoverForm", "resetForm", "recoveryReveal", "mailResult"]) {
       document.getElementById(id)?.classList.add("hidden");
     }
@@ -1193,10 +1250,7 @@ export async function initAuthPage() {
     $("#verifyForm")?.classList.remove("hidden");
     verifyEmail = email || "";
     verifyDone = done || (() => location.replace(next));
-    $("#authTitle").textContent = t("auth.verifyTitle");
-    $("#authSub").textContent = t("auth.verifySub");
-    const hint = $("#verifyHint");
-    if (hint) hint.textContent = verifyEmail ? t("auth.codeSentTo", { email: verifyEmail }) : "";
+    paintVerifyTexts();
     $("#verifyError").textContent = "";
     const inp = $("#verifyCode");
     if (inp) { inp.value = ""; inp.focus(); }
@@ -1206,6 +1260,7 @@ export async function initAuthPage() {
 
   function showReset() {
     recovering = false;
+    document.querySelector(".auth-back")?.classList.remove("hidden");
     for (const id of ["authForm", "verifyForm", "recoverForm", "recoveryReveal", "mailResult"]) {
       document.getElementById(id)?.classList.add("hidden");
     }
@@ -1218,9 +1273,11 @@ export async function initAuthPage() {
     if (inp) { inp.value = ""; inp.focus(); }
     const again = $("#resetPassword2");
     if (again) again.value = "";
+    drawResetCaptcha();
   }
 
   function showMailResult(message) {
+    document.querySelector(".auth-back")?.classList.remove("hidden");
     for (const id of ["authForm", "verifyForm", "resetForm", "recoverForm", "recoveryReveal"]) {
       document.getElementById(id)?.classList.add("hidden");
     }
@@ -1238,6 +1295,7 @@ export async function initAuthPage() {
       return;
     }
     recovering = true;
+    document.querySelector(".auth-back")?.classList.remove("hidden");
     for (const id of ["authForm", "verifyForm", "resetForm", "recoveryReveal", "mailResult"]) {
       document.getElementById(id)?.classList.add("hidden");
     }
@@ -1279,7 +1337,9 @@ export async function initAuthPage() {
       password: t("auth.pwWeak"),
       mail: fa ? "ارسال ایمیل ممکن نشد؛ چند لحظه بعد دوباره تلاش کن." : "The email could not be sent. Try again shortly.",
       offline: fa ? "این قابلیت به سرور سایت نیاز دارد و الان سرور در دسترس نیست؛ فعلاً با کد بازیابی وارد شو." : "This needs the site server, which is not reachable right now; use your recovery code for now.",
-      server: fa ? "ارتباط با سرور برقرار نشد؛ دوباره تلاش کن." : "Could not reach the server; try again."
+      server: fa ? "ارتباط با سرور برقرار نشد؛ دوباره تلاش کن." : "Could not reach the server; try again.",
+      captcha: fa ? "جواب کپچا درست نیست یا منقضی شده؛ دوباره تلاش کن." : "The captcha answer is wrong or expired. Try again.",
+      verify: fa ? "اول باید حسابت را تأیید کنی." : "Verify your account first."
     };
     return map[error] || map.server;
   }
@@ -1318,7 +1378,8 @@ export async function initAuthPage() {
   $("#forgotLink")?.addEventListener("click", () => showRecover(true));
 
   async function handleMailLinks() {
-    const verifyToken = new URLSearchParams(location.search).get("verify");
+    const verifyParam = new URLSearchParams(location.search).get("verify");
+    const verifyToken = verifyParam && verifyParam !== "1" ? verifyParam : "";
     if (verifyToken) {
       const res = await verifyEmailWithLink(verifyToken);
       if (res.ok) {
@@ -1337,8 +1398,29 @@ export async function initAuthPage() {
   }
 
   if (!(await handleMailLinks())) {
-    await syncRemoteSession();
+    const remoteUser = await syncRemoteSession();
     const user = currentUser();
+    const wantsVerify = new URLSearchParams(location.search).get("verify") === "1";
+    if (user && wantsVerify) {
+      const verified = Boolean(remoteUser?.emailVerified || remoteUser?.phoneVerified);
+      if (verified) {
+        location.replace(next);
+        return;
+      }
+      const channel = remoteUser?.recoveryChannel === "sms" && remoteUser?.phone ? "sms" : "email";
+      const identifier = remoteUser?.username || user.username;
+      const sent = await resendVerificationEmail(identifier, channel);
+      const target = channel === "sms"
+        ? maskPhoneClient(remoteUser?.phone || "")
+        : remoteUser?.email || "";
+      showVerify(target, () => location.replace(next), {
+        required: true,
+        identifier,
+        channel,
+        minutes: sent?.verification?.minutes || 30
+      });
+      return;
+    }
     if (user && !new URLSearchParams(location.search).get("force")) {
       location.replace(next);
       return;
@@ -1359,10 +1441,7 @@ export async function initAuthPage() {
     }
     const verifyBox = $("#verifyForm");
     if (verifyEmail && verifyBox && !verifyBox.classList.contains("hidden")) {
-      $("#authTitle").textContent = t("auth.verifyTitle");
-      $("#authSub").textContent = t("auth.verifySub");
-      const hint = $("#verifyHint");
-      if (hint) hint.textContent = t("auth.codeSentTo", { email: verifyEmail });
+      paintVerifyTexts();
       return;
     }
     const resetBox = $("#resetForm");
@@ -1384,7 +1463,17 @@ export async function initAuthPage() {
   $("#recoverBack2")?.addEventListener("click", () => { closeRecover(); setMode("login"); });
   $("#recoverBack3")?.addEventListener("click", () => { closeRecover(); setMode("login"); });
   $("#recCaptchaRefresh")?.addEventListener("click", drawRecCaptcha);
+  $("#recSendCaptchaRefresh")?.addEventListener("click", drawRecSendCaptcha);
+  $("#resetCaptchaRefresh")?.addEventListener("click", drawResetCaptcha);
   $("#recLegacyCaptchaRefresh")?.addEventListener("click", drawLegacyCaptcha);
+  for (const btn of document.querySelectorAll("#verifyChannelTabs button")) {
+    btn.addEventListener("click", () => {
+      if (verifyChannel === btn.dataset.channel) return;
+      if (errLine) errLine.textContent = "";
+      setVerifyChannel(btn.dataset.channel);
+      $("#phone")?.focus();
+    });
+  }
   for (const btn of document.querySelectorAll("#recChannelTabs button")) {
     btn.addEventListener("click", () => {
       if (recoverChannel === btn.dataset.channel) return;
@@ -1422,8 +1511,16 @@ export async function initAuthPage() {
     }
     err("");
     info("");
-    const res = await requestPasswordCode(smsChannel ? { phone: value } : { email: value });
-    if (!res.ok) return err(authFailMessage(res.error));
+    if (!captchaCheck(recSendCaptcha, "#recSendCaptchaA")) {
+      drawRecSendCaptcha();
+      return err(fa ? "جواب کپچا درست نیست یا خالی است." : "Enter the captcha answer.");
+    }
+    const cap = captchaBody(recSendCaptcha, "#recSendCaptchaA");
+    const res = await requestPasswordCode(smsChannel ? { phone: value, ...cap } : { email: value, ...cap });
+    if (!res.ok) {
+      if (res.error === "captcha") drawRecSendCaptcha();
+      return err(authFailMessage(res.error));
+    }
     resetChannel = res.channel;
     resetEmail = res.email || "";
     resetPhone = res.phone || "";
@@ -1455,9 +1552,20 @@ export async function initAuthPage() {
   $("#recResend")?.addEventListener("click", async () => {
     if (busy || !(resetChannel === "sms" ? resetPhone : resetEmail)) return;
     busy = true;
-    const res = await requestPasswordCode(resetChannel === "sms" ? { phone: resetPhone } : { email: resetEmail });
+    const cap = captchaBody(recSendCaptcha, "#recSendCaptchaA");
+    const res = await requestPasswordCode(resetChannel === "sms" ? { phone: resetPhone, ...cap } : { email: resetEmail, ...cap });
     busy = false;
-    if (!res.ok) return toast(authFailMessage(res.error), "error");
+    if (!res.ok) {
+      if (res.error === "captcha") {
+        drawRecSendCaptcha();
+        showRecoverStep("email");
+        $("#recStep1Error").textContent = document.documentElement.lang === "fa"
+          ? "جواب کپچا منقضی شده؛ کپچای تازه را بزن و دوباره درخواست بده."
+          : "The captcha expired; solve the fresh one and request the code again.";
+        return;
+      }
+      return toast(authFailMessage(res.error), "error");
+    }
     const hint = $("#recSentHint");
     if (hint) {
       hint.textContent = resetChannel === "sms"
@@ -1493,7 +1601,7 @@ export async function initAuthPage() {
   $("#verifyResend")?.addEventListener("click", async () => {
     if (busy) return;
     busy = true;
-    const res = await resendVerificationEmail(verifyIdentifier);
+    const res = await resendVerificationEmail(verifyIdentifier, verifyChannel);
     busy = false;
     if (!res.ok) return toast(authFailMessage(res.error), "error");
     if (res.already) {
@@ -1501,17 +1609,16 @@ export async function initAuthPage() {
       (verifyDone || (() => location.replace(next)))();
       return;
     }
-    if (res.verification?.email) {
-      verifyEmail = res.verification.email;
-      const hint = $("#verifyHint");
-      if (hint) hint.textContent = t("auth.codeSentTo", { email: verifyEmail });
+    const v = res.verification || {};
+    const channel = v.channel === "sms" ? "sms" : verifyChannel;
+    const target = channel === "sms" ? v.phone : v.email;
+    if (target) {
+      verifyEmail = target;
+      verifyChannel = channel;
+      paintVerifyTexts();
     }
-    startCodeTimer($("#verifyTimer"), res.verification?.minutes || 30);
+    startCodeTimer($("#verifyTimer"), v.minutes || 30);
     toast(t("auth.codeSentAgain"), "success");
-  });
-
-  $("#verifyLater")?.addEventListener("click", () => {
-    (verifyDone || (() => location.replace(next)))();
   });
 
   $("#resetForm")?.addEventListener("submit", async (e) => {
@@ -1522,17 +1629,23 @@ export async function initAuthPage() {
     const password = $("#resetPassword")?.value || "";
     if (!isPassword(password)) return err(t("auth.pwWeak"));
     if (password !== $("#resetPassword2")?.value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
+    if (!captchaCheck(resetCaptcha, "#resetCaptchaA")) {
+      drawResetCaptcha();
+      return err(fa ? "جواب کپچا درست نیست یا خالی است." : "Enter the captcha answer.");
+    }
+    const cap = captchaBody(resetCaptcha, "#resetCaptchaA");
     const btn = $("#resetSubmit");
     const old = btn.textContent;
     busy = true;
     btn.disabled = true;
     btn.textContent = fa ? "کمی صبر…" : "Please wait…";
-    const res = await resetPasswordWithLink({ token: resetToken, password });
+    const res = await resetPasswordWithLink({ token: resetToken, password, ...cap });
     busy = false;
     btn.disabled = false;
     btn.textContent = old;
     if (!res.ok) {
       if (res.error === "expired") resetToken = "";
+      if (res.error === "captcha") drawResetCaptcha();
       return err(authFailMessage(res.error));
     }
     logModeration("recover", "بازیابی رمز با لینک ایمیل");
@@ -1566,27 +1679,30 @@ export async function initAuthPage() {
       if (!code.trim()) return err(fa ? "کد بازیابی را وارد کن." : "Enter your recovery code.");
       if (!isPassword(password)) return err(t("auth.pwWeak"));
       if (password !== $("#recNewPassword2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
-      if (Number(normalizeDigits($("#recLegacyCaptchaA").value)) !== legacyCaptcha.a) {
+      if (!captchaCheck(legacyCaptcha, "#recLegacyCaptchaA")) {
         drawLegacyCaptcha();
         return err(fa ? "جواب کپچا درست نیست؛ دوباره تلاش کن." : "Captcha answer is wrong, try again.");
       }
+      const cap = captchaBody(legacyCaptcha, "#recLegacyCaptchaA");
       const btn = $("#recSubmitLegacy");
       const old = btn.textContent;
       busy = true;
       btn.disabled = true;
       btn.textContent = fa ? "کمی صبر…" : "Please wait…";
-      const res = await recover({ username, code, password });
+      const res = await recover({ username, code, password, ...cap });
       busy = false;
       btn.disabled = false;
       btn.textContent = old;
       if (!res.ok) {
+        if (res.error === "captcha") drawLegacyCaptcha();
         const map = {
           credentials: fa ? "این نام کاربری و کد بازیابی با هم هم‌خوانی ندارند." : "Username and recovery code do not match.",
           password: t("auth.pwWeak"),
           locked: t("auth.locked"),
           blocked: fa ? "این حساب به‌دست مدیر سایت مسدود شده است." : "This account is blocked by the site owner.",
           secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https.",
-          rate: fa ? "درخواست‌های زیادی فرستادی؛ کمی صبر کن." : "Too many attempts; wait a moment."
+          rate: fa ? "درخواست‌های زیادی فرستادی؛ کمی صبر کن." : "Too many attempts; wait a moment.",
+          captcha: fa ? "جواب کپچا درست نیست یا منقضی شده؛ دوباره تلاش کن." : "The captcha answer is wrong or expired. Try again."
         };
         logModeration("recoverFail", `تلاش ناموفق بازیابی رمز @${username}`);
         return err(map[res.error] || "Error");
@@ -1608,22 +1724,26 @@ export async function initAuthPage() {
     if (!/^\d{8}$/.test(code)) return err(fa ? "کد باید ۸ رقم باشد." : "The code must be 8 digits.");
     if (!isPassword(password)) return err(t("auth.pwWeak"));
     if (password !== $("#recPassword2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
-    if (Number(normalizeDigits($("#recCaptchaA").value)) !== recCaptcha.a) {
+    if (!captchaCheck(recCaptcha, "#recCaptchaA")) {
       drawRecCaptcha();
       return err(fa ? "جواب کپچا درست نیست؛ دوباره تلاش کن." : "Captcha answer is wrong, try again.");
     }
+    const cap = captchaBody(recCaptcha, "#recCaptchaA");
     const btn = $("#recSubmit");
     const old = btn.textContent;
     busy = true;
     btn.disabled = true;
     btn.textContent = fa ? "کمی صبر…" : "Please wait…";
     const res = smsChannel
-      ? await resetPasswordWithPhone({ phone: resetPhone, code, password })
-      : await resetPasswordWithEmail({ email: resetEmail, code, password });
+      ? await resetPasswordWithPhone({ phone: resetPhone, code, password, ...cap })
+      : await resetPasswordWithEmail({ email: resetEmail, code, password, ...cap });
     busy = false;
     btn.disabled = false;
     btn.textContent = old;
-    if (!res.ok) return err(authFailMessage(res.error));
+    if (!res.ok) {
+      if (res.error === "captcha") drawRecCaptcha();
+      return err(authFailMessage(res.error));
+    }
     logModeration("recover", `بازیابی رمز با کد ${smsChannel ? `پیامک ${resetPhone}` : `ایمیل ${resetEmail}`}`);
     if (res.recoveryCode) return showRecoveryPanel(res.recoveryCode);
     location.replace(next);
@@ -1650,9 +1770,10 @@ export async function initAuthPage() {
       if (!isUsername(username)) return err(fa ? "نام کاربری باید ۳ تا ۲۰ کاراکتر لاتین باشد و با حرف شروع شود." : "Username must be 3–20 latin characters and start with a letter.");
       if (!emailLooksValid(email)) return err(fa ? "ایمیل معتبر وارد کن." : "Enter a valid email.");
       if (phone && !normalizePhone(phone)) return err(fa ? "شماره موبایل معتبر وارد کن؛ مثلاً 09121234567." : "Enter a valid mobile number, e.g. 09121234567.");
+      if (verifyChannel === "sms" && !normalizePhone(phone)) return err(fa ? "برای تأیید با پیامک، شماره موبایل معتبر لازم است." : "Enter a valid mobile number to verify by SMS.");
       if (!isPassword(password)) return err(t("auth.pwWeak"));
       if (password !== $("#password2").value) return err(fa ? "تکرار رمز یکسان نیست." : "Passwords do not match.");
-      if (Number(normalizeDigits($("#captchaA").value)) !== captcha.a) {
+      if (!captchaCheck(captcha, "#captchaA")) {
         drawCaptcha();
         return err(fa ? "جواب کپچا درست نیست؛ دوباره تلاش کن." : "Captcha answer is wrong, try again.");
       }
@@ -1666,7 +1787,7 @@ export async function initAuthPage() {
     submit.textContent = fa ? "کمی صبر…" : "Please wait…";
 
     const res = mode === "register"
-      ? await register({ username, email, phone, password })
+      ? await register({ username, email, phone, password, verifyChannel, ...captchaBody(captcha, "#captchaA") })
       : await login({ username, password });
 
     busy = false;
@@ -1685,18 +1806,23 @@ export async function initAuthPage() {
         blocked: fa ? "این حساب به‌دست مدیر سایت مسدود شده است." : "This account is blocked by the site owner.",
         rate: fa ? "درخواست‌های زیادی فرستادی؛ کمی صبر کن." : "Too many attempts; wait a moment.",
         server: fa ? "ارتباط با سرور برقرار نشد؛ دوباره تلاش کن." : "Could not reach the server; try again.",
-        secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https."
+        secure: fa ? "این مرورگر از رمزنگاری پشتیبانی نمی‌کند؛ سایت را با https باز کن." : "Browser crypto unavailable; use https.",
+        captcha: fa ? "جواب کپچا درست نیست یا منقضی شده؛ کپچای تازه بگیر." : "The captcha answer is wrong or expired. Refresh it and try again.",
+        phone_required: fa ? "برای تأیید با پیامک، شماره موبایل معتبر لازم است." : "Enter a valid mobile number to verify by SMS."
       };
       if (res.error === "blocked") logModeration("loginFail", `ورود حساب مسدود @${username.trim().toLowerCase()}`);
       if (res.error === "verify") {
-        logModeration("loginFail", `ورود با ایمیل تأییدنشده @${username.trim().toLowerCase()}`);
+        const channel = res.channel === "sms" ? "sms" : (res.verification?.channel === "sms" ? "sms" : "email");
+        logModeration("loginFail", `ورود با حساب تأییدنشده @${username.trim().toLowerCase()}`);
         toast(t("auth.emailNotVerified"), "info");
-        return showVerify(res.email || username, () => location.replace(next), {
+        return showVerify(channel === "sms" ? (res.phone || res.verification?.phone || "") : (res.email || res.verification?.email || username), () => location.replace(next), {
           required: true,
           identifier: username,
+          channel,
           minutes: res.verification?.minutes || 0
         });
       }
+      if (res.error === "captcha") drawCaptcha();
       return err(map[res.error] || "Error");
     }
 
@@ -1706,11 +1832,17 @@ export async function initAuthPage() {
     if (mode === "register" && res.recoveryCode) {
       const done = () => showRecoveryPanel(res.recoveryCode);
       if (res.verification?.sent || res.verificationRequired) {
-        return showVerify(res.verification?.email || email, done, {
-          required: Boolean(res.verificationRequired),
-          identifier: email,
-          minutes: res.verification?.minutes || 0
-        });
+        const channel = res.verification?.channel === "sms" ? "sms" : verifyChannel;
+        return showVerify(
+          channel === "sms" ? (res.verification?.phone || maskPhoneClient(phone)) : (res.verification?.email || email),
+          done,
+          {
+            required: Boolean(res.verificationRequired),
+            identifier: username,
+            channel,
+            minutes: res.verification?.minutes || 0
+          }
+        );
       }
       return done();
     }
