@@ -23,6 +23,8 @@ function toUser(row) {
     bio: row.bio || "",
     avatar: row.avatar || "",
     role: row.role || "user",
+    status: row.status || "active",
+    deletedAt: row.deletedAt ? new Date(row.deletedAt) : null,
     createdAt: row.createdAt ? new Date(row.createdAt) : new Date(),
     lastLoginAt: row.lastLoginAt ? new Date(row.lastLoginAt) : null
   };
@@ -46,6 +48,8 @@ function fromSql(row) {
     bio: row.bio,
     avatar: row.avatar,
     role: row.role,
+    status: row.status || "active",
+    deletedAt: row.deleted_at ? new Date(row.deleted_at) : null,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at
   });

@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
 import { dbReady } from "../db.js";
 import { ensureStore } from "../userStore.js";
-import { all, get, run, transaction, pageLimit } from "../database/index.js";
+import { all, get, run, transaction, pageLimit, recordModerationAction } from "../database/index.js";
 import { audit } from "../audit.js";
+import { revokeAllSessionsFor, invalidateAuthCache } from "./auth.js";
 import { adminLimit, ownerOnly, permissionOnly } from "../adminGuard.js";
 import { sqlGetTicket, sqlPatchTicket, sqlListSupportAgents } from "../stores/social.js";
 import { deliverNotice, deliverNoticeMany } from "../notify.js";
@@ -271,12 +272,30 @@ export default async function adminOpsRoutes(app) {
       if (action === "role") {
         run("UPDATE users SET role = ?, updated_at = ? WHERE id = ?", input.role, now, target.id);
         run("INSERT OR IGNORE INTO user_roles (user_id, role_id, granted_by, granted_at) VALUES (?, ?, ?, ?)", target.id, input.role, actorId, now);
+        recordModerationAction({
+          moderatorId: actorId,
+          action: "user_role",
+          targetType: "user",
+          targetId: target.id,
+          reason: `role ${target.role} -> ${input.role}`,
+          meta: { from: target.role, to: input.role, bulk: true }
+        });
       } else {
         run("UPDATE users SET status = ?, updated_at = ? WHERE id = ?", input.status, now, target.id);
-        if (input.status === "suspended" || input.status === "banned") {
-          run("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", now, target.id);
-        }
+        run("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", now, target.id);
+        recordModerationAction({
+          moderatorId: actorId,
+          action: "user_status",
+          targetType: "user",
+          targetId: target.id,
+          reason: `status ${target.status} -> ${input.status}`,
+          meta: { from: target.status, to: input.status, bulk: true }
+        });
       }
+      if (action === "role" || input.status !== "active") {
+        await revokeAllSessionsFor(target.id);
+      }
+      invalidateAuthCache(target.id);
       updated.push(target.id);
       await audit("admin.user.bulk", req, {
         targetType: "user",

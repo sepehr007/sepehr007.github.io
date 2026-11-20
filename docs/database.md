@@ -6,8 +6,9 @@
 
 - **SQLite (`node:sqlite`)** منبع حقیقتِ پیش‌فرض است: بدون نصب سرور جدا، WAL، تراکنش واقعی، کلید خارجی و پشتیبان‌گیری فایلِ ساده. فایل پیش‌فرض `server/data/wt.sqlite` و قابل تغییر با `SQLITE_FILE` است.
 - **MongoDB** فقط وقتی `MONGO_URI` در دسترس باشد همان مسیر قبلی را ادامه می‌دهد؛ کدِ هر دو مسیر کنار هم مانده و هیچ داده‌ای حذف نمی‌شود.
-- **PostgreSQL** هنوز آداپتور ندارد. اسکیما عمداً استاندارد نوشته شده (کلید متنی UUID، زمان INTEGER، CHECK و FK) تا مهاجرت آینده ساده باشد؛ فعلاً نیازی به سرور جدا نیست و پیچیدگی بی‌دلیل اضافه نمی‌کنیم.
-- **Redis** اختیاری است: کش، نشست، محدودیت نرخ. بدون آن حافظهٔ فرآیند استفاده می‌شود و نشست‌ها در جدول `sessions` دوام دارند؛ یعنی با ری‌استارت سرور کاربر بیرون نمی‌افتد.
+- **PostgreSQL** هنوز آداپتور ندارد. اسکیما عمداً استاندارد نوشته شده (کلید متنی UUID، زمان INTEGER، CHECK و FK) تا مهاجرت آینده ساده باشد؛ ولی SQLite تنها دیتابیسی است که در این نصب واقعاً تست شده و وظیفهٔ رابطه‌ای را کامل انجام می‌دهد (WAL + FK + تراکنش). آداپتور PG بدون محیط تست ساخته نمی‌شود تا ادعای پشتیبانی بی‌پایه نباشد.
+- **Favorites** جدول جدا ندارد؛ همان `media_library` با `kind='favorite'` است و با ایندکس یکتای `(user_id, kind, url)` از رکورد تکراری جلوگیری می‌شود. یک منبع حقیقت، بدون دادهٔ موازی.
+- **Redis** اختیاری است: کش، نشست، محدودیت نرخ. بدون آن حافظهٔ فرآیند استفاده می‌شود و نشست‌ها در جدول `sessions` دوام دارند؛ یعنی با ری‌استارت سرور کاربر بیرون نمی‌افتد. شمارنده‌های «قفل تلاش ورود» و «سقف دعوت» هم از همین لایه رد می‌شوند.
 
 ## مالکیت داده (هر ماژول یک دامنه)
 
@@ -15,7 +16,7 @@
 | --- | --- |
 | هویت و دسترسی | `users`، `profiles`، `sessions`، `roles`، `permissions`، `role_permissions`، `user_roles`، `app_settings`، `email_tokens` |
 | اجتماع و اتاق | `servers`، `categories`، `channels`، `rooms`، `room_settings`، `room_memberships`، `invitations`، `lobbies`، `room_visits` |
-| پیام و پخش | `messages`، `message_reactions`، `message_reports`، `dm_conversations`، `dm_messages`، `dm_reads`، `dm_prefs`، `dm_reactions`، `friendships`، `friend_requests`، `blocks`، `reports`، `moderation_notes`، `room_polls`، `poll_options`، `poll_votes`، `playback_states`، `playback_history`، `subtitle_preferences` |
+| پیام و پخش | `messages`، `message_reactions`، `message_reports`، `dm_conversations`، `dm_messages`، `dm_reads`، `dm_prefs`، `dm_reactions`، `friendships`، `friend_requests`، `blocks`، `reports`، `moderation_actions`، `moderation_notes`، `room_polls`، `poll_options`، `poll_votes`، `playback_states`، `playback_history`، `subtitle_preferences` |
 | ظاهر و اطلاع‌رسانی | `user_themes`، `notifications`، `notification_prefs`، `announcements`، `support_tickets`، `support_messages`، `media_library` |
 | مالی | `subscription_plans`، `orders`، `subscriptions`، `subscription_events`، `coupons`، `coupon_redemptions`، `entitlements`، `payments`، `payment_events`، `transactions` |
 | عملیات | `feature_flags`، `feature_overrides`، `feature_schedule`، `feature_history`، `audit_logs`، `website_pages`، `page_versions`، `page_form_submissions`، `page_events`، `analytics_events`، `automation_workflows`، `automation_runs`، `media_objects`، `backup_runs` |
@@ -35,8 +36,10 @@
 
 - مهاجرت‌ها نسخه‌دارند (`schema_migrations`) و چک‌سام هر مهاجرت ذخیره می‌شود؛ تغییر متن مهاجرتِ اجراشده هشدار می‌دهد و دوباره اجرا نمی‌شود.
 - هر مهاجرت داخل تراکنش است؛ خطا یعنی برگشت کامل، نه دیتابیس نیمه‌کاره.
-- مهاجرت روی دیتابیس‌های قدیمی تست شده: ستون‌های قدیمی حفظ می‌شوند، کاربران دست‌نخورده می‌مانند و نسخه به ۱۳ می‌رسد (v11 اتاق تماشا و پاپ‌آپ، v12 تحویل اعلان و صف پشتیبانی، v13 پلن/کوپن/پرداخت).
-- بررسی سلامت: `PRAGMA integrity_check`، `foreign_key_check` و شمارش جدول‌ها از طریق `GET /api/admin/database`.
+- مهاجرت روی دیتابیس‌های قدیمی تست شده: ستون‌های قدیمی حفظ می‌شوند، کاربران دست‌نخورده می‌مانند و نسخه به ۱۵ می‌رسد (v11 اتاق تماشا و پاپ‌آپ، v12 تحویل اعلان و صف پشتیبانی، v13 پلن/کوپن/پرداخت، v14 سازندهٔ سایت/فایل/آمار، v15 ایندکس‌های یکپارچگی و `moderation_actions`).
+- v15 قبل از ساخت ایندکس یکتای رسانه، رکوردهای تکراری قدیمی را با نگه‌داشتن قدیمی‌ترین ردیف پاک می‌کند؛ دادهٔ دیگر دست نمی‌خورد.
+- `npm run integrity` (فایل `server/integrity.js`) گزارش خواندنی می‌دهد: `PRAGMA integrity_check`، `foreign_key_check`، ردیف‌های یتیم در ۱۸ رابطه (پیام‌ها، رأی‌ها، عضویت‌ها، نشست‌ها، نسخه‌های صفحه، اجرای خودکارسازی و…)، ناسازگاری‌های منطقی (چند لابی فعال، نقش نشست قدیمی، رسانهٔ تکراری، تعداد اعضای اتاق اشتباه) و نبود ایندکس‌های انتظاری. در صورت مشکل با کد ۱ خارج می‌شود و چیزی را تغییر نمی‌دهد.
+- بررسی سلامت آنی: `PRAGMA integrity_check`، `foreign_key_check` و شمارش جدول‌ها از طریق `GET /api/admin/database`.
 
 ## پشتیبان، بازیابی و خروجی
 

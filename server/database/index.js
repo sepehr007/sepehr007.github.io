@@ -515,6 +515,40 @@ export function recordAudit({
   }
 }
 
+export function recordModerationAction({
+  moderatorId = null,
+  action,
+  targetType = "",
+  targetId = "",
+  roomCode = "",
+  reason = "",
+  meta = {},
+  createdAt = nowMs()
+} = {}) {
+  if (!db || !action) return false;
+  try {
+    db.prepare(
+      `INSERT INTO moderation_actions
+       (id, moderator_id, action, target_type, target_id, room_code, reason, meta_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      crypto.randomUUID(),
+      moderatorId ? String(moderatorId) : null,
+      String(action).slice(0, 40),
+      String(targetType || "").slice(0, 40),
+      String(targetId || "").slice(0, 80),
+      String(roomCode || "").toUpperCase().slice(0, 16),
+      String(reason || "").slice(0, 500),
+      JSON.stringify(meta || {}),
+      createdAt
+    );
+    return true;
+  } catch (err) {
+    lastError = err.message;
+    return false;
+  }
+}
+
 export async function listAudit({ limit = 50, before = 0 } = {}) {
   const connection = await getDatabase();
   if (!connection) return [];

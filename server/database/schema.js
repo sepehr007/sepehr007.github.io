@@ -1060,5 +1060,44 @@ export const MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_media_purpose ON media_objects(purpose, created_at DESC);
       `);
     }
+  },
+  {
+    version: 15,
+    name: "integrity-indexes-moderation-actions",
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS moderation_actions (
+          id TEXT PRIMARY KEY,
+          moderator_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+          action TEXT NOT NULL CHECK (action IN (
+            'kick','role_change','room_close','room_reopen','report_resolve','report_dismiss',
+            'user_role','user_status','content_remove'
+          )),
+          target_type TEXT NOT NULL DEFAULT '',
+          target_id TEXT NOT NULL DEFAULT '',
+          room_code TEXT NOT NULL DEFAULT '',
+          reason TEXT NOT NULL DEFAULT '',
+          meta_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_moderation_actions_target ON moderation_actions(target_type, target_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_moderation_actions_created ON moderation_actions(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_moderation_actions_moderator ON moderation_actions(moderator_id, created_at DESC);
+      `);
+      db.exec(`
+        DELETE FROM media_library
+        WHERE rowid NOT IN (SELECT MIN(rowid) FROM media_library GROUP BY user_id, kind, url);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_media_library_item ON media_library(user_id, kind, url);
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_users_status_created ON users(status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_rooms_privacy_activity ON rooms(privacy, is_active, last_activity_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_logs(target_type, target_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_sessions_expiry_active ON sessions(expires_at, revoked_at);
+        CREATE INDEX IF NOT EXISTS idx_media_objects_visibility ON media_objects(visibility, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_page_submissions_created ON page_submissions(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_automation_runs_started ON automation_runs(started_at DESC);
+      `);
+    }
   }
 ];

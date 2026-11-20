@@ -299,6 +299,56 @@ export async function cacheDel(key) {
   return true;
 }
 
+export async function bumpCounter(key, windowMs = 60000) {
+  const window = Math.max(1000, Number(windowMs) || 60000);
+  const fullKey = `wt:cnt:${String(key)}`;
+  if (redisReady()) {
+    try {
+      const [rawCount, rawTtl] = await state.client.eval(RATE_LIMIT_SCRIPT, 1, fullKey, String(window));
+      return { count: Number(rawCount) || 0, resetMs: Number(rawTtl) > 0 ? Number(rawTtl) : window };
+    } catch (err) {
+      state.error = err.message;
+    }
+  }
+  const entry = limitMemory.get(fullKey);
+  if (!entry || entry.resetAt <= Date.now()) {
+    limitMemory.set(fullKey, { count: 1, resetAt: Date.now() + window });
+    pruneMap(limitMemory, MAX_LIMIT_KEYS);
+    return { count: 1, resetMs: window };
+  }
+  entry.count += 1;
+  return { count: entry.count, resetMs: Math.max(1, entry.resetAt - Date.now()) };
+}
+
+export async function readCounter(key) {
+  const fullKey = `wt:cnt:${String(key)}`;
+  if (redisReady()) {
+    try {
+      const raw = await state.client.get(fullKey);
+      const ttl = await state.client.pttl(fullKey);
+      return { count: Number(raw) || 0, resetMs: Number(ttl) > 0 ? Number(ttl) : 0 };
+    } catch (err) {
+      state.error = err.message;
+    }
+  }
+  const entry = limitMemory.get(fullKey);
+  if (!entry || entry.resetAt <= Date.now()) return { count: 0, resetMs: 0 };
+  return { count: entry.count, resetMs: Math.max(1, entry.resetAt - Date.now()) };
+}
+
+export async function resetCounter(key) {
+  const fullKey = `wt:cnt:${String(key)}`;
+  limitMemory.delete(fullKey);
+  if (redisReady()) {
+    try {
+      await state.client.del(fullKey);
+    } catch (err) {
+      state.error = err.message;
+    }
+  }
+  return true;
+}
+
 export function createRateLimiter({
   max = 50,
   windowMs = 60000,

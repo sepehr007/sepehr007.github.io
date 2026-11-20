@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { getDatabase, transaction, pageLimit } from "../database/index.js";
+import { getDatabase, transaction, pageLimit, recordModerationAction } from "../database/index.js";
 
 export const STAFF_ROLES = Object.freeze(["moderator", "administrator", "owner", "super_owner"]);
 const LIBRARY_KINDS = ["saved", "favorite", "recent", "upload", "subtitle"];
@@ -998,6 +998,16 @@ export async function sqlPatchReport(userId, role, reportId, { status, resolutio
         .run(crypto.randomUUID(), String(reportId), String(userId), noteBody, now);
     }
   });
+  if (nextStatus !== row.status && (nextStatus === "resolved" || nextStatus === "dismissed")) {
+    recordModerationAction({
+      moderatorId: userId,
+      action: nextStatus === "resolved" ? "report_resolve" : "report_dismiss",
+      targetType: "report",
+      targetId: row.id,
+      reason: nextResolution || nextStatus,
+      meta: { reportTarget: row.target_type, reportTargetId: row.target_id }
+    });
+  }
   return sqlGetReport(userId, role, reportId);
 }
 
@@ -1066,6 +1076,19 @@ export async function sqlCreateInvite(userId, role, { roomCode, serverId, expire
   if (server && String(server.owner_id) !== String(userId) && !isStaff(role)) {
     fail(403, "forbidden", "Only the server owner can create invites.");
   }
+  const nowCheck = nowMs();
+  const active = Number(
+    db
+      .prepare("SELECT COUNT(*) AS n FROM invitations WHERE created_by = ? AND revoked_at IS NULL AND expires_at > ?")
+      .get(String(userId), nowCheck)?.n || 0
+  );
+  if (active >= 50) fail(429, "invite_limit", "You already have 50 active invites. Revoke some first.");
+  const recent = Number(
+    db
+      .prepare("SELECT COUNT(*) AS n FROM invitations WHERE created_by = ? AND created_at > ?")
+      .get(String(userId), nowCheck - 24 * 3600_000)?.n || 0
+  );
+  if (recent >= 30) fail(429, "invite_rate_limit", "Too many invites created in the last 24 hours.");
   const hours = Math.min(720, Math.max(1, Math.round(toNumber(expiresInHours, 24))));
   const uses = Math.min(1000, Math.max(0, Math.round(toNumber(maxUses, 1))));
   const code = makeInviteCode();

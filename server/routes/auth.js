@@ -46,7 +46,10 @@ import {
   cacheGet,
   cacheSet,
   cacheDel,
-  createRateLimiter
+  createRateLimiter,
+  bumpCounter,
+  readCounter,
+  resetCounter
 } from "../redis.js";
 
 const JWT_ISSUER = "watch-together";
@@ -55,6 +58,8 @@ const JWT_TTL_SECONDS = 7 * 24 * 60 * 60;
 const BCRYPT_ROUNDS = 12;
 const RECOVERY_ROUNDS = 10;
 const USER_CACHE_TTL = 120;
+const LOGIN_FAIL_MAX = 10;
+const LOGIN_FAIL_WINDOW_MS = 15 * 60_000;
 const USERNAME_RE = /^[\p{L}\p{N}_-]{3,24}$/u;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const PHONE_RE = /^09\d{9}$/;
@@ -209,6 +214,99 @@ export function readAuth(req) {
   }
 }
 
+const FRESH_AUTH_TTL = 3000;
+const freshAuth = new Map();
+
+export function invalidateAuthCache(userId) {
+  if (userId) freshAuth.delete(String(userId));
+}
+
+async function freshAccount(userId) {
+  const key = String(userId || "");
+  if (!key) return null;
+  const cached = freshAuth.get(key);
+  if (cached && Date.now() - cached.at < FRESH_AUTH_TTL) return cached.value;
+  let value = null;
+  try {
+    if (!(await storeReady())) return null;
+    const user = await findUserById(key);
+    value = user
+      ? {
+          exists: !user.deletedAt,
+          role: user.role || "user",
+          status: user.status || "active",
+          username: user.username || ""
+        }
+      : { exists: false, role: "user", status: "missing", username: "" };
+  } catch {
+    return null;
+  }
+  if (freshAuth.size > 5000) freshAuth.clear();
+  freshAuth.set(key, { value, at: Date.now() });
+  return value;
+}
+
+async function resolveSession(token) {
+  let payload;
+  try {
+    payload = jwt.verify(token, getSecret(), { issuer: JWT_ISSUER, audience: JWT_AUDIENCE });
+  } catch {
+    return { error: "invalid_token" };
+  }
+  if (!payload?.jti || !payload?.sub) return { error: "invalid_token" };
+  let session = await getSession(payload.jti);
+  if (!session || String(session.userId) !== String(payload.sub)) {
+    const durable = await getDbSession(payload.jti);
+    if (durable && String(durable.userId) === String(payload.sub)) {
+      session = durable;
+      const ttl = Math.max(60, Math.floor((durable.expiresAt - Date.now()) / 1000));
+      await saveSession(payload.jti, durable, ttl).catch(() => {});
+      await touchDbSession(payload.jti).catch(() => {});
+    }
+  }
+  if (!session || String(session.userId) !== String(payload.sub)) return { error: "session_revoked" };
+
+  const account = await freshAccount(payload.sub);
+  if (account && !account.exists) {
+    await revokeSession(payload.jti).catch(() => {});
+    await revokeDbSession(payload.jti).catch(() => {});
+    return { error: "user_missing" };
+  }
+  if (account && account.status !== "active") {
+    await revokeSession(payload.jti).catch(() => {});
+    await revokeDbSession(payload.jti).catch(() => {});
+    return { error: "account_inactive" };
+  }
+  return {
+    auth: {
+      userId: String(payload.sub),
+      role: account?.role || session.role || payload.role || "user",
+      username: String(payload.username || account?.username || ""),
+      jti: payload.jti
+    }
+  };
+}
+
+export async function authenticateToken(token) {
+  if (!token) return null;
+  const resolved = await resolveSession(token);
+  return resolved.auth || null;
+}
+
+export async function revokeAllSessionsFor(userId) {
+  const id = String(userId || "");
+  if (!id) return 0;
+  invalidateAuthCache(id);
+  let revoked = 0;
+  try {
+    revoked = await revokeUserSessions(id);
+  } catch {}
+  try {
+    revoked = Math.max(revoked, await revokeDbUserSessions(id));
+  } catch {}
+  return revoked;
+}
+
 function publicUser(user) {
   if (!user) return null;
   return {
@@ -284,6 +382,12 @@ async function revokeAllSessions(userId) {
 }
 
 export async function issueToken(user, req) {
+  if (user?.deletedAt || (user?.status || "active") !== "active") {
+    const err = new Error("This account is suspended or disabled.");
+    err.statusCode = 403;
+    err.code = "account_inactive";
+    throw err;
+  }
   const jti = crypto.randomUUID();
   const userId = String(user.id);
   const days = Math.max(1, Math.min(90, Math.round(await settingNumber("security.sessionDays", JWT_TTL_SECONDS / 86400))));
@@ -329,37 +433,21 @@ export async function requireAuth(req, reply) {
   if (!token) {
     return fail(reply, 401, "missing_token", "Authorization bearer token is required.");
   }
-  let payload;
-  try {
-    payload = jwt.verify(token, getSecret(), {
-      issuer: JWT_ISSUER,
-      audience: JWT_AUDIENCE
-    });
-  } catch (err) {
-    return fail(reply, 401, "invalid_token", "Session expired or invalid. Please log in again.");
-  }
-  if (!payload?.jti || !payload?.sub) {
-    return fail(reply, 401, "invalid_token", "Session expired or invalid. Please log in again.");
-  }
-  let session = await getSession(payload.jti);
-  if (!session || String(session.userId) !== String(payload.sub)) {
-    const durable = await getDbSession(payload.jti);
-    if (durable && String(durable.userId) === String(payload.sub)) {
-      session = durable;
-      const ttl = Math.max(60, Math.floor((durable.expiresAt - Date.now()) / 1000));
-      await saveSession(payload.jti, durable, ttl).catch(() => {});
-      await touchDbSession(payload.jti).catch(() => {});
+  const resolved = await resolveSession(token);
+  if (!resolved.auth) {
+    const code = resolved.error || "invalid_token";
+    if (code === "user_missing") {
+      return fail(reply, 401, "user_missing", "Account not found. Please log in again.");
     }
+    if (code === "account_inactive") {
+      return fail(reply, 403, "account_inactive", "This account is suspended or disabled.");
+    }
+    if (code === "session_revoked") {
+      return fail(reply, 401, "session_revoked", "This session was logged out. Please log in again.");
+    }
+    return fail(reply, 401, "invalid_token", "Session expired or invalid. Please log in again.");
   }
-  if (!session || String(session.userId) !== String(payload.sub)) {
-    return fail(reply, 401, "session_revoked", "This session was logged out. Please log in again.");
-  }
-  req.auth = {
-    userId: String(payload.sub),
-    role: session.role || payload.role || "user",
-    username: String(payload.username || ""),
-    jti: payload.jti
-  };
+  req.auth = resolved.auth;
   return undefined;
 }
 
@@ -470,20 +558,41 @@ export default async function authRoutes(app) {
       return fail(reply, 400, "missing_credentials", "Email or username and password are required.");
     }
 
+    const failKey = `login-fail:${identifier}`;
+    const locked = await readCounter(failKey);
+    if (locked.count >= LOGIN_FAIL_MAX) {
+      const retry = Math.max(1, Math.ceil(locked.resetMs / 1000));
+      reply.header("retry-after", String(retry));
+      return fail(reply, 429, "too_many_attempts", "Too many failed attempts for this account. Try again later.");
+    }
+
     const rows = await findUsers(
       identifier.includes("@") ? { email: identifier } : { usernameLower: identifier }
     );
     const user = rows[0] || null;
     const valid = user ? await bcrypt.compare(password, user.passwordHash) : false;
     if (!user || !valid) {
+      await bumpCounter(failKey, LOGIN_FAIL_WINDOW_MS);
       await audit("auth.login_failed", req, {
         meta: { identifierType: identifier.includes("@") ? "email" : "username", accountFound: Boolean(user) }
       });
       return fail(reply, 401, "invalid_credentials", "Email/username or password is incorrect.");
     }
+    await resetCounter(failKey);
 
     if (!isEnabled(await resolveFeatureState({ userId: user.id, role: user.role }), "access.login")) {
       return fail(reply, 403, "login_disabled", "Signing in is disabled for this account by the site owner.");
+    }
+
+    if (user.deletedAt || (user.status || "active") !== "active") {
+      await audit("auth.login_blocked", req, {
+        targetType: "user",
+        targetId: user.id,
+        actorId: user.id,
+        actorRole: user.role || "user",
+        meta: { status: user.status || "deleted" }
+      });
+      return fail(reply, 403, "account_inactive", "This account is suspended or disabled.");
     }
 
     if (await verificationRequired() && !user.emailVerified) {

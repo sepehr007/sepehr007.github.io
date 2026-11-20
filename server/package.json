@@ -10,7 +10,9 @@
     "dev": "node --watch index.js",
     "seed": "node seed.js",
     "config": "node config-check.js",
-    "restore": "node restore.js"
+    "restore": "node restore.js",
+    "integrity": "node integrity.js",
+    "test:sec": "node tests/sec36-38.test.mjs"
   },
   "engines": {
     "node": ">=22.5"

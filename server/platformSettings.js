@@ -120,6 +120,7 @@ export async function settingValue(id, fallback = null) {
 
 export async function settingNumber(id, fallback) {
   const value = await settingValue(id, null);
+  if (value === null || value === undefined || value === "") return fallback;
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 }

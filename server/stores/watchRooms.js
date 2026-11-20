@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
-import { getDatabase, transaction } from "../database/index.js";
+import { getDatabase, transaction, recordModerationAction } from "../database/index.js";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const VISIBILITIES = ["public", "unlisted", "private"];
@@ -513,6 +513,15 @@ export async function setMemberRole(userId, staffRole, code, targetId, role) {
   db.prepare("UPDATE room_memberships SET role = ? WHERE room_id = ? AND user_id = ?").run(role, row.id, String(targetId));
   db.prepare("UPDATE rooms SET last_activity_at = ? WHERE id = ?").run(now, row.id);
   addSystemMessage(db, row.id, `A member's role changed to ${role}.`, { event: "member.role", target: String(targetId), role });
+  recordModerationAction({
+    moderatorId: userId,
+    action: "role_change",
+    targetType: "room_member",
+    targetId,
+    roomCode: row.room_code,
+    reason: `role ${member.role} -> ${role}`,
+    meta: { from: member.role, to: role }
+  });
   return { ok: true, role };
 }
 
@@ -533,6 +542,14 @@ export async function kickMember(userId, staffRole, code, targetId) {
   const count = setMemberCount(db, row.id);
   db.prepare("UPDATE rooms SET last_activity_at = ? WHERE id = ?").run(now, row.id);
   addSystemMessage(db, row.id, "A member was removed from the room.", { event: "member.removed", target: String(targetId) });
+  recordModerationAction({
+    moderatorId: userId,
+    action: "kick",
+    targetType: "room_member",
+    targetId,
+    roomCode: row.room_code,
+    reason: "removed from room"
+  });
   return { ok: true, memberCount: count };
 }
 
@@ -605,6 +622,14 @@ export async function closeRoom(userId, staffRole, code, { password } = {}) {
     connection.prepare("UPDATE invitations SET revoked_at = ? WHERE room_id = ? AND revoked_at IS NULL").run(now, row.id);
     connection.prepare("UPDATE rooms SET member_count = 1 WHERE id = ?").run(row.id);
     addSystemMessage(connection, row.id, "The room was closed by the Manager.", { event: "room.closed", by: String(userId) });
+  });
+  recordModerationAction({
+    moderatorId: userId,
+    action: "room_close",
+    targetType: "room",
+    targetId: row.id,
+    roomCode: row.room_code,
+    reason: "closed by manager"
   });
   return { ok: true };
 }

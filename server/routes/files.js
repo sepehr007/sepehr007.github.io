@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { fileRecord } from "../storage.js";
-import { requireAuth, readAuth } from "./auth.js";
+import { requireAuth } from "./auth.js";
 import { permissionGranted } from "../adminGuard.js";
 import { dbReady } from "../db.js";
 import { ensureStore } from "../userStore.js";
@@ -17,14 +17,11 @@ export default async function fileRoutes(app) {
     if (!record) return reply.code(404).send({ error: "file_missing", message: "That file does not exist." });
     const { row, filePath } = record;
     if (row.visibility !== "public") {
-      let auth = readAuth(req);
-      if (!auth) {
-        await requireAuth(req, reply);
-        if (reply.sent) return undefined;
-        auth = { sub: req.auth.userId, role: req.auth.role };
-      }
+      await requireAuth(req, reply);
+      if (reply.sent) return undefined;
+      const auth = { sub: req.auth.userId, role: req.auth.role };
       const owns = String(row.owner_id || "") === String(auth.sub);
-      if (!owns && !staffAccess(auth.role || req.auth?.role || "", auth.sub)) {
+      if (!owns && !staffAccess(auth.role, auth.sub)) {
         return reply.code(403).send({ error: "forbidden", message: "You do not have access to this file." });
       }
     }

@@ -12,7 +12,7 @@ import { resolveFeatureState, isEnabled, summarizeFeatures, featureStatus } from
 import { publicPlatformSettings, settingNumber } from "./platformSettings.js";
 import { mailState } from "./mailer.js";
 import { smsState } from "./sms.js";
-import authRoutes, { readAuth } from "./routes/auth.js";
+import authRoutes, { authenticateToken } from "./routes/auth.js";
 import lobbyRoutes from "./routes/lobbies.js";
 import billingRoutes from "./routes/billing.js";
 import adminRoutes from "./routes/admin.js";
@@ -33,14 +33,22 @@ import { startMaintenance, getDatabase, databaseState, stopMaintenance, closeDat
 import { Room } from "./models/Room.js";
 import { Message } from "./models/Message.js";
 import { PlaybackState } from "./models/PlaybackState.js";
-import { ensureStore } from "./userStore.js";
-import { sqlFindRoomByCode, sqlRecentMessages, sqlAddMessage, sqlSavePlaybackState } from "./stores/rooms.js";
+import { sqlRecentMessages, sqlAddMessage, sqlSavePlaybackState } from "./stores/rooms.js";
 
 const PORT = appConfig.port;
 const HOST = appConfig.host;
 const ROOM_RE = /^[A-Z0-9-]{4,16}$/;
 const CHAT_WINDOW_MS = 5000;
 const CHAT_MAX = 10;
+const WS_VERSION = 1;
+const WS_MAX_FRAME = 64 * 1024;
+const WS_FLOOD_MAX = 60;
+const WS_FLOOD_WINDOW_MS = 10_000;
+const WS_BUFFER_MAX = 200;
+const WS_REPLAY_MAX = 100;
+const WS_HEARTBEAT_MS = 30_000;
+const CHAT_CID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const PLAYBACK_ACTIONS = new Set(["play", "pause", "seek", "state", "rate", "ended", "stop"]);
 
 function cleanRoom(value) {
   const room = String(value || "").trim().toUpperCase();
@@ -94,45 +102,75 @@ function detachSocialSocket(ws, userId) {
   if (set.size === 0) socialSockets.delete(key);
 }
 
+const WS_ACCESS_MESSAGES = {
+  room_locked: "This room is private or password protected. Join it with an account first.",
+  room_full: "This room is full right now.",
+  room_closed: "This room has been closed.",
+  room_not_found: "That room does not exist.",
+  database_unavailable: "Database is not connected yet."
+};
+
 function registerRealtime(app) {
   const rooms = new Map();
-  const playbackSavedAt = new Map();
+  const allClients = new Set();
 
   const send = (ws, payload) => {
-    if (ws.readyState === 1) {
-      try {
-        ws.send(JSON.stringify(payload));
-      } catch {}
+    if (ws.readyState !== 1) return false;
+    if (typeof ws.bufferedAmount === "number" && ws.bufferedAmount > 1024 * 1024) return false;
+    try {
+      ws.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
     }
   };
 
-  const memberList = (set) => [...set].map((client) => ({ id: client.id, name: client.name }));
-
-  const broadcast = (room, payload, except = null) => {
-    const set = rooms.get(room);
-    if (!set) return;
-    const raw = JSON.stringify(payload);
-    for (const client of set) {
-      if (client === except || client.ws.readyState !== 1) continue;
-      try {
-        client.ws.send(raw);
-      } catch {}
+  const roomState = (room) => {
+    let st = rooms.get(room);
+    if (!st) {
+      st = { clients: new Set(), seq: 0, buffer: [], cids: new Map(), playbackSavedAt: 0, emptyAt: 0 };
+      rooms.set(room, st);
     }
+    return st;
   };
 
-  roomNotifier = (room, payload) => broadcast(room, payload);
+  const memberList = (st) => [...st.clients].map((client) => ({
+    id: client.id,
+    name: client.name,
+    identified: Boolean(client.userId),
+    status: { ...client.status }
+  }));
+
+  const emit = (room, payload, { except = null, buffer = false } = {}) => {
+    const st = rooms.get(room);
+    if (!st) return 0;
+    const event = { ...payload, room, v: WS_VERSION, seq: (st.seq += 1), at: Date.now() };
+    if (buffer) {
+      st.buffer.push(event);
+      if (st.buffer.length > WS_BUFFER_MAX) st.buffer.shift();
+    }
+    let delivered = 0;
+    for (const client of st.clients) {
+      if (client === except) continue;
+      if (send(client.ws, event)) delivered += 1;
+    }
+    return delivered;
+  };
+
+  roomNotifier = (room, payload) => emit(room, payload, { buffer: true });
 
   const leaveRoom = (client) => {
     const room = client.room;
     if (!room) return;
-    const set = rooms.get(room);
-    if (set) {
-      set.delete(client);
-      broadcast(room, { type: "presence", room, members: memberList(set) });
-      if (set.size === 0) rooms.delete(room);
+    const st = rooms.get(room);
+    if (st) {
+      st.clients.delete(client);
+      emit(room, { type: "presence", members: memberList(st) });
+      if (st.clients.size === 0) st.emptyAt = Date.now();
     }
     client.room = "";
     client.roomId = "";
+    client.mutedUntil = 0;
   };
 
   const roomFeature = async (room = "") => {
@@ -147,19 +185,90 @@ function registerRealtime(app) {
     };
   };
 
+  const roomAccess = async (room, client) => {
+    if (dbReady()) return { ok: true, roomId: "" };
+    let db;
+    try {
+      db = await getDatabase();
+    } catch {
+      return { ok: false, code: "database_unavailable" };
+    }
+    if (!db) return { ok: true, roomId: "" };
+    const row = db
+      .prepare(
+        `SELECT id, host_id, capacity, visibility, password_hash, is_active, deleted_at
+         FROM rooms WHERE room_code = ?`
+      )
+      .get(String(room).toUpperCase());
+    if (!row) return { ok: true, roomId: "" };
+    if (row.deleted_at) return { ok: false, code: "room_not_found" };
+    if (!row.is_active) return { ok: false, code: "room_closed" };
+    const member = client.userId
+      ? db
+          .prepare(
+            "SELECT role, muted_until FROM room_memberships WHERE room_id = ? AND user_id = ? AND left_at IS NULL"
+          )
+          .get(row.id, String(client.userId))
+      : null;
+    const isHost = Boolean(client.userId) && String(row.host_id) === String(client.userId);
+    const gated = row.visibility === "private" || Boolean(row.password_hash);
+    if (gated && !isHost && !member) return { ok: false, code: "room_locked" };
+    if (!isHost && !member) {
+      const active = db
+        .prepare("SELECT COUNT(*) AS n FROM room_memberships WHERE room_id = ? AND left_at IS NULL")
+        .get(row.id);
+      if (Number(active?.n || 0) >= Number(row.capacity || 6)) return { ok: false, code: "room_full" };
+    }
+    return { ok: true, roomId: row.id, mutedUntil: Number(member?.muted_until || 0) };
+  };
+
+  const refreshMute = async (client) => {
+    if (!client.userId || !client.roomId) return 0;
+    if (Date.now() - client.muteCheckedAt < 15_000) return client.mutedUntil;
+    client.muteCheckedAt = Date.now();
+    try {
+      const db = await getDatabase();
+      const row = db
+        ?.prepare("SELECT muted_until FROM room_memberships WHERE room_id = ? AND user_id = ?")
+        .get(client.roomId, String(client.userId));
+      client.mutedUntil = Number(row?.muted_until || 0);
+    } catch {}
+    return client.mutedUntil;
+  };
+
   app.get("/ws", { websocket: true }, (connection, req) => {
     const ws = connection?.socket ?? connection;
     const client = {
       id: crypto.randomUUID().slice(0, 8),
       name: "مهمان",
+      username: "",
+      role: "guest",
       room: "",
       roomId: "",
       userId: "",
+      status: { muted: false, video: false, speaking: false },
+      mutedUntil: 0,
+      muteCheckedAt: 0,
+      alive: true,
+      strikes: 0,
+      events: [],
       hits: [],
+      queue: Promise.resolve(),
       ws
     };
+    allClients.add(client);
 
-    ws.on("message", async (raw) => {
+    send(ws, { type: "hello", v: WS_VERSION, serverTime: Date.now(), heartbeatMs: WS_HEARTBEAT_MS });
+
+    const handleMessage = async (raw) => {
+      const size = Number(raw?.length ?? raw?.byteLength ?? 0);
+      if (size > WS_MAX_FRAME) {
+        send(ws, { type: "error", code: "frame_too_large", message: "Message is too large." });
+        try {
+          ws.close(1009, "frame_too_large");
+        } catch {}
+        return;
+      }
       let msg;
       try {
         msg = JSON.parse(raw.toString());
@@ -168,28 +277,50 @@ function registerRealtime(app) {
       }
       const type = cleanText(msg?.type, 20);
 
+      const now = Date.now();
+      client.events = client.events.filter((t) => now - t < WS_FLOOD_WINDOW_MS);
+      if (client.events.length >= WS_FLOOD_MAX) {
+        client.strikes += 1;
+        if (client.strikes >= 3) {
+          try {
+            ws.close(1008, "flood");
+          } catch {}
+          return;
+        }
+        return send(ws, { type: "error", code: "flood", message: "Too many events. Slow down." });
+      }
+      client.events.push(now);
+
       try {
         if (type === "ping") {
-          return send(ws, { type: "pong", at: Date.now() });
+          client.alive = true;
+          return send(ws, { type: "pong", at: Date.now(), v: WS_VERSION });
         }
 
         if (type === "identify") {
           const token = cleanText(msg.token, 4096);
-          const auth = token
-            ? readAuth({ headers: { authorization: `Bearer ${token}` } })
-            : null;
-          if (!auth?.sub) {
+          const auth = token ? await authenticateToken(token) : null;
+          if (!auth?.userId) {
             return send(ws, { type: "error", code: "invalid_token", message: "Identify requires a valid session token." });
           }
           detachSocialSocket(ws, client.userId);
-          client.userId = String(auth.sub);
+          client.userId = String(auth.userId);
+          client.username = String(auth.username || "");
+          client.role = auth.role || "user";
+          if (client.name === "مهمان" && client.username) client.name = cleanName(client.username);
+          client.muteCheckedAt = 0;
           let sockets = socialSockets.get(client.userId);
           if (!sockets) {
             sockets = new Set();
             socialSockets.set(client.userId, sockets);
           }
           sockets.add(ws);
-          return send(ws, { type: "identified", userId: client.userId });
+          return send(ws, {
+            type: "identified",
+            userId: client.userId,
+            username: client.username,
+            role: client.role
+          });
         }
 
         if (type === "join") {
@@ -208,19 +339,37 @@ function registerRealtime(app) {
           if (!flags.join()) {
             return send(ws, { type: "error", code: "rooms_closed", message: "Joining rooms is closed by the site owner." });
           }
-          if (client.room && client.room !== room) leaveRoom(client);
-          client.name = cleanName(msg.name);
-
-          let set = rooms.get(room);
-          if (!set) {
-            set = new Set();
-            rooms.set(room, set);
+          const access = await roomAccess(room, client);
+          if (!access.ok) {
+            return send(ws, {
+              type: "error",
+              code: access.code,
+              message: WS_ACCESS_MESSAGES[access.code] || "You cannot join this room."
+            });
           }
-          set.add(client);
-          client.room = room;
+          if (client.room && client.room !== room) leaveRoom(client);
+          const requested = cleanText(msg.name, 30);
+          if (requested) client.name = requested;
+          else if (client.name === "مهمان" && client.username) client.name = cleanName(client.username);
 
-          send(ws, { type: "joined", room, self: client.id, members: memberList(set) });
-          broadcast(room, { type: "presence", room, members: memberList(set) }, client);
+          const st = roomState(room);
+          st.clients.add(client);
+          st.emptyAt = 0;
+          client.room = room;
+          client.roomId = access.roomId || client.roomId;
+          client.mutedUntil = access.mutedUntil || 0;
+          client.muteCheckedAt = Date.now();
+
+          send(ws, { type: "joined", room, self: client.id, seq: st.seq, members: memberList(st) });
+
+          const since = Number(msg.since);
+          if (Number.isFinite(since) && since >= 0 && since < st.seq) {
+            const replay = st.buffer.filter((event) => event.seq > since).slice(-WS_REPLAY_MAX);
+            send(ws, { type: "resumed", room, from: since, seq: st.seq, replayed: replay.length });
+            for (const event of replay) send(ws, event);
+          }
+
+          emit(room, { type: "presence", members: memberList(st) }, { except: client });
 
           if (dbReady()) {
             const roomDoc = await Room.findOne({ roomCode: room }).lean();
@@ -242,23 +391,19 @@ function registerRealtime(app) {
                 }))
               });
             }
-          } else if (await ensureStore()) {
-            const roomDoc = await sqlFindRoomByCode(room);
-            if (roomDoc) {
-              client.roomId = roomDoc.id;
-              const history = await sqlRecentMessages(roomDoc.id, 50);
-              send(ws, {
-                type: "history",
-                room,
-                messages: history.map((m) => ({
-                  id: m.id,
-                  username: m.username,
-                  content: m.content,
-                  type: m.type,
-                  createdAt: m.createdAt
-                }))
-              });
-            }
+          } else if (client.roomId) {
+            const history = await sqlRecentMessages(client.roomId, 50);
+            send(ws, {
+              type: "history",
+              room,
+              messages: history.map((m) => ({
+                id: m.id,
+                username: m.username,
+                content: m.content,
+                type: m.type,
+                createdAt: m.createdAt
+              }))
+            });
           }
           return undefined;
         }
@@ -272,10 +417,25 @@ function registerRealtime(app) {
           return send(ws, { type: "error", code: "not_joined", message: "Join a room first." });
         }
 
+        if (type === "status") {
+          client.status = {
+            muted: Boolean(msg.muted),
+            video: Boolean(msg.video),
+            speaking: Boolean(msg.speaking)
+          };
+          const st = rooms.get(client.room);
+          if (st) emit(client.room, { type: "presence", members: memberList(st) });
+          return undefined;
+        }
+
         if (type === "chat") {
           const flags = await roomFeature(client.room);
           if (!flags.chat()) {
             return send(ws, { type: "error", code: "chat_disabled", message: "Chat is disabled by the site owner." });
+          }
+          const mutedUntil = await refreshMute(client);
+          if (mutedUntil && Date.now() < mutedUntil) {
+            return send(ws, { type: "error", code: "muted", message: "You are muted in this room." });
           }
           const now = Date.now();
           const windowMs = await settingNumber("limits.chatWindowMs", CHAT_WINDOW_MS);
@@ -295,6 +455,15 @@ function registerRealtime(app) {
           if (!content) {
             return send(ws, { type: "error", code: "empty_message", message: "Message is empty." });
           }
+          const cid = cleanText(msg.cid, 64);
+          const st = rooms.get(client.room);
+          const cidKey = cid && CHAT_CID_RE.test(cid) ? `${client.userId || client.id}:${cid}` : "";
+          if (st && cidKey) {
+            const seen = st.cids.get(cidKey);
+            if (seen) {
+              return send(ws, { type: "chat-ack", cid, id: seen.id, seq: seen.seq, duplicate: true });
+            }
+          }
 
           const message = {
             id: crypto.randomUUID(),
@@ -304,7 +473,15 @@ function registerRealtime(app) {
             type: "text",
             createdAt: new Date().toISOString()
           };
-          broadcast(client.room, { type: "chat", message });
+          emit(client.room, { type: "chat", message }, { buffer: true });
+          const seq = st ? st.seq : 0;
+          if (st && cidKey) {
+            st.cids.set(cidKey, { id: message.id, seq, at: Date.now() });
+            if (st.cids.size > 500) {
+              for (const [key, rec] of st.cids) if (Date.now() - rec.at > 120_000) st.cids.delete(key);
+            }
+          }
+          send(ws, { type: "chat-ack", cid: cidKey ? cid : "", id: message.id, seq });
 
           if (client.roomId) {
             if (dbReady()) {
@@ -317,9 +494,11 @@ function registerRealtime(app) {
             } else {
               sqlAddMessage({
                 roomId: client.roomId,
+                userId: client.userId || null,
                 username: client.name,
                 content,
-                type: "text"
+                type: "text",
+                meta: cid ? { cid } : {}
               }).catch(() => {});
             }
           }
@@ -331,21 +510,24 @@ function registerRealtime(app) {
           if (!flags.playback()) {
             return send(ws, { type: "error", code: "playback_disabled", message: "Shared playback is disabled by the site owner." });
           }
+          const action = cleanText(msg.action, 20);
+          if (!PLAYBACK_ACTIONS.has(action)) {
+            return send(ws, { type: "error", code: "invalid_action", message: "Unknown playback action." });
+          }
           const payload = {
             type: "playback",
-            room: client.room,
-            action: cleanText(msg.action, 20),
-            time: Number.isFinite(Number(msg.time)) ? Math.max(0, Number(msg.time)) : 0,
+            action,
+            time: Number.isFinite(Number(msg.time)) ? Math.min(7 * 86400, Math.max(0, Number(msg.time))) : 0,
             paused: Boolean(msg.paused),
-            rate: Number.isFinite(Number(msg.rate)) && Number(msg.rate) > 0 ? Number(msg.rate) : 1,
+            rate: Number.isFinite(Number(msg.rate)) && Number(msg.rate) > 0 ? Math.min(4, Math.max(0.25, Number(msg.rate))) : 1,
             from: client.id,
             at: Date.now()
           };
-          if (client.roomId) {
+          const st = rooms.get(client.room);
+          if (client.roomId && st) {
             const now = Date.now();
-            const last = playbackSavedAt.get(client.roomId) || 0;
-            if (payload.action !== "state" || now - last > 900) {
-              playbackSavedAt.set(client.roomId, now);
+            if (payload.action !== "state" || now - st.playbackSavedAt > 900) {
+              st.playbackSavedAt = now;
               if (dbReady()) {
                 PlaybackState.updateOne(
                   { roomCode: client.room },
@@ -364,12 +546,14 @@ function registerRealtime(app) {
                   roomId: client.roomId,
                   position: payload.time,
                   paused: payload.paused,
-                  rate: payload.rate
+                  rate: payload.rate,
+                  userId: client.userId || null
                 }).catch(() => {});
               }
             }
           }
-          return broadcast(client.room, payload, client);
+          emit(client.room, payload, { except: client, buffer: true });
+          return undefined;
         }
 
         return send(ws, { type: "error", code: "unknown_type", message: `Unknown message type: ${type || "(none)"}` });
@@ -378,38 +562,71 @@ function registerRealtime(app) {
         send(ws, { type: "error", code: "server_error", message: "Server error." });
         return undefined;
       }
+    };
+
+    ws.on("message", (raw) => {
+      client.queue = client.queue
+        .then(() => handleMessage(raw))
+        .catch((err) => req.log.error({ err }, "websocket message handler failed"));
     });
 
+    ws.on("pong", () => {
+      client.alive = true;
+    });
     ws.on("close", () => {
+      allClients.delete(client);
       leaveRoom(client);
       detachSocialSocket(ws, client.userId);
     });
     ws.on("error", () => {
+      allClients.delete(client);
       leaveRoom(client);
       detachSocialSocket(ws, client.userId);
     });
   });
 
   const heartbeat = setInterval(() => {
-    for (const set of rooms.values()) {
-      for (const client of set) {
+    const now = Date.now();
+    for (const client of allClients) {
+      if (client.ws.readyState !== 1) {
+        allClients.delete(client);
+        continue;
+      }
+      if (!client.alive) {
         try {
-          client.ws.ping();
+          if (typeof client.ws.terminate === "function") client.ws.terminate();
+          else client.ws.close(1001, "timeout");
         } catch {}
+        allClients.delete(client);
+        continue;
+      }
+      client.alive = false;
+      try {
+        client.ws.ping();
+      } catch {}
+    }
+    for (const [room, st] of rooms) {
+      for (const [key, rec] of st.cids) {
+        if (now - rec.at > 120_000) st.cids.delete(key);
+      }
+      if (st.clients.size === 0) {
+        if (!st.emptyAt) st.emptyAt = now;
+        else if (now - st.emptyAt > 600_000) rooms.delete(room);
+      } else {
+        st.emptyAt = 0;
       }
     }
-  }, 30000);
+  }, WS_HEARTBEAT_MS);
   heartbeat.unref?.();
 
   app.addHook("onClose", async () => {
     clearInterval(heartbeat);
-    for (const set of rooms.values()) {
-      for (const client of set) {
-        try {
-          client.ws.close(1001, "Server shutting down");
-        } catch {}
-      }
+    for (const client of allClients) {
+      try {
+        client.ws.close(1001, "Server shutting down");
+      } catch {}
     }
+    allClients.clear();
     rooms.clear();
     socialSockets.clear();
     roomNotifier = null;
@@ -491,6 +708,21 @@ export async function buildServer() {
   });
   app.addHook("onRequest", limiter);
 
+  app.addHook("onSend", async (req, reply, payload) => {
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("x-frame-options", "DENY");
+    reply.header("referrer-policy", "no-referrer");
+    reply.header("permissions-policy", "camera=(), microphone=(), geolocation=()");
+    reply.header("cross-origin-opener-policy", "same-origin");
+    if (appConfig.isDeployed) {
+      reply.header("strict-transport-security", "max-age=31536000; includeSubDomains");
+    }
+    if (req.url.startsWith("/api/")) {
+      reply.header("cache-control", "no-store");
+    }
+    return payload;
+  });
+
   app.get("/api/health", async () => {
     await getDatabase();
     const storage = databaseState();
@@ -545,9 +777,11 @@ export async function buildServer() {
   await app.register(fileRoutes, { prefix: "/api/files" });
 
   app.get("/api/features", async (req) => {
-    const auth = readAuth(req);
+    const header = req.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    const auth = token ? await authenticateToken(token) : null;
     const state = auth
-      ? await resolveFeatureState({ userId: auth.sub, role: auth.role })
+      ? await resolveFeatureState({ userId: auth.userId, role: auth.role })
       : await resolveFeatureState({ role: "guest" });
     const flags = {};
     for (const item of featureStatus(state)) flags[item.key] = item.enabled;

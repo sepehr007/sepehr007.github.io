@@ -5,11 +5,13 @@ import {
   tableCounts,
   listAudit,
   pageLimit,
+  recordModerationAction,
   all,
   get,
   run
 } from "../database/index.js";
 import { ensureStore, storeState } from "../userStore.js";
+import { revokeAllSessionsFor, invalidateAuthCache } from "./auth.js";
 import { mailState } from "../mailer.js";
 import { smsState } from "../sms.js";
 import { redisState } from "../redis.js";
@@ -191,6 +193,9 @@ export default async function platformRoutes(app) {
       patch.status = body.status;
     }
     if (!Object.keys(patch).length) return fail(reply, 400, "nothing_to_update", "Send a role or status.");
+    if (patch.role && patch.role !== target.role && String(target.id) === String(req.auth.userId)) {
+      return fail(reply, 409, "self_role_change", "You cannot change your own role. Ask another owner.");
+    }
     if (patch.role && patch.role !== target.role) {
       const remaining = scalar("SELECT COUNT(*) AS n FROM users WHERE role = 'super_owner' AND id <> ?", [target.id]);
       if (target.role === "super_owner" && remaining < 1) {
@@ -210,10 +215,32 @@ export default async function platformRoutes(app) {
     if (patch.status && patch.status !== "active") {
       run("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", now, target.id);
     }
+    const sessionReset = patch.role || patch.status ? await revokeAllSessionsFor(target.id) : 0;
+    invalidateAuthCache(target.id);
+    if (patch.role) {
+      recordModerationAction({
+        moderatorId: req.auth.userId,
+        action: "user_role",
+        targetType: "user",
+        targetId: target.id,
+        reason: `role ${target.role} -> ${patch.role}`,
+        meta: { from: target.role, to: patch.role }
+      });
+    }
+    if (patch.status) {
+      recordModerationAction({
+        moderatorId: req.auth.userId,
+        action: "user_status",
+        targetType: "user",
+        targetId: target.id,
+        reason: `status ${target.status} -> ${patch.status}`,
+        meta: { from: target.status, to: patch.status }
+      });
+    }
     await audit("admin.user.update", req, {
       targetType: "user",
       targetId: target.id,
-      meta: patch
+      meta: { ...patch, sessionsRevoked: sessionReset }
     });
     return { ok: true, user: safeUser(get("SELECT * FROM users WHERE id = ?", target.id)) };
   });
