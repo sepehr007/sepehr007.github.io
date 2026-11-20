@@ -250,7 +250,6 @@ export class Net {
       managerId: "",
       locked: false,
       approval: false,
-      pauseOnLeave: false,
       slow: 0
     };
     this.members = new Map();
@@ -693,12 +692,6 @@ export class Net {
     }
     this.#broadcastMembers();
     this.emit("voice", { id: peerId, on: false, left: true });
-    this.emit("memberLeft", { id: peerId, nick: gone.nick });
-  }
-
-  announceAutoPause(nick) {
-    if (!this.isHost) return;
-    this.#broadcast({ t: "autoPaused", nick: String(nick || ""), time: this.playback?.time || 0 });
   }
 
   canControl(member) {
@@ -897,7 +890,7 @@ export class Net {
   #hostSettings(member, patch) {
     if (!this.isManager(member) || !patch) return;
     if (!this.#allow(member, "settings", 10, 3000)) return;
-    const allowed = ["control", "locked", "approval", "capacity", "slow", "managerId", "pauseOnLeave"];
+    const allowed = ["control", "locked", "approval", "capacity", "slow", "managerId"];
     for (const k of allowed) {
       if (!(k in patch)) continue;
       if (k === "capacity") this.room.capacity = Math.min(24, Math.max(2, Number(patch[k]) || 6));
@@ -992,7 +985,6 @@ export class Net {
       case "slow": this.emit("slow", Number(msg.wait) || 0); break;
       case "throttle": this.emit("throttle", { kind: msg.kind, wait: Number(msg.wait) || 0 }); break;
       case "playback": this.emit("playback", msg.state); break;
-      case "autoPaused": this.emit("autoPaused", { nick: msg.nick, time: msg.time }); break;
       case "ping": this.#sendTo(this.hostId, { t: "pong", ts: msg.ts }); break;
       case "room": this.roomState = msg.room; this.emit("room", msg.room); break;
       case "queue": this.emit("queue", msg.items); break;

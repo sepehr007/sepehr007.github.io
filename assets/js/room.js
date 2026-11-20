@@ -107,8 +107,6 @@ let screenRetryCount = new Map();
 const screenViews = new Map();
 let activeScreen = "";
 let currentPlayback = null;
-let autoPause = null;
-let autoResumeBusy = false;
 let localMode = false;
 let currentLocalUrl = null;
 let localFileId = "";
@@ -298,7 +296,6 @@ async function boot() {
   });
 
   guardPlaybackFlags();
-  guardAutoResume();
   wirePlayer();
   wireChat();
   wireChatTimer();
@@ -625,7 +622,7 @@ function wireNet() {
       }
       return;
     }
-    if (state?.url && state.url !== player.url) { localMode = false; clearAutoPause(); }
+    if (state?.url && state.url !== player.url) { localMode = false; }
     localFileId = "";
     fileOfferId = "";
     $("#fileOfferBar").classList.add("hidden");
@@ -634,30 +631,7 @@ function wireNet() {
     player.applyState(currentPlayback);
     updatePlayUI(currentPlayback.playing);
     syncStageEmpty();
-    if (currentPlayback.playing) { clearAutoPause(); watchAutoplay(currentPlayback); }
-  });
-
-  net.on("autoPaused", ({ nick: n }) => {
-    if (isHost) return;
-    showAutoPause(n);
-  });
-
-  net.on("memberLeft", ({ nick: n }) => {
-    if (!isHost || !roomInfo?.pauseOnLeave || autoPause) return;
-    if (!n) return;
-    if (localMode) {
-      if (player.video && !player.video.paused) {
-        player.video.pause();
-        broadcastLocalState();
-        showAutoPause(n);
-        net.announceAutoPause(n);
-      }
-      return;
-    }
-    if (!currentPlayback?.playing && player.video?.paused) return;
-    net.command("control", { action: "pause", time: player.expectedTime() });
-    showAutoPause(n);
-    net.announceAutoPause(n);
+    if (currentPlayback.playing) watchAutoplay(currentPlayback);
   });
 
   net.on("fileOffer", ({ id, name, size }) => {
@@ -1108,60 +1082,6 @@ function resumeOrTogglePlay() {
 function requestPlaybackSync() {
   if (!net || isHost || !net.ready) return;
   net.command("syncRequest");
-}
-
-function showAutoPause(name) {
-  const bar = $("#autoPauseBar");
-  if (!bar) return;
-  const first = !autoPause;
-  autoPause = { nick: name || "", at: Date.now() };
-  const allowed = player.canControl();
-  $("#autoPauseSub").textContent = t(allowed ? "autoPause.sub" : "autoPause.subGuest", { name: name || "?" });
-  $("#autoResumeBtn").classList.toggle("hidden", !allowed);
-  bar.classList.remove("hidden");
-  if (first) toast(t("toast.autoPausedBy", { name: name || "?" }), "info", 7000);
-}
-
-function clearAutoPause() {
-  if (!autoPause) return;
-  autoPause = null;
-  autoResumeBusy = false;
-  const btn = $("#autoResumeBtn");
-  if (btn) btn.disabled = false;
-  $("#autoPauseBar")?.classList.add("hidden");
-}
-
-async function confirmAutoResume(doPlay) {
-  if (!autoPause || autoResumeBusy) return;
-  if (!player.canControl()) return toast(t("toast.cantControl"), "error");
-  autoResumeBusy = true;
-  const name = autoPause.nick || "?";
-  const ok = await confirmDialog({
-    title: t("autoPause.confirmTitle"),
-    text: t("autoPause.confirmText", { name }),
-    okLabel: t("autoPause.resume")
-  });
-  autoResumeBusy = false;
-  if (!ok) return;
-  clearAutoPause();
-  doPlay();
-}
-
-function guardAutoResume() {
-  const original = player.togglePlay.bind(player);
-  player.togglePlay = (...args) => {
-    if (autoPause && player.video?.paused) {
-      if (!player.canControl()) { toast(t("toast.cantControl"), "error"); return false; }
-      confirmAutoResume(() => original(...args));
-      return false;
-    }
-    return original(...args);
-  };
-  $("#autoResumeBtn")?.addEventListener("click", () => {
-    if (!autoPause) return;
-    if (!player.video?.paused) return clearAutoPause();
-    confirmAutoResume(() => player.togglePlay());
-  });
 }
 
 function updatePlayUI(playing) {
@@ -2737,11 +2657,10 @@ function applyRoomSettings(room) {
   $("#optControl").value = room.control === "all" ? "all" : "host";
   $("#optLock").checked = !!room.locked;
   $("#optApproval").checked = !!room.approval;
-  if ($("#optPauseOnLeave")) $("#optPauseOnLeave").checked = !!room.pauseOnLeave;
   $("#optSlow").value = String(room.slow || 0);
   paintManagerOptions(room);
   const locked = !manager;
-  [$("#optControl"), $("#optLock"), $("#optApproval"), $("#optPauseOnLeave"), $("#optSlow"), $("#optManager")].forEach((n) => { if (n) n.disabled = locked; });
+  [$("#optControl"), $("#optLock"), $("#optApproval"), $("#optSlow"), $("#optManager")].forEach((n) => { if (n) n.disabled = locked; });
   if (room.managerId && room.managerId === me.id && lastManagerSeen !== me.id) {
     toast(t("toast.youAreManager"), "success");
   }
@@ -2857,7 +2776,6 @@ function wireSettings() {
     if (!allow("rooms.approval", "اتاق با تأیید غیرفعال شده است.")) { e.target.checked = false; return; }
     push({ approval: e.target.checked });
   });
-  $("#optPauseOnLeave")?.addEventListener("change", (e) => push({ pauseOnLeave: e.target.checked }));
   $("#optSlow").addEventListener("change", (e) => push({ slow: Number(e.target.value) }));
   $("#optManager")?.addEventListener("change", (e) => push({ managerId: e.target.value }));
   $("#optQuality").addEventListener("change", (e) => {

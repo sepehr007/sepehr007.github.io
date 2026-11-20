@@ -195,15 +195,6 @@
           <button class="btn btn-primary btn-sm" id="reconnectBtn" type="button" data-i18n="net.reconnect">اتصال دوباره</button>
         </div>
 
-        <div class="conn-lost hidden" id="autoPauseBar" role="status">
-          <span class="conn-ico" aria-hidden="true">⏸</span>
-          <div class="conn-body">
-            <strong data-i18n="autoPause.title">پخش متوقف شد</strong>
-            <span id="autoPauseSub"></span>
-          </div>
-          <button class="btn btn-primary btn-sm" id="autoResumeBtn" type="button" data-i18n="autoPause.resume">ادامهٔ پخش</button>
-        </div>
-
         <div class="file-offer hidden" id="fileOfferBar">
           <span class="fo-ico">📥</span>
           <div class="fo-body">
@@ -482,12 +473,6 @@
           <input type="checkbox" id="optApproval">
           <span class="switch"></span>
         </label>
-        <label class="switch-row">
-          <span data-i18n="settings.pauseOnLeave">توقف پخش وقتی کسی قطع می‌شود</span>
-          <input type="checkbox" id="optPauseOnLeave">
-          <span class="switch"></span>
-        </label>
-        <p class="hint" data-i18n="settings.pauseOnLeaveHint">اگر عضوی هنگام پخش خارج شود، پخش متوقف می‌شود و ادامه فقط با تأیید مدیر انجام می‌شود.</p>
         <div class="setting">
           <label for="optSlow" data-i18n="settings.slow">حالت آهستهٔ چت</label>
           <select id="optSlow">
