@@ -399,7 +399,64 @@ await step("rooms", "password and private rooms are gated", async () => {
   assert.equal(hidden.status, 201, hidden.text);
   const denied = await api("POST", `/api/rooms/${hidden.json.room.code}/join`, { token: dave.token, body: {} });
   assert.equal(denied.status, 403, denied.text);
-  assert.equal(denied.json.error, "private_room");
+  assert.ok(["private_room", "invite_required"].includes(denied.json.error), denied.text);
+});
+
+await step("rooms", "approval rooms wait for manager decision", async () => {
+  const created = await api("POST", "/api/rooms", {
+    token: bob.token,
+    body: { name: "اتاق تأییدی", joinMode: "approval", capacity: 6 }
+  });
+  assert.equal(created.status, 201, created.text);
+  const code = created.json.room.code;
+
+  const blocked = await api("POST", `/api/rooms/${code}/join`, { token: dave.token, body: {} });
+  assert.equal(blocked.status, 403, blocked.text);
+  assert.equal(blocked.json.error, "approval_required");
+
+  const requested = await api("POST", `/api/rooms/${code}/request`, { token: dave.token, body: { note: "سلام" } });
+  assert.ok([200, 202].includes(requested.status), requested.text);
+
+  const pending = await api("GET", `/api/rooms/${code}/requests`, { token: bob.token });
+  assert.equal(pending.status, 200, pending.text);
+  assert.ok(pending.json.requests.some((row) => row.userId === dave.user.id), pending.text);
+
+  const stillBlocked = await api("POST", `/api/rooms/${code}/join`, { token: dave.token, body: {} });
+  assert.equal(stillBlocked.status, 403, stillBlocked.text);
+  assert.equal(stillBlocked.json.error, "approval_pending");
+
+  const decided = await api("POST", `/api/rooms/${code}/requests/${dave.user.id}/decide`, {
+    token: bob.token,
+    body: { decision: "approve" }
+  });
+  assert.equal(decided.status, 200, decided.text);
+
+  const joined = await api("POST", `/api/rooms/${code}/join`, { token: dave.token, body: {} });
+  assert.equal(joined.status, 200, joined.text);
+
+  const anonymous = await api("GET", "/api/rooms/public");
+  assert.equal(anonymous.status, 200, anonymous.text);
+  assert.ok(anonymous.json.rooms.some((room) => room.code === code), anonymous.text);
+});
+
+await step("rooms", "room creation can require an active subscription", async () => {
+  const enable = await api("PUT", "/api/admin/settings", {
+    token: owner.token,
+    body: { values: { "plans.roomsRequirePremium": true } }
+  });
+  assert.equal(enable.status, 200, enable.text);
+  try {
+    const denied = await api("POST", "/api/rooms", { token: carol.token, body: { name: "اتاق بدون اشتراک" } });
+    assert.equal(denied.status, 403, denied.text);
+    assert.equal(denied.json.error, "premium_required");
+    const staff = await api("POST", "/api/rooms", { token: owner.token, body: { name: "اتاق مالک" } });
+    assert.equal(staff.status, 201, staff.text);
+  } finally {
+    await api("PUT", "/api/admin/settings", {
+      token: owner.token,
+      body: { values: { "plans.roomsRequirePremium": false } }
+    });
+  }
 });
 
 /* ================================================================= media */

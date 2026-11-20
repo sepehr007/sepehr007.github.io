@@ -564,16 +564,29 @@ function renderAccounts(section, center) {
 
 /* ---------------- rooms / messages / reports ---------------- */
 
+const JOIN_MODE_LABELS = {
+  open: "آزاد",
+  approval: "با تأیید",
+  invite: "دعوتی",
+  password: "رمزدار"
+};
+
 function renderServerRooms(section, center) {
+  let includeDeleted = false;
   const reload = async () => {
     section.replaceChildren(loading());
     try {
-      const data = await api("/admin/rooms");
+      const data = await api(`/admin/rooms${includeDeleted ? "?includeDeleted=1" : ""}`);
       const view = el("div", { class: "og-page" });
       const bar = el("div", { class: "ow-toolbar" });
       const refresh = el("button", { class: "mini-btn", type: "button", text: "تازه‌سازی" });
       refresh.addEventListener("click", reload);
-      bar.append(refresh);
+      const deletedToggle = el("label", { class: "ow-check" });
+      const deletedBox = el("input", { type: "checkbox" });
+      deletedBox.checked = includeDeleted;
+      deletedBox.addEventListener("change", () => { includeDeleted = deletedBox.checked; reload(); });
+      deletedToggle.append(deletedBox, el("span", { text: "نمایش حذف‌شده‌ها" }));
+      bar.append(refresh, deletedToggle);
       view.append(card("اتاق‌های سرور", "پلتفرم فعلی مفهوم «سرور/کانال» جدا ندارد؛ اتاق‌ها و لابی‌ها همان نقش را دارند."), bar);
       view.append(table(
         ["کد", "نام", "مالک", "ظرفیت", "نوع", "وضعیت", "پیام‌ها", "ساخت"],
@@ -588,25 +601,95 @@ function renderServerRooms(section, center) {
           fmtDate(l.createdAt)
         ])
       ));
+      const details = el("div", { class: "og-page" });
       view.append(el("h3", { class: "ow-h3", text: "اتاق‌های پیام‌رسانی" }));
       view.append(table(
-        ["کد اتاق", "نام", "اعضا", "فعال", "آخرین فعالیت", "اقدام"],
+        ["کد اتاق", "نام", "مدیر", "اعضا", "ورود", "در انتظار", "وضعیت", "آخرین فعالیت", "اقدام"],
         (data.rooms || []).map((r) => {
-          const act = mkBtn(r.is_active ? "بستن اتاق" : "بازکردن اتاق", () => {
+          const id = encodeURIComponent(r.id);
+          const actions = el("div", { class: "ow-toolbar" });
+          const act = mkBtn(r.is_active ? "بستن" : "بازکردن", () => {
             const action = r.is_active ? "close" : "reopen";
             confirmThen(center, {
               title: action === "close" ? "بستن اتاق" : "بازکردن اتاق",
-              text: `${action === "close" ? "اتاق" : "اتاق"} «${r.name || r.room_code}» ${action === "close" ? "برای کاربران بسته می‌شود." : "دوباره باز می‌شود."}`,
+              text: `اتاق «${r.name || r.room_code}» ${action === "close" ? "برای کاربران بسته می‌شود." : "دوباره باز می‌شود."}`,
               danger: action === "close"
             }, async () => {
-              await api(`/admin/rooms/${encodeURIComponent(r.id)}`, { method: "PATCH", body: { action, confirm: true } });
+              await api(`/admin/rooms/${id}`, { method: "PATCH", body: { action, confirm: true } });
               toast(action === "close" ? "اتاق بسته شد." : "اتاق باز شد.");
               reload();
             });
           }, r.is_active ? "mini-btn danger" : "mini-btn");
-          return [r.room_code || r.roomCode, r.name, String(r.member_count ?? 0), r.is_active ? "بله" : "خیر", fmtDate(r.last_activity_at), act];
+          const members = mkBtn("اعضا", async () => {
+            details.replaceChildren(loading());
+            try {
+              const res = await api(`/admin/rooms/${id}/members`);
+              details.replaceChildren(
+                card(`اعضای ${res.room?.name || r.room_code}`, `مدیر: ${res.room?.manager?.nick || res.room?.manager?.username || "—"} · ${res.members?.length || 0} عضو`),
+                table(
+                  ["نام", "نام کاربری", "نقش", "ایمیل", "پیوستن", "آخرین حضور"],
+                  (res.members || []).map((m) => [
+                    m.nick || "—",
+                    m.username || "—",
+                    m.role || "—",
+                    m.email || "—",
+                    fmtDate(m.joinedAt),
+                    fmtDate(m.lastSeenAt)
+                  ])
+                )
+              );
+            } catch (err) {
+              details.replaceChildren(card("خطا", err?.message || "دریافت اعضا ناموفق بود."));
+            }
+          }, "mini-btn");
+          const notify = mkBtn("اعلان", () => {
+            const title = el("input", { class: "ow-input", type: "text", maxlength: "120", placeholder: "عنوان اعلان" });
+            const text = el("textarea", { class: "ow-input", rows: "3", maxlength: "600", placeholder: "متن پیام برای اعضای فعال اتاق" });
+            const send = mkBtn("ارسال به اعضا", async () => {
+              if (!title.value.trim() || !text.value.trim()) return toast("عنوان و متن لازم است.");
+              send.disabled = true;
+              try {
+                const res = await api(`/admin/rooms/${id}/notify`, { method: "POST", body: { title: title.value.trim(), body: text.value.trim() } });
+                toast(`اعلان برای ${res.delivered ?? res.recipients ?? 0} نفر ثبت شد.`, "success");
+                title.value = "";
+                text.value = "";
+              } catch (err) {
+                toast(err?.message || "ارسال اعلان ناموفق بود.", "error");
+              } finally {
+                send.disabled = false;
+              }
+            }, "mini-btn");
+            details.replaceChildren(card(`اعلان به ${r.name || r.room_code}`, "فقط اعضای فعال همین اتاق اعلان می‌گیرند."), el("div", { class: "og-form" }, [title, text, send]));
+          }, "mini-btn");
+          actions.append(act, members, notify);
+          if (!r.deleted_at) {
+            actions.append(mkBtn("حذف", () => {
+              confirmThen(center, {
+                title: "حذف اتاق",
+                text: `اتاق «${r.name || r.room_code}» حذف می‌شود و از فهرست عمومی نمی‌آید. این کار قابل بازگشت نیست.`,
+                danger: true
+              }, async () => {
+                await api(`/admin/rooms/${id}`, { method: "PATCH", body: { action: "delete", confirm: true } });
+                toast("اتاق حذف شد.");
+                reload();
+              });
+            }, "mini-btn danger"));
+          }
+          const status = r.deleted_at ? "حذف‌شده" : r.is_active ? "فعال" : "بسته";
+          return [
+            r.room_code || r.roomCode,
+            r.name,
+            r.manager || "—",
+            String(r.member_count ?? 0),
+            JOIN_MODE_LABELS[r.join_mode] || r.join_mode || "—",
+            String(r.pending_requests ?? 0),
+            status,
+            fmtDate(r.last_activity_at),
+            actions
+          ];
         })
       ));
+      view.append(details);
       section.replaceChildren(view);
     } catch (err) {
       failure(section, err, reload);

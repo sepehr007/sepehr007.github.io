@@ -70,6 +70,7 @@ export const SETTINGS_REGISTRY = [
   { id: "security.requireEmailVerify", label: "الزام تأیید ایمیل", category: "security", ...bool() },
 
   { id: "plans.premiumEnabled", label: "فروش پریمیوم", category: "billing", ...bool() },
+  { id: "plans.roomsRequirePremium", label: "ساخت اتاق فقط با اشتراک فعال", category: "billing", ...bool() },
   { id: "plans.premiumUrl", label: "لینک پرداخت پریمیوم", category: "billing", ...url() },
   { id: "plans.premiumPriceFa", label: "قیمت (فارسی)", category: "billing", ...text(30) },
   { id: "plans.premiumPriceEn", label: "Price (English)", category: "billing", ...text(30) },

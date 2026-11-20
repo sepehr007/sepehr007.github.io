@@ -1,5 +1,5 @@
 import { getDatabase } from "../database/index.js";
-import { RoomError } from "./watchRooms.js";
+import { RoomError, maybeCleanup } from "./watchRooms.js";
 
 const SORTS = ["activity", "members", "newest", "name"];
 const FILTERS = ["open", "nopass", "active"];
@@ -59,8 +59,8 @@ export function mapPublicRoom(row) {
     description: row.description || "",
     color: row.color || "",
     iconUrl: row.icon_url || "",
-    coverUrl: row.cover_url || "",
     visibility: row.visibility || "public",
+    joinMode: row.join_mode || (row.password_hash ? "password" : row.visibility === "private" ? "invite" : "open"),
     hasPassword: Boolean(row.password_hash),
     capacity: Number(row.capacity || 6),
     memberCount: Number(row.active_members ?? row.member_count ?? 0),
@@ -107,6 +107,7 @@ function filterParts(filterRaw) {
 
 export async function discoverRooms(viewerId, { q = "", sort = "activity", page = 1, limit = 12, filter = "" } = {}) {
   const db = await conn();
+  await maybeCleanup();
   const term = cleanText(q, 60);
   const order = SORTS.includes(String(sort)) ? String(sort) : "activity";
   const size = pageSize(limit);

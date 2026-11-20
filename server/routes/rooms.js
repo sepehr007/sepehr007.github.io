@@ -4,10 +4,12 @@ import { requireAuth } from "./auth.js";
 import { audit } from "../audit.js";
 import { resolveFeatureState, isEnabled } from "../features.js";
 import { sqlPlanQuota } from "../stores/billing.js";
+import { roomEntitlement } from "../entitlements.js";
 import {
   RoomError,
   createRoom,
   getRoom,
+  listPublicRooms,
   listMyRooms,
   listRecentRooms,
   joinRoom,
@@ -18,7 +20,11 @@ import {
   setMemberRole,
   kickMember,
   transferManager,
-  closeRoom
+  closeRoom,
+  requestJoin,
+  myJoinRequest,
+  listJoinRequests,
+  decideJoinRequest
 } from "../stores/watchRooms.js";
 import { sqlCreateInvite, sqlListInvites, sqlRevokeInvite } from "../stores/social.js";
 import { discoverRooms, suggestRooms, recommendRooms } from "../stores/discover.js";
@@ -71,6 +77,11 @@ async function flags(req) {
 }
 
 export default async function roomRoutes(app) {
+  app.get("/public", handle(async () => {
+    const rooms = await listPublicRooms("", { limit: 8 });
+    return { ok: true, rooms };
+  }));
+
   app.get("/discover", { preHandler: AUTH }, handle(async (req, reply) => {
     const state = await flags(req);
     if (!isEnabled(state, "features.publicDiscovery")) {
@@ -112,11 +123,27 @@ export default async function roomRoutes(app) {
     return { ok: true, rooms: await listRecentRooms(req.auth.userId, req.query?.limit) };
   }));
 
+  app.get("/entitlement", { preHandler: AUTH }, handle(async (req, reply) => {
+    const state = await flags(req);
+    const entitlement = await roomEntitlement(req.auth.userId, req.auth.role);
+    return {
+      ok: true,
+      ...entitlement,
+      createOpen: isEnabled(state, "access.roomCreate"),
+      privateOpen: isEnabled(state, "features.roomPrivate"),
+      publicOpen: isEnabled(state, "features.roomPublic")
+    };
+  }));
+
   app.post("/", { preHandler: AUTH }, handle(async (req, reply) => {
     const payload = body(req);
     const state = await flags(req);
     if (!isEnabled(state, "access.roomCreate")) {
       return fail(reply, 403, "rooms_closed", "Creating rooms is closed by the site owner.");
+    }
+    const entitlement = await roomEntitlement(req.auth.userId, req.auth.role);
+    if (!entitlement.premium) {
+      return fail(reply, 403, "premium_required", "به اشتراک فعال نیاز داری تا بتوانی اتاق بسازی.");
     }
     const wantsPrivate = payload.visibility === "private" || payload.visibility === "unlisted" || String(payload.password || "").length > 0;
     if (wantsPrivate && !isEnabled(state, "features.roomPrivate")) {
@@ -194,6 +221,53 @@ export default async function roomRoutes(app) {
       managerId: result.room.manager?.id || "",
       memberCount: result.memberCount
     });
+    return { ok: true, ...result };
+  }));
+
+  app.post("/:code/request", { preHandler: AUTH }, handle(async (req, reply) => {
+    const result = await requestJoin(req.auth.userId, req.params.code, body(req).note);
+    const room = result.room;
+    if (result.status === "pending" && room?.manager?.id && room.manager.id !== req.auth.userId) {
+      notifyUser(req, room.manager.id, "join-request", { code: room.code, userId: req.auth.userId });
+      await deliverNotice(req.server, room.manager.id, {
+        kind: "room_activity",
+        title: "درخواست ورود به اتاق",
+        body: `${req.auth.username || "کاربر"} می‌خواهد به «${room.name || room.code}» وارد شود.`,
+        link: "room.html?room=" + encodeURIComponent(room.code),
+        dedupeKey: `room_request:${room.code}:${req.auth.userId}`,
+        dedupeWindowMs: 10 * 60_000,
+        room: room.code
+      });
+    }
+    await audit("room.join_request", req, {
+      targetType: "room",
+      targetId: String(req.params.code || "").toUpperCase(),
+      meta: { status: result.status }
+    });
+    return reply.code(result.status === "pending" ? 202 : 200).send({ ok: true, ...result });
+  }));
+
+  app.get("/:code/request", { preHandler: AUTH }, handle(async (req) => {
+    return { ok: true, request: await myJoinRequest(req.auth.userId, req.params.code) };
+  }));
+
+  app.get("/:code/requests", { preHandler: AUTH }, handle(async (req) => {
+    return { ok: true, requests: await listJoinRequests(req.auth.userId, req.auth.role, req.params.code) };
+  }));
+
+  app.post("/:code/requests/:userId/decide", { preHandler: AUTH }, handle(async (req) => {
+    const decision = String(body(req).decision || "");
+    const result = await decideJoinRequest(req.auth.userId, req.auth.role, req.params.code, req.params.userId, decision);
+    await audit("room.join_decide", req, {
+      targetType: "room",
+      targetId: String(req.params.code || "").toUpperCase(),
+      meta: { member: req.params.userId, decision }
+    });
+    notifyUser(req, req.params.userId, "join-decision", {
+      code: req.params.code,
+      decision: result.status
+    });
+    notifyRoom(req, req.params.code, { type: "room-event", event: "join-request", code: req.params.code });
     return { ok: true, ...result };
   }));
 

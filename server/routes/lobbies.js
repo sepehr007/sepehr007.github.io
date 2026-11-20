@@ -9,6 +9,8 @@ import { sqlListLobbies, sqlActiveLobby, sqlCreateLobby, sqlCloseLobby, sqlTouch
 import { audit } from "../audit.js";
 import { resolveFeatureState, isEnabled } from "../features.js";
 import { settingNumber, settingValue } from "../platformSettings.js";
+import { roomEntitlement } from "../entitlements.js";
+import { createRoom, forceCloseRoom, RoomError } from "../stores/watchRooms.js";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_RE = /^[A-Z0-9-]{4,16}$/;
@@ -109,6 +111,10 @@ export default async function lobbyRoutes(app) {
     if (!wantsPassword && !isEnabled(access, "features.roomPublic")) {
       return fail(reply, 403, "public_rooms_closed", "Public rooms are disabled by the site owner.");
     }
+    const entitlement = await roomEntitlement(req.auth.userId, req.auth.role);
+    if (!entitlement.premium) {
+      return fail(reply, 403, "premium_required", "به اشتراک فعال نیاز داری تا بتوانی اتاق بسازی.");
+    }
     let code = cleanText(body.code, 16).toUpperCase();
     if (code && !CODE_RE.test(code)) return fail(reply, 400, "invalid_code", "Lobby code is invalid.");
     const name = cleanText(body.name, 60) || "لابی من";
@@ -134,6 +140,20 @@ export default async function lobbyRoutes(app) {
         if (String(err?.message || "").includes("UNIQUE")) {
           return fail(reply, 409, "already_exists", "That lobby code or an active lobby already exists.");
         }
+        throw err;
+      }
+      try {
+        await createRoom(req.auth.userId, req.auth.role, {
+          code: lobby.code,
+          name,
+          capacity,
+          joinMode: privacy === "password" ? "password" : "open",
+          password: String(body.password || ""),
+          visibility: "public"
+        });
+      } catch (err) {
+        await sqlCloseLobby(lobby.code, req.auth.userId, "create_failed").catch(() => {});
+        if (err instanceof RoomError) return fail(reply, err.status, err.code, err.message);
         throw err;
       }
       await audit("lobby.create", req, {
@@ -180,6 +200,8 @@ export default async function lobbyRoutes(app) {
     if (!dbReady()) {
       if (!(await ensureStore())) return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
       const lobby = await sqlCloseLobby(code, req.auth.userId, reason);
+      await forceCloseRoom(code, req.auth.userId).catch(() => {});
+      try { req.server.notifyRoom?.(code, { type: "room-event", event: "closed", code }); } catch {}
       await audit("lobby.close", req, { targetType: "lobby", targetId: code, meta: { reason } });
       return { ok: true, lobby };
     }
@@ -190,6 +212,7 @@ export default async function lobbyRoutes(app) {
     );
     if (!lobby) return { ok: true, lobby: null };
     await Room.updateMany({ roomCode: code, isActive: true }, { $set: { isActive: false } });
+    try { req.server.notifyRoom?.(code, { type: "room-event", event: "closed", code }); } catch {}
     await audit("lobby.close", req, { targetType: "lobby", targetId: code, meta: { reason } });
     return { ok: true, lobby };
   });

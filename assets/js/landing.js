@@ -1,6 +1,6 @@
 import { initI18n, t, getLang } from "./i18n.js";
 import {
-  $, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt,
+  $, el, toast, makeCode, store, registerServiceWorker, applyUIPrefs, wireInstallPrompt,
   createLimiter, confirmDialog, copyText
 } from "./core.js";
 import { currentUser, mountUserChip, isDisplayName, syncRemoteSession } from "./auth.js";
@@ -9,6 +9,7 @@ import {
   createLobby, getActiveLobby, closeLobby, touchLobby, lobbyStats,
   lobbyQuery, lobbyInviteUrl, pruneExpiredLobbies
 } from "./lobbies.js";
+import { apiFetch } from "./api.js";
 import { loadSiteConfig, applySiteConfig, isConfigPreview, accessOn, listenLiveConfig } from "./site-config.js";
 import { resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, readFeatureCenter } from "./feature-flags.js";
 import { seedPlans, requestPlan } from "./plans.js";
@@ -67,6 +68,7 @@ async function bootSite() {
   await seedAccountsFromLocal();
   await seedPlans();
   wirePlanButtons();
+  loadHomeRooms();
   if (user) {
     await initLobbyUI();
     if (!(await resumePendingLobby())) resumePendingRoom();
@@ -85,6 +87,7 @@ async function bootSite() {
     applyAccessState();
     applyAuthLinks();
     applyPrivacyOptions();
+    renderHomeRooms();
     if (activeLobby) renderLobbyCard(activeLobby);
   });
 }
@@ -204,11 +207,29 @@ async function initLobbyUI() {
   }
 }
 
-async function persistLobby(account, { code, name, nick, capacity, privacy }) {
+async function persistLobby(account, { code, name, nick, capacity, privacy, password = "" }) {
   try {
-    const res = await createLobby(account, { code, name, capacity, privacy });
+    const res = await createLobby(account, { code, name, capacity, privacy, password });
     if (!res.ok) return;
     renderLobbyCard(res.lobby, await lobbyStats(account));
+  } catch {}
+}
+
+let entitlementCache = null;
+async function canCreateRoom() {
+  if (!entitlementCache) {
+    entitlementCache = apiFetch("/rooms/entitlement", { timeoutMs: 8000 })
+      .then((res) => res?.premium !== false)
+      .catch(() => true);
+    setTimeout(() => { entitlementCache = null; }, 20000);
+  }
+  return entitlementCache;
+}
+
+function rememberRoomPassword(code, password) {
+  if (!password) return;
+  try {
+    sessionStorage.setItem(`pwd:${code}`, JSON.stringify({ pwd: String(password), exp: Date.now() + 12 * 60 * 60 * 1000 }));
   } catch {}
 }
 
@@ -223,19 +244,22 @@ async function resumePendingLobby() {
   try { pending = JSON.parse(raw); } catch { return false; }
   if (!pending || Date.now() - Number(pending.at || 0) > 30 * 60 * 1000) return false;
   if (!roomCreateOpen || !flagOn(flagStates, "rooms.create")) return false;
+  if (!(await canCreateRoom())) {
+    toast(t("rooms.premiumRequired"), "error", 7000);
+    return false;
+  }
   const code = makeCode(6);
   const capacity = String(Math.max(2, Math.min(24, Number(pending.capacity) || 6)));
   const privacy = pending.privacy === "password" ? "password" : "public";
   const nick = String(pending.nick || account.nick || "").slice(0, 20);
-  if (privacy === "password" && pending.password) {
-    try { sessionStorage.setItem(`pwd:${code}`, String(pending.password)); } catch {}
-  }
+  if (privacy === "password") rememberRoomPassword(code, pending.password);
   await persistLobby(account, {
     code,
     name: String(pending.name || "").slice(0, 40),
     nick,
     capacity,
-    privacy
+    privacy,
+    password: privacy === "password" ? String(pending.password || "") : ""
   });
   const q = new URLSearchParams({
     room: code,
@@ -247,6 +271,53 @@ async function resumePendingLobby() {
   });
   location.replace(`room.html?${q}`);
   return true;
+}
+
+/* ---------- public rooms on the home page ---------- */
+let homeRooms = [];
+
+function homeRoomCard(room) {
+  const card = el("article", { class: "room-card" });
+  if (/^#[0-9a-f]{6}$/i.test(String(room.color || ""))) card.style.setProperty("--room-color", room.color);
+  const head = el("div", { class: "room-card-head" });
+  const mark = el("span", { class: "room-card-mark", text: "▷" });
+  const title = el("div", { class: "room-card-title" });
+  title.append(el("strong", { text: room.name || t("rooms.title") }));
+  const manager = String(room.manager?.nick || room.manager?.username || "");
+  title.append(el("small", { text: manager ? t("rooms.by", { name: manager }) : t("rooms.guest") }));
+  head.append(mark, title);
+  card.append(head);
+  if (room.description) card.append(el("p", { class: "room-card-desc", text: room.description }));
+  const badges = el("div", { class: "room-card-badges" });
+  if (room.hasPassword) badges.append(el("span", { class: "room-badge warn", text: t("rooms.passwordBadge") }));
+  if (room.joinMode === "approval") badges.append(el("span", { class: "room-badge warn", text: t("rooms.approvalModeBadge") }));
+  if (badges.childElementCount) card.append(badges);
+  const foot = el("div", { class: "room-card-foot" });
+  const meta = el("div", { class: "room-card-meta" });
+  meta.append(el("b", { text: t("rooms.members", { n: String(room.memberCount ?? 0) }) }));
+  foot.append(meta);
+  const href = `rooms.html?room=${encodeURIComponent(String(room.code || ""))}`;
+  foot.append(el("a", { class: "btn btn-primary btn-sm", href, text: t("home.roomsJoin") }));
+  card.append(foot);
+  return card;
+}
+
+function renderHomeRooms() {
+  const section = $("#homePublicRooms");
+  const list = $("#homeRoomList");
+  if (!section || !list) return;
+  section.hidden = homeRooms.length === 0;
+  if (homeRooms.length) list.replaceChildren(...homeRooms.map(homeRoomCard));
+}
+
+async function loadHomeRooms() {
+  try {
+    const res = await apiFetch("/rooms/public", { timeoutMs: 8000 });
+    homeRooms = Array.isArray(res?.rooms) ? res.rooms.slice(0, 6) : [];
+  } catch {
+    homeRooms = [];
+  }
+  renderHomeRooms();
 }
 
 /* ---------- motion & hero shortcuts ---------- */
@@ -424,8 +495,8 @@ $("#createBtn").addEventListener("click", async () => {
     return toast(getLangIsFa() ? "اتاق عمومی غیرفعال شده است." : "Public rooms are disabled.", "error");
   }
   const pwd = pwdInput.value.trim();
-  if (privacy === "password" && pwd.length < 3) {
-    return toast(getLangIsFa() ? "رمز حداقل ۳ حرف باشد" : "Password must be at least 3 characters", "error");
+  if (privacy === "password" && pwd.length < 4) {
+    return toast(t("rooms.weakPassword"), "error");
   }
   const account = currentUser();
   if (!account) {
@@ -442,16 +513,20 @@ $("#createBtn").addEventListener("click", async () => {
     location.href = `auth.html?next=${encodeURIComponent("index.html")}`;
     return;
   }
+  if (!(await canCreateRoom())) {
+    return toast(t("rooms.premiumRequired"), "error", 7000);
+  }
   const code = makeCode(6);
   store.set("wt.nick", nick);
-  if (privacy === "password") sessionStorage.setItem(`pwd:${code}`, pwd);
+  if (privacy === "password") rememberRoomPassword(code, pwd);
   if (!createGuard()) { guardWarn(); return; }
   await persistLobby(account, {
     code,
     name: nameInput.value.trim().slice(0, 40),
     nick,
     capacity: capacityInput.value,
-    privacy
+    privacy,
+    password: privacy === "password" ? pwd : ""
   });
   const q = new URLSearchParams({
     room: code,

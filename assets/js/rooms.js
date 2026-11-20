@@ -38,6 +38,14 @@ function errorText(err) {
   if (code === "private_room") return t("rooms.errPrivate");
   if (code === "room_closed") return t("rooms.errClosed");
   if (code === "wrong_password") return t("rooms.errPassword");
+  if (code === "premium_required") return t("rooms.premiumRequired");
+  if (code === "weak_password") return t("rooms.weakPassword");
+  if (code === "approval_required" || code === "approval_pending") return t("rooms.approvalPending");
+  if (code === "invite_required") return t("rooms.inviteNeeded");
+  if (code === "rooms_closed") return t("rooms.createClosed");
+  if (code === "room_join_closed") return t("rooms.joinClosed");
+  if (code === "private_rooms_closed") return t("rooms.privateClosed");
+  if (code === "public_rooms_closed") return t("rooms.publicClosed");
   const key = `social.err.${code}`;
   const text = t(key);
   if (text !== key) return text;
@@ -194,7 +202,9 @@ async function joinFlow(code, { inviteCode = "" } = {}) {
         });
         toast(t("rooms.joined"), "success");
         if (password) {
-          try { sessionStorage.setItem(`pwd:${clean}`, password); } catch {}
+          try {
+            sessionStorage.setItem(`pwd:${clean}`, JSON.stringify({ pwd: password, exp: Date.now() + 12 * 60 * 60 * 1000 }));
+          } catch {}
         }
         location.href = roomHref(res?.room?.code || clean);
         return;
@@ -204,6 +214,23 @@ async function joinFlow(code, { inviteCode = "" } = {}) {
           if (entered === null) return;
           password = entered;
           continue;
+        }
+        if (err?.code === "approval_required") {
+          await apiFetch(`/rooms/${encodeURIComponent(clean)}/request`, {
+            method: "POST",
+            body: { note: "" },
+            timeoutMs: 12000
+          });
+          toast(t("rooms.requestSent"), "success", 7000);
+          return;
+        }
+        if (err?.code === "approval_pending") {
+          toast(t("rooms.approvalPending"), "info", 7000);
+          return;
+        }
+        if (err?.code === "invite_required" || err?.code === "private_room") {
+          toast(t("rooms.inviteNeeded"), "error", 7000);
+          return;
         }
         throw err;
       }
@@ -245,12 +272,6 @@ function roomCard(room, { compact = false, reason = "" } = {}) {
   setColor(card, room.color);
   if (!room.isActive) card.classList.add("is-closed");
 
-  if (room.coverUrl) {
-    card.append(el("div", { class: "room-card-cover" }, [
-      el("img", { src: room.coverUrl, alt: "", loading: "lazy", decoding: "async" })
-    ]));
-  }
-
   const head = el("div", { class: "room-card-head" });
   const mark = el("span", { class: "room-card-mark" });
   if (room.iconUrl) {
@@ -270,6 +291,7 @@ function roomCard(room, { compact = false, reason = "" } = {}) {
   }
   if (!room.isActive) badges.append(badge(t("rooms.closedBadge"), "danger"));
   if (room.hasPassword) badges.append(badge(t("rooms.passwordBadge"), "warn"));
+  if (room.joinMode === "approval") badges.append(badge(t("rooms.approvalModeBadge"), "warn"));
   if (room.visibility === "private") badges.append(badge(t("rooms.privateBadge"), "warn"));
   if (room.isActive && Number(room.memberCount || 0) >= Number(room.capacity || 6)) {
     badges.append(badge(t("rooms.fullBadge"), "danger"));
@@ -290,7 +312,13 @@ function roomCard(room, { compact = false, reason = "" } = {}) {
   foot.append(meta);
 
   const closed = !room.isActive;
-  const label = closed ? t("rooms.closedBadge") : room.joined ? t("rooms.open") : t("rooms.join");
+  const label = closed
+    ? t("rooms.closedBadge")
+    : room.joined
+      ? t("rooms.open")
+      : room.joinMode === "approval"
+        ? t("rooms.requestJoin")
+        : t("rooms.join");
   const action = el("button", {
     type: "button",
     class: `btn ${closed ? "btn-secondary" : "btn-primary"} btn-sm`,
@@ -447,6 +475,41 @@ function loadAll() {
 
 /* ---------------------------------------------------------------- actions */
 
+function applyJoinModeHint() {
+  const mode = $("#newJoinMode")?.value || "open";
+  const wrap = $("#newPasswordWrap");
+  if (wrap) wrap.hidden = mode !== "password";
+  const hint = $("#joinModeHint");
+  const keys = {
+    open: "room.joinOpenHint",
+    approval: "room.joinApprovalHint",
+    invite: "room.joinInviteHint",
+    password: "room.joinPasswordHint"
+  };
+  if (hint) hint.textContent = t(keys[mode] || keys.open);
+}
+
+async function applyEntitlement() {
+  const note = $("#createPremium");
+  const submit = $("#createForm button[type=submit]");
+  try {
+    const res = await apiFetch("/rooms/entitlement", { timeoutMs: 10000 });
+    if (res?.premium) {
+      if (note) note.hidden = true;
+      if (submit) submit.disabled = false;
+      return;
+    }
+    if (submit) submit.disabled = true;
+    if (note) {
+      note.hidden = false;
+      note.replaceChildren(
+        document.createTextNode(t("rooms.premiumRequired") + " "),
+        el("a", { href: "index.html#pricing", class: "link", text: t("rooms.premiumCta") })
+      );
+    }
+  } catch {}
+}
+
 async function createRoom(event) {
   event.preventDefault();
   const name = $("#newName").value.trim();
@@ -454,14 +517,21 @@ async function createRoom(event) {
     $("#newName").focus();
     return;
   }
+  const joinMode = $("#newJoinMode")?.value || "open";
+  const password = $("#newPassword")?.value || "";
+  if (joinMode === "password" && password.trim().length < 4) {
+    toast(t("rooms.weakPassword"), "error");
+    $("#newPassword")?.focus();
+    return;
+  }
   const payload = {
     name,
     description: $("#newDesc").value.trim(),
     rules: $("#newRules").value.trim(),
     color: $("#newColor").value,
-    visibility: $("#newVisibility").value,
+    joinMode,
     capacity: Number($("#newCapacity").value) || 6,
-    password: $("#newPassword").value
+    password: joinMode === "password" ? password : ""
   };
   const submit = event.currentTarget.querySelector("button[type=submit]");
   submit.disabled = true;
@@ -471,13 +541,16 @@ async function createRoom(event) {
     $("#createForm").reset();
     $("#newColor").value = "#6c5cff";
     $("#newCapacity").value = "6";
+    applyJoinModeHint();
     const code = res?.room?.code;
     if (code) joinFlow(code);
     else await loadAll();
   } catch (err) {
     toast(errorText(err), "error");
+    if (err?.code === "premium_required") applyEntitlement();
   } finally {
     submit.disabled = false;
+    applyEntitlement();
   }
 }
 
@@ -508,6 +581,8 @@ async function updateSuggestions() {
 
 function wireStatic() {
   $("#createForm")?.addEventListener("submit", createRoom);
+  $("#newJoinMode")?.addEventListener("change", applyJoinModeHint);
+  applyJoinModeHint();
   $("#gateRetry")?.addEventListener("click", () => location.reload());
   $("#refreshBtn")?.addEventListener("click", loadAll);
   $("#searchInput")?.addEventListener("input", (event) => {
@@ -559,6 +634,7 @@ function wireStatic() {
     renderAll();
     renderRecs();
     renderHistory();
+    applyJoinModeHint();
   });
   window.addEventListener("wt:api-unauthorized", () => showGate("login"));
 }
@@ -599,6 +675,6 @@ function showGate(kind) {
   $("#roomsGate").hidden = true;
   $("#roomsBody").hidden = false;
   renderHistory();
-  await loadAll();
+  await Promise.all([loadAll(), applyEntitlement()]);
   await handleDeepLink();
 })();

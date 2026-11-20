@@ -7,6 +7,7 @@ import { revokeAllSessionsFor, invalidateAuthCache } from "./auth.js";
 import { adminLimit, ownerOnly, permissionOnly } from "../adminGuard.js";
 import { sqlGetTicket, sqlPatchTicket, sqlListSupportAgents } from "../stores/social.js";
 import { deliverNotice, deliverNoticeMany } from "../notify.js";
+import { forceCloseRoom, deleteRoom } from "../stores/watchRooms.js";
 import { sanitizeBlocks, blocksFromJson, sanitizeVisibility } from "../pageBlocks.js";
 import {
   TRIGGERS,
@@ -511,17 +512,25 @@ export default async function adminOpsRoutes(app) {
     if (!(await ready(reply))) return undefined;
     const input = body(req);
     const action = String(input.action || "");
-    if (!["close", "reopen"].includes(action)) return fail(reply, 400, "invalid_action", "Action must be close or reopen.");
+    if (!["close", "reopen", "delete"].includes(action)) {
+      return fail(reply, 400, "invalid_action", "Action must be close, reopen or delete.");
+    }
     if (!needConfirm(reply, req)) return undefined;
     const room = get("SELECT * FROM rooms WHERE id = ?", String(req.params.id));
     if (!room) return fail(reply, 404, "room_missing", "That room does not exist.");
     const now = Date.now();
-    if (action === "close") {
-      run("UPDATE rooms SET is_active = 0, closed_at = ?, closed_by = ?, updated_at = ? WHERE id = ?", now, req.auth.userId, now, room.id);
+    if (action === "delete") {
+      await deleteRoom(req.auth.userId, req.auth.role, room.room_code);
+      try { req.server.notifyRoom?.(room.room_code, { type: "room-event", event: "deleted", code: room.room_code }); } catch {}
+    } else if (action === "close") {
+      await forceCloseRoom(room.room_code, req.auth.userId);
+      try { req.server.notifyRoom?.(room.room_code, { type: "room-event", event: "closed", code: room.room_code, name: room.name }); } catch {}
     } else {
+      if (room.deleted_at) return fail(reply, 409, "room_deleted", "A deleted room cannot be reopened.");
       run("UPDATE rooms SET is_active = 1, closed_at = NULL, closed_by = NULL, updated_at = ? WHERE id = ?", now, room.id);
+      try { req.server.notifyRoom?.(room.room_code, { type: "room-event", event: "reopened", code: room.room_code }); } catch {}
     }
-    await audit(action === "close" ? "admin.room.close" : "admin.room.reopen", req, {
+    await audit(action === "close" ? "admin.room.close" : action === "reopen" ? "admin.room.reopen" : "admin.room.delete", req, {
       targetType: "room",
       targetId: room.id,
       meta: { code: room.room_code, name: room.name }
@@ -529,14 +538,64 @@ export default async function adminOpsRoutes(app) {
     if (room.host_id) {
       await deliverNotice(req.server, room.host_id, {
         kind: "moderation",
-        title: action === "close" ? "اتاقت توسط مدیریت بسته شد" : "اتاقت دوباره باز شد",
+        title: action === "delete" ? "اتاقت توسط مدیریت حذف شد" : action === "close" ? "اتاقت توسط مدیریت بسته شد" : "اتاقت دوباره باز شد",
         body: room.name || room.room_code || "",
         link: "rooms.html",
         dedupeKey: `room_${action}:${room.id}:${Math.floor(now / 60_000)}`,
         dedupeWindowMs: 5 * 60_000
       });
     }
-    return { ok: true, room: { id: room.id, isActive: action === "reopen" } };
+    return { ok: true, room: { id: room.id, isActive: action === "reopen", deleted: action === "delete" } };
+  });
+
+  app.get("/rooms/:id/members", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "rooms.moderate"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    const room = get("SELECT id, room_code, name, host_id, capacity FROM rooms WHERE id = ?", String(req.params.id));
+    if (!room) return fail(reply, 404, "room_missing", "That room does not exist.");
+    const members = all(
+      `SELECT m.user_id, m.role, m.joined_at, m.last_seen_at, u.username, u.nick, u.email
+       FROM room_memberships m
+       LEFT JOIN users u ON u.id = m.user_id
+       WHERE m.room_id = ? AND m.left_at IS NULL
+       ORDER BY CASE m.role WHEN 'host' THEN 0 WHEN 'moderator' THEN 1 ELSE 2 END, m.joined_at ASC`,
+      room.id
+    ).map((row) => ({
+      userId: row.user_id,
+      role: row.role,
+      username: row.username || "",
+      nick: row.nick || "",
+      email: row.email || "",
+      joinedAt: Number(row.joined_at || 0),
+      lastSeenAt: row.last_seen_at ? Number(row.last_seen_at) : null,
+      isManager: String(row.user_id) === String(room.host_id)
+    }));
+    return { ok: true, room: { id: room.id, code: room.room_code, name: room.name, capacity: room.capacity }, members };
+  });
+
+  app.post("/rooms/:id/notify", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "rooms.moderate"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    const input = body(req);
+    const title = String(input.title || "").trim().slice(0, 120);
+    const text = String(input.body || "").trim().slice(0, 1000);
+    if (!title || !text) return fail(reply, 400, "invalid_notice", "A title and message are required.");
+    const room = get("SELECT id, room_code, name FROM rooms WHERE id = ?", String(req.params.id));
+    if (!room) return fail(reply, 404, "room_missing", "That room does not exist.");
+    const ids = all("SELECT user_id FROM room_memberships WHERE room_id = ? AND left_at IS NULL", room.id).map((row) => row.user_id);
+    const delivered = await deliverNoticeMany(req.server, ids, {
+      kind: "room_activity",
+      title,
+      body: text,
+      link: "room.html?room=" + encodeURIComponent(room.room_code),
+      room: room.room_code
+    });
+    await audit("admin.room.notify", req, {
+      targetType: "room",
+      targetId: room.id,
+      meta: { recipients: ids.length, delivered }
+    });
+    return { ok: true, recipients: ids.length, delivered };
   });
 
   /* ---------------------------------------------------------- restrictions */

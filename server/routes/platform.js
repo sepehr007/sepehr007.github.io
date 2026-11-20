@@ -264,7 +264,46 @@ export default async function platformRoutes(app) {
       createdAt: row.created_at,
       expiresAt: row.expires_at
     }));
-    const rooms = all("SELECT id, room_code, name, host_id, is_active, member_count, last_activity_at FROM rooms ORDER BY last_activity_at DESC LIMIT 50");
+    const q = String(req.query?.q || "").trim();
+    const status = String(req.query?.status || "").trim();
+    const includeDeleted = String(req.query?.includeDeleted || "") === "1";
+    const where = [];
+    const params = [];
+    if (!includeDeleted) where.push("r.deleted_at IS NULL");
+    if (status === "active") where.push("r.is_active = 1");
+    if (status === "closed") where.push("r.is_active = 0");
+    if (status === "deleted") where.push("r.deleted_at IS NOT NULL");
+    if (q) {
+      where.push("(r.room_code LIKE ? OR r.name LIKE ? OR u.nick LIKE ? OR u.username LIKE ?)");
+      const like = `%${q}%`;
+      params.push(like, like, like, like);
+    }
+    const rooms = all(
+      `SELECT r.id, r.room_code, r.name, r.host_id, r.is_active, r.member_count, r.last_activity_at,
+              r.created_at, r.join_mode, r.visibility, r.password_hash, r.closed_at, r.deleted_at,
+              u.username AS manager_username, u.nick AS manager_nick,
+              (SELECT COUNT(*) FROM room_join_requests qr WHERE qr.room_id = r.id AND qr.status = 'pending') AS pending_requests
+       FROM rooms r LEFT JOIN users u ON u.id = r.host_id
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       ORDER BY r.last_activity_at DESC LIMIT 100`,
+      ...params
+    ).map((row) => ({
+      id: row.id,
+      room_code: row.room_code,
+      name: row.name,
+      host_id: row.host_id,
+      manager: row.manager_nick || row.manager_username || "",
+      is_active: row.is_active,
+      member_count: num(row.member_count),
+      last_activity_at: row.last_activity_at,
+      created_at: row.created_at,
+      join_mode: row.join_mode,
+      visibility: row.visibility,
+      has_password: Boolean(row.password_hash),
+      pending_requests: num(row.pending_requests),
+      closed_at: row.closed_at,
+      deleted_at: row.deleted_at
+    }));
     return { ok: true, lobbies, rooms };
   });
 

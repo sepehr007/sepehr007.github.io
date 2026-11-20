@@ -108,6 +108,8 @@ function detachSocialSocket(ws, userId) {
 
 const WS_ACCESS_MESSAGES = {
   room_locked: "This room is private or password protected. Join it with an account first.",
+  approval_pending: "Your join request is waiting for the Manager's approval.",
+  approval_required: "This room needs the Manager's approval before you can join.",
   room_full: "This room is full right now.",
   room_closed: "This room has been closed.",
   room_not_found: "That room does not exist.",
@@ -200,7 +202,7 @@ function registerRealtime(app) {
     if (!db) return { ok: true, roomId: "" };
     const row = db
       .prepare(
-        `SELECT id, host_id, capacity, visibility, password_hash, is_active, deleted_at
+        `SELECT id, host_id, capacity, visibility, password_hash, is_active, deleted_at, join_mode
          FROM rooms WHERE room_code = ?`
       )
       .get(String(room).toUpperCase());
@@ -215,7 +217,20 @@ function registerRealtime(app) {
           .get(row.id, String(client.userId))
       : null;
     const isHost = Boolean(client.userId) && String(row.host_id) === String(client.userId);
-    const gated = row.visibility === "private" || Boolean(row.password_hash);
+    const joinMode = row.join_mode
+      || (row.password_hash ? "password" : row.visibility === "private" ? "invite" : "open");
+    if (joinMode === "invite" && !isHost && !member) return { ok: false, code: "room_locked" };
+    if (joinMode === "approval" && !isHost && !member) {
+      const request = client.userId
+        ? db
+            .prepare("SELECT status FROM room_join_requests WHERE room_id = ? AND user_id = ?")
+            .get(row.id, String(client.userId))
+        : null;
+      if (request?.status !== "approved") {
+        return { ok: false, code: request?.status === "pending" ? "approval_pending" : "approval_required" };
+      }
+    }
+    const gated = joinMode === "password" || Boolean(row.password_hash);
     if (gated && !isHost && !member) return { ok: false, code: "room_locked" };
     if (!isHost && !member) {
       const active = db

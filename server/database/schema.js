@@ -1147,5 +1147,34 @@ export const MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_room_access_expiry ON room_access(expires_at);
       `);
     }
+  },
+  {
+    version: 19,
+    name: "room-access-modes-and-join-requests",
+    up(db) {
+      addColumn(db, "rooms", "join_mode", "TEXT NOT NULL DEFAULT 'open'");
+      addColumn(db, "rooms", "deleted_by", "TEXT");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS room_join_requests (
+          id TEXT PRIMARY KEY,
+          room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','denied','cancelled')),
+          note TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          decided_at INTEGER,
+          decided_by TEXT,
+          UNIQUE (room_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_room_requests_room ON room_join_requests(room_id, status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_room_requests_user ON room_join_requests(user_id, status);
+      `);
+      db.prepare(
+        `UPDATE rooms SET join_mode = CASE
+           WHEN COALESCE(password_hash, '') <> '' THEN 'password'
+           WHEN visibility = 'private' THEN 'invite'
+           ELSE 'open' END`
+      ).run();
+    }
   }
 ];

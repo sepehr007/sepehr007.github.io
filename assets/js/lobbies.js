@@ -87,6 +87,7 @@ export async function createLobby(user, data = {}) {
   const name = String(data.name || "").trim().slice(0, 40);
   const capacity = Math.max(2, Math.min(24, Number(data.capacity) || 6));
   const privacy = data.privacy === "password" ? "password" : "public";
+  const password = privacy === "password" ? String(data.password || "").slice(0, 64) : "";
   const code = String(data.code || "").trim().toUpperCase() || (await uniqueLobbyCode());
   const previous = await listUserLobbies(user);
   for (const lobby of previous) {
@@ -118,7 +119,7 @@ export async function createLobby(user, data = {}) {
     updatedAt: ts
   });
   await recordActivity(user, "lobby.create", { code, name: lobby.name });
-  mirror("/lobbies", { code, name: lobby.name, capacity, privacy });
+  mirror("/lobbies", { code, name: lobby.name, capacity, privacy, password });
   return { ok: true, lobby };
 }
 

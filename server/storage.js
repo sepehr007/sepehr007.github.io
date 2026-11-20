@@ -10,7 +10,6 @@ const ROOT = path.join(appConfig.dataDir, "uploads");
 
 export const KINDS = {
   avatar: { bucket: "avatars", maxBytes: 2 * 1024 * 1024, public: true, types: ["image/png", "image/jpeg", "image/webp", "image/gif"], label: "تصویر پروفایل" },
-  "room-cover": { bucket: "covers", maxBytes: 5 * 1024 * 1024, public: true, types: ["image/png", "image/jpeg", "image/webp"], label: "کاور اتاق" },
   "server-image": { bucket: "servers", maxBytes: 5 * 1024 * 1024, public: true, types: ["image/png", "image/jpeg", "image/webp"], label: "تصویر سرور" },
   "page-image": { bucket: "pages", maxBytes: 5 * 1024 * 1024, public: true, types: ["image/png", "image/jpeg", "image/webp", "image/gif"], label: "تصویر صفحهٔ سایت" },
   subtitle: { bucket: "subtitles", maxBytes: 1024 * 1024, public: false, types: ["text/vtt", "application/x-subrip"], label: "زیرنویس" },

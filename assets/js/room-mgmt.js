@@ -1,7 +1,6 @@
 import { t } from "./i18n.js";
 import { el, toast, confirmDialog, copyText } from "./core.js";
 import { apiFetch, apiGetToken, apiConnectSocket } from "./api.js";
-import { uploadFile, absoluteFileUrl, uploadProgressRow } from "./uploader.js";
 
 const ROLE_KEY = {
   host: "room.roleManager",
@@ -30,6 +29,19 @@ export function getRoomMgmt() {
 
 function enc(value) {
   return encodeURIComponent(String(value || ""));
+}
+
+function storedRoomPassword() {
+  let raw = "";
+  try { raw = sessionStorage.getItem(`pwd:${state.code}`) || ""; } catch {}
+  if (!raw) return "";
+  try {
+    const saved = JSON.parse(raw);
+    if (saved?.pwd && Number(saved.exp) > Date.now()) return String(saved.pwd);
+    return "";
+  } catch {
+    return raw;
+  }
 }
 
 function errorText(err) {
@@ -71,13 +83,19 @@ async function loadRoom({ join = false } = {}) {
     }
     state.room = res.room;
     if (join && !res.room.isMember) {
-      let password = "";
-      try { password = sessionStorage.getItem(`pwd:${state.code}`) || ""; } catch {}
+      const password = storedRoomPassword();
       try {
-        await apiFetch(`/rooms/${enc(state.code)}/join`, { method: "POST", body: { password }, timeoutMs: 12000 });
+        const joined = await apiFetch(`/rooms/${enc(state.code)}/join`, { method: "POST", body: { password }, timeoutMs: 12000 });
         const fresh = await apiFetch(`/rooms/${enc(state.code)}`, { timeoutMs: 10000 });
         if (fresh?.room) state.room = fresh.room;
-      } catch {}
+        state.onEvent?.({ type: "room-event", event: "joined", code: state.code, room: joined?.room });
+      } catch (err) {
+        if (err?.code === "approval_required" || err?.code === "approval_pending") {
+          toast(t("room.approvalNeeded"), "info", 6000);
+        } else if (err?.code === "invite_required" || err?.code === "private_room") {
+          toast(t("room.inviteNeeded"), "error", 6000);
+        }
+      }
     }
     state.members = await loadMembers();
     return true;
@@ -208,8 +226,15 @@ function render() {
   const info = el("div", { class: "mgmt-meta" });
   info.append(el("span", { text: `${t("room.infoManager")}: ${room.manager?.nick || room.manager?.username || "—"}` }));
   info.append(el("span", { text: `${t("room.infoMembers")}: ${room.memberCount || state.members.length}` }));
-  info.append(el("span", { text: room.visibility === "private" ? t("rooms.privateBadge") : room.visibility === "unlisted" ? t("rooms.visUnlisted") : t("rooms.visPublic") }));
+  const joinLabels = {
+    open: t("room.joinOpen"),
+    approval: t("room.joinApproval"),
+    invite: t("room.joinInvite"),
+    password: t("room.joinPassword")
+  };
+  info.append(el("span", { text: joinLabels[room.joinMode || "open"] || joinLabels.open }));
   if (room.hasPassword) info.append(el("span", { text: t("rooms.passwordBadge") }));
+  if (room.pendingRequests) info.append(el("span", { text: `${t("room.requestsTitle")}: ${room.pendingRequests}` }));
   card.append(info);
 
   if (room.rules) {
@@ -261,6 +286,7 @@ function render() {
   }
 
   if (canManage) {
+    if (room.joinMode === "approval") card.append(buildRequests());
     card.append(buildEditor(room));
     card.append(buildInvite(room));
     if (state.members.some((m) => m.role !== "host" && String(m.userId) !== String(state.me?.id))) {
@@ -280,76 +306,34 @@ function buildEditor(room) {
   const name = textInput(room.name, { maxlength: "80" });
   const capacity = el("input", { type: "number", min: "2", max: "48", dir: "ltr" });
   capacity.value = String(room.capacity || 6);
-  const visibility = el("select", {});
-  for (const value of ["public", "unlisted", "private"]) {
-    const label = value === "public" ? t("rooms.visPublic") : value === "unlisted" ? t("rooms.visUnlisted") : t("rooms.visPrivate");
-    visibility.append(el("option", { value, text: label }));
+  const joinMode = el("select", {});
+  const modeLabels = {
+    open: t("room.joinOpen"),
+    approval: t("room.joinApproval"),
+    invite: t("room.joinInvite"),
+    password: t("room.joinPassword")
+  };
+  for (const value of ["open", "approval", "invite", "password"]) {
+    joinMode.append(el("option", { value, text: modeLabels[value] }));
   }
-  visibility.value = room.visibility || "public";
+  joinMode.value = room.joinMode || "open";
+  const modeHintKeys = {
+    open: "room.joinOpenHint",
+    approval: "room.joinApprovalHint",
+    invite: "room.joinInviteHint",
+    password: "room.joinPasswordHint"
+  };
+  const modeHint = el("p", { class: "hint", text: t(modeHintKeys[joinMode.value]) });
+  const refreshModeHint = () => {
+    modeHint.textContent = t(modeHintKeys[joinMode.value] || "room.joinOpenHint");
+    pwdWrap.classList.toggle("hidden", joinMode.value !== "password");
+  };
   const color = el("input", { type: "color", value: room.color || "#6c5cff" });
   grid.append(field("room.editName", name));
   grid.append(field("room.editCapacity", capacity));
-  grid.append(field("room.editVisibility", visibility));
+  grid.append(field("room.joinMode", joinMode));
+  grid.append(el("div", { class: "wide" }, [modeHint]));
   grid.append(field("room.editColor", color));
-
-  let coverValue = room.coverUrl || "";
-  const coverPreview = el("img", { class: "mgmt-cover-img", alt: t("room.editCover") });
-  const coverEmpty = el("p", { class: "hint", text: t("room.editCover") });
-  const coverFile = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp", class: "hidden" });
-  const coverUpload = el("button", { type: "button", class: "btn btn-secondary btn-sm", text: t("room.coverUpload") });
-  const coverRemove = el("button", { type: "button", class: "btn btn-ghost danger-text btn-sm", text: t("room.coverRemove") });
-  const coverProgress = uploadProgressRow("بارگذاری تصویر");
-  coverProgress.classList.add("hidden");
-  const paintCover = () => {
-    if (coverValue) {
-      coverPreview.src = coverValue;
-      coverPreview.classList.remove("hidden");
-      coverEmpty.classList.add("hidden");
-      coverRemove.classList.remove("hidden");
-    } else {
-      coverPreview.removeAttribute("src");
-      coverPreview.classList.add("hidden");
-      coverEmpty.classList.remove("hidden");
-      coverRemove.classList.add("hidden");
-    }
-  };
-  paintCover();
-  coverUpload.addEventListener("click", () => coverFile.click());
-  coverFile.addEventListener("change", async () => {
-    const file = coverFile.files?.[0];
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      toast(t("room.coverTooBig"), "error");
-      coverFile.value = "";
-      return;
-    }
-    coverUpload.disabled = true;
-    coverProgress.classList.remove("hidden");
-    try {
-      const data = await uploadFile(file, { kind: "room-cover", onProgress: (p) => coverProgress.setProgress(p) });
-      coverValue = absoluteFileUrl(data.url);
-      paintCover();
-      toast(t("room.coverBadge"), "success");
-    } catch (err) {
-      toast(err?.message || t("social.failed"), "error");
-    } finally {
-      coverUpload.disabled = false;
-      coverFile.value = "";
-      setTimeout(() => coverProgress.classList.add("hidden"), 1200);
-    }
-  });
-  coverRemove.addEventListener("click", () => {
-    coverValue = "";
-    paintCover();
-  });
-  const coverBox = el("div", { class: "mgmt-cover wide" }, [
-    el("span", { class: "mgmt-cover-label", text: t("room.editCover") }),
-    coverPreview,
-    coverEmpty,
-    el("div", { class: "mgmt-cover-actions" }, [coverUpload, coverRemove, coverFile]),
-    coverProgress
-  ]);
-  grid.append(coverBox);
 
   const desc = el("textarea", { rows: "2", maxlength: "600" });
   desc.value = room.description || "";
@@ -359,14 +343,12 @@ function buildEditor(room) {
   grid.append(field("room.editRules", rules, "wide"));
 
   const pwd = el("input", { type: "password", maxlength: "64", dir: "ltr", placeholder: t("rooms.passwordPh") });
-  const removePwd = el("input", { type: "checkbox" });
-  if (!room.hasPassword) removePwd.disabled = true;
-  const pwdRow = el("label", { class: "mgmt-check" }, [
-    removePwd,
-    el("span", { text: t("room.removePassword") })
+  const pwdWrap = el("div", { class: joinMode.value === "password" ? "" : "hidden" }, [
+    field("room.joinPasswordLabel", pwd)
   ]);
-  grid.append(field("rooms.password", pwd, "wide"));
-  grid.append(pwdRow);
+  joinMode.addEventListener("change", refreshModeHint);
+  refreshModeHint();
+  grid.append(pwdWrap);
 
   const save = el("button", { type: "button", class: "btn btn-primary btn-sm", text: t("room.save") });
   save.addEventListener("click", async () => {
@@ -375,12 +357,11 @@ function buildEditor(room) {
       description: desc.value.trim(),
       rules: rules.value.trim(),
       color: color.value,
-      visibility: visibility.value,
+      joinMode: joinMode.value,
       capacity: Number(capacity.value) || 6
     };
-    if (coverValue !== (room.coverUrl || "")) patch.coverUrl = coverValue;
-    if (removePwd.checked) patch.password = "";
-    else if (pwd.value) patch.password = pwd.value;
+    if (joinMode.value === "password") patch.password = pwd.value;
+    else if (room.hasPassword) patch.password = "";
     save.disabled = true;
     try {
       const res = await apiFetch(`/rooms/${enc(state.code)}`, { method: "PATCH", body: patch, timeoutMs: 12000 });
@@ -395,6 +376,61 @@ function buildEditor(room) {
   });
 
   box.append(grid, save);
+  return box;
+}
+
+function buildRequests() {
+  const box = el("div", { class: "mgmt-block" });
+  box.append(el("h3", { class: "mgmt-sub", text: t("room.requestsTitle") }));
+  const body = el("div", { class: "mgmt-requests" });
+  box.append(body);
+
+  const decide = async (item, decision, button) => {
+    button.disabled = true;
+    try {
+      await apiFetch(`/rooms/${enc(state.code)}/requests/${enc(item.userId)}/decide`, {
+        method: "POST",
+        body: { decision },
+        timeoutMs: 12000
+      });
+      toast(t("room.requestDecided"), "success");
+      await paint();
+      refresh();
+    } catch (err) {
+      toast(errorText(err), "error");
+      button.disabled = false;
+    }
+  };
+
+  const paint = async () => {
+    body.replaceChildren(el("p", { class: "hint", text: t("rooms.loading") }));
+    try {
+      const res = await apiFetch(`/rooms/${enc(state.code)}/requests`, { timeoutMs: 10000 });
+      const items = Array.isArray(res?.requests) ? res.requests : [];
+      if (!items.length) {
+        body.replaceChildren(el("p", { class: "hint", text: t("room.requestsEmpty") }));
+        return;
+      }
+      body.replaceChildren();
+      for (const item of items) {
+        const row = el("div", { class: "mgmt-member" });
+        const main = el("div", { class: "mgmt-member-main" });
+        main.append(el("b", { text: item.nick || item.username || "—" }));
+        main.append(el("small", { text: "@" + (item.username || "") }));
+        if (item.note) main.append(el("small", { class: "hint", text: item.note }));
+        row.append(main);
+        const approve = el("button", { type: "button", class: "btn btn-secondary btn-sm", text: t("room.approve") });
+        const deny = el("button", { type: "button", class: "btn btn-ghost danger-text btn-sm", text: t("room.deny") });
+        approve.addEventListener("click", () => decide(item, "approve", approve));
+        deny.addEventListener("click", () => decide(item, "deny", deny));
+        row.append(approve, deny);
+        body.append(row);
+      }
+    } catch (err) {
+      body.replaceChildren(el("p", { class: "hint", text: errorText(err) }));
+    }
+  };
+  paint();
   return box;
 }
 

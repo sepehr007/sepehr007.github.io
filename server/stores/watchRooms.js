@@ -4,8 +4,11 @@ import { getDatabase, transaction, recordModerationAction } from "../database/in
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const VISIBILITIES = ["public", "unlisted", "private"];
+const JOIN_MODES = ["open", "approval", "invite", "password"];
 const GUEST_ROLES = ["moderator", "guest", "member"];
 const STALE_MS = 24 * 60 * 60 * 1000;
+const STALE_MEMBER_MS = 2 * 60 * 60 * 1000;
+const STALE_ROOM_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_CAPACITY = 48;
 const MAX_ICON_BYTES = 300 * 1024;
 const ROOM_ACCESS_MS = 30 * 60_000;
@@ -120,8 +123,8 @@ function mapRoom(row) {
     rules: row.rules || "",
     color: row.color || "",
     iconUrl: row.icon_url || "",
-    coverUrl: row.cover_url || "",
     visibility: row.visibility || "public",
+    joinMode: row.join_mode || (row.password_hash ? "password" : row.visibility === "private" ? "invite" : "open"),
     hasPassword: Boolean(row.password_hash),
     capacity: Number(row.capacity || 6),
     memberCount: Number(row.active_members ?? row.member_count ?? 0),
@@ -198,25 +201,62 @@ async function makeCode(db) {
   return `R${Date.now().toString(36).slice(-5).toUpperCase()}`;
 }
 
-export async function cleanupStaleRooms() {
+let lastCleanupAt = 0;
+
+export async function cleanupStaleRooms({ force = false } = {}) {
   const db = await getDatabase();
   if (!db) return 0;
-  const cutoff = nowMs() - STALE_MS;
+  const now = nowMs();
+  if (!force && now - lastCleanupAt < 60_000) return 0;
+  lastCleanupAt = now;
+  const cutoff = now - STALE_MS;
+  const maxCutoff = now - STALE_ROOM_MAX_MS;
+  const memberCutoff = now - STALE_MEMBER_MS;
   let closed = 0;
   transaction((connection) => {
+    connection
+      .prepare(
+        `UPDATE room_memberships SET left_at = ?
+         WHERE left_at IS NULL AND COALESCE(last_seen_at, joined_at) < ?`
+      )
+      .run(memberCutoff, memberCutoff);
+    connection
+      .prepare(
+        `UPDATE rooms SET member_count = (
+           SELECT COUNT(*) FROM room_memberships m WHERE m.room_id = rooms.id AND m.left_at IS NULL
+         ) WHERE deleted_at IS NULL`
+      )
+      .run();
     const stale = connection
-      .prepare("SELECT id FROM rooms WHERE is_active = 1 AND deleted_at IS NULL AND last_activity_at < ?")
-      .all(cutoff);
+      .prepare(
+        `SELECT r.id FROM rooms r
+         WHERE r.is_active = 1 AND r.deleted_at IS NULL
+           AND (
+             r.last_activity_at < ?
+             OR (r.last_activity_at < ? AND NOT EXISTS (
+               SELECT 1 FROM room_memberships m WHERE m.room_id = r.id AND m.left_at IS NULL
+             ))
+           )`
+      )
+      .all(maxCutoff, cutoff);
     if (!stale.length) return;
     const markRoom = connection.prepare("UPDATE rooms SET is_active = 0, closed_at = ?, updated_at = ? WHERE id = ?");
-    const markMember = connection.prepare("UPDATE room_memberships SET left_at = ? WHERE room_id = ? AND left_at IS NULL");
+    const markInvites = connection.prepare("UPDATE invitations SET revoked_at = ? WHERE room_id = ? AND revoked_at IS NULL");
+    const markRequests = connection.prepare("UPDATE room_join_requests SET status = 'cancelled', decided_at = ? WHERE room_id = ? AND status = 'pending'");
     for (const row of stale) {
-      markRoom.run(cutoff, cutoff, row.id);
-      markMember.run(cutoff, row.id);
+      markRoom.run(now, now, row.id);
+      markInvites.run(now, row.id);
+      markRequests.run(now, row.id);
       closed += 1;
     }
   });
   return closed;
+}
+
+export async function maybeCleanup() {
+  try {
+    await cleanupStaleRooms();
+  } catch {}
 }
 
 export async function createRoom(userId, staffRole, payload = {}) {
@@ -227,11 +267,19 @@ export async function createRoom(userId, staffRole, payload = {}) {
   const rules = cleanMultiline(payload.rules, 2000);
   const color = cleanColor(payload.color);
   const iconUrl = cleanMediaUrl(payload.iconUrl, "Icon");
-  const coverUrl = cleanMediaUrl(payload.coverUrl, "Cover");
-  const visibility = VISIBILITIES.includes(payload.visibility) ? payload.visibility : "public";
-  const rawPassword = String(payload.password || "").slice(0, 64);
+  const passwordInput = String(payload.password || "").slice(0, 64);
+  let joinMode = JOIN_MODES.includes(payload.joinMode) ? payload.joinMode : "";
+  if (!joinMode) {
+    joinMode = passwordInput ? "password" : payload.visibility === "private" ? "invite" : "open";
+  }
+  if (joinMode === "password" && passwordInput.length < 4) {
+    fail(400, "weak_password", "Room password must be at least 4 characters.");
+  }
+  const rawPassword = joinMode === "password" ? passwordInput : "";
   const hasPassword = rawPassword.length >= 4;
-  if (rawPassword && !hasPassword) fail(400, "weak_password", "Room password must be at least 4 characters.");
+  const visibility = joinMode === "invite"
+    ? "private"
+    : VISIBILITIES.includes(payload.visibility) ? payload.visibility : "public";
   const capacity = Math.max(2, Math.min(MAX_CAPACITY, Math.round(Number(payload.capacity) || 6)));
   const code = cleanCode(payload.code) || (await makeCode(db));
   const passwordHash = hasPassword ? await bcrypt.hash(rawPassword, 10) : "";
@@ -243,12 +291,12 @@ export async function createRoom(userId, staffRole, payload = {}) {
         .prepare(
           `INSERT INTO rooms
            (id, room_code, name, host_id, kind, is_active, privacy, password_hash, capacity, lang, theme,
-            member_count, last_activity_at, created_at, description, rules, icon_url, cover_url, color, visibility, updated_at)
+            member_count, last_activity_at, created_at, description, rules, icon_url, color, visibility, join_mode, updated_at)
            VALUES (?, ?, ?, ?, 'lobby', 1, ?, ?, ?, 'fa', 'dark', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           id, code, name, String(userId), hasPassword ? "password" : "public", passwordHash, capacity,
-          now, now, description, rules, iconUrl, coverUrl, color, visibility, now
+          now, now, description, rules, iconUrl, color, visibility, joinMode, now
         );
       connection
         .prepare(
@@ -277,18 +325,35 @@ export async function getRoom(code, viewerId = "", staffRole = "") {
   if (!row) fail(404, "room_not_found", "That room does not exist.");
   const member = viewerId ? roleRow(db, row.id, viewerId) : null;
   const viewerRole = member && !member.left_at ? member.role : "";
+  const canManage = Boolean(viewerId) && (String(row.host_id) === String(viewerId) || isStaff(staffRole));
+  let viewerRequest = null;
+  if (viewerId) {
+    const request = db
+      .prepare("SELECT status FROM room_join_requests WHERE room_id = ? AND user_id = ?")
+      .get(row.id, String(viewerId));
+    viewerRequest = request?.status || null;
+  }
+  const pendingRequests = canManage
+    ? Number(
+        db
+          .prepare("SELECT COUNT(*) AS n FROM room_join_requests WHERE room_id = ? AND status = 'pending'")
+          .get(row.id)?.n || 0
+      )
+    : 0;
   return {
     ...mapRoom(row),
     viewerRole,
     isMember: Boolean(viewerRole),
-    canManage: Boolean(viewerId) && (String(row.host_id) === String(viewerId) || isStaff(staffRole)),
+    viewerRequest,
+    pendingRequests,
+    canManage,
     canModerate: Boolean(viewerId) && (String(row.host_id) === String(viewerId) || isStaff(staffRole) || viewerRole === "moderator")
   };
 }
 
 export async function listPublicRooms(viewerId = "", { q = "", limit = 40 } = {}) {
   const db = await conn();
-  await cleanupStaleRooms();
+  await maybeCleanup();
   const term = cleanText(q, 60);
   const size = Math.min(60, Math.max(1, Number(limit) || 40));
   const like = `%${term}%`;
@@ -368,11 +433,24 @@ export async function joinRoom(userId, staffRole, code, { password = "", inviteC
   }
 
   const hostAllowed = String(row.host_id) === String(userId);
+  const joinMode = row.join_mode
+    || (row.password_hash ? "password" : row.visibility === "private" ? "invite" : "open");
   if (!grantedByInvite && !staff && !hostAllowed) {
-    if (!alreadyIn && row.visibility === "private") {
-      fail(403, "private_room", "This room is private. Ask the Manager for an invite link.");
+    if (!alreadyIn && joinMode === "invite") {
+      fail(403, "invite_required", "This room is invitation-only. Ask the Manager for an invite link.");
     }
-    if (row.password_hash) {
+    if (!alreadyIn && joinMode === "approval") {
+      const request = db
+        .prepare("SELECT status FROM room_join_requests WHERE room_id = ? AND user_id = ?")
+        .get(row.id, String(userId));
+      if (request?.status !== "approved") {
+        if (request?.status === "pending") {
+          fail(403, "approval_pending", "Your join request is waiting for the Manager's approval.");
+        }
+        fail(403, "approval_required", "This room needs the Manager's approval before you can join.");
+      }
+    }
+    if (joinMode === "password" && row.password_hash) {
       const supplied = String(password || "");
       let ok = false;
       if (supplied) {
@@ -432,6 +510,103 @@ export async function leaveRoom(userId, code) {
   const count = setMemberCount(db, row.id);
   db.prepare("UPDATE rooms SET last_activity_at = ? WHERE id = ?").run(now, row.id);
   return { ok: true, memberCount: count, roomId: row.id, roomCode: row.room_code };
+}
+
+export async function requestJoin(userId, code, note = "") {
+  const db = await conn();
+  const row = roomRow(db, code);
+  if (!row || row.deleted_at) fail(404, "room_not_found", "That room does not exist.");
+  if (!row.is_active) fail(410, "room_closed", "This room has been closed.");
+  if (String(row.host_id) === String(userId)) fail(409, "is_manager", "You already manage this room.");
+  const joinMode = row.join_mode || "open";
+  if (joinMode !== "approval") fail(400, "approval_not_needed", "This room does not use join requests.");
+  const member = roleRow(db, row.id, userId);
+  if (member && !member.left_at) fail(409, "already_member", "You are already a member of this room.");
+  const existing = db
+    .prepare("SELECT status FROM room_join_requests WHERE room_id = ? AND user_id = ?")
+    .get(row.id, String(userId));
+  if (existing?.status === "approved" || existing?.status === "pending") {
+    return { status: existing.status, room: mapRoom(row) };
+  }
+  if (activeMembers(db, row.id) >= Number(row.capacity || 6)) {
+    fail(409, "room_full", "This room is full right now.");
+  }
+  const now = nowMs();
+  db.prepare(
+    `INSERT INTO room_join_requests (id, room_id, user_id, status, note, created_at, decided_at, decided_by)
+     VALUES (?, ?, ?, 'pending', ?, ?, NULL, NULL)
+     ON CONFLICT(room_id, user_id) DO UPDATE SET
+       status = 'pending',
+       note = excluded.note,
+       created_at = excluded.created_at,
+       decided_at = NULL,
+       decided_by = NULL`
+  ).run(crypto.randomUUID(), row.id, String(userId), cleanText(note, 200), now);
+  return { status: "pending", room: mapRoom(roomRow(db, code)) };
+}
+
+export async function myJoinRequest(userId, code) {
+  const db = await conn();
+  const row = roomRow(db, code);
+  if (!row) fail(404, "room_not_found", "That room does not exist.");
+  const request = db
+    .prepare("SELECT status, created_at, decided_at FROM room_join_requests WHERE room_id = ? AND user_id = ?")
+    .get(row.id, String(userId));
+  return request
+    ? { status: request.status, requestedAt: Number(request.created_at || 0), decidedAt: request.decided_at ? Number(request.decided_at) : null }
+    : { status: null };
+}
+
+export async function listJoinRequests(userId, staffRole, code) {
+  const db = await conn();
+  const row = roomRow(db, code);
+  if (!row) fail(404, "room_not_found", "That room does not exist.");
+  if (String(row.host_id) !== String(userId) && !isStaff(staffRole)) {
+    fail(403, "forbidden", "Only the Manager can review join requests.");
+  }
+  const rows = db
+    .prepare(
+      `SELECT q.user_id, q.status, q.note, q.created_at, u.username, u.nick, u.avatar
+       FROM room_join_requests q
+       JOIN users u ON u.id = q.user_id
+       WHERE q.room_id = ? AND q.status = 'pending' AND u.deleted_at IS NULL
+       ORDER BY q.created_at ASC LIMIT 100`
+    )
+    .all(row.id);
+  return rows.map((item) => ({
+    userId: item.user_id,
+    username: item.username || "",
+    nick: item.nick || "",
+    avatar: item.avatar || "",
+    note: item.note || "",
+    requestedAt: Number(item.created_at || 0)
+  }));
+}
+
+export async function decideJoinRequest(userId, staffRole, code, targetId, decision) {
+  const db = await conn();
+  const row = roomRow(db, code);
+  if (!row) fail(404, "room_not_found", "That room does not exist.");
+  if (String(row.host_id) !== String(userId) && !isStaff(staffRole)) {
+    fail(403, "forbidden", "Only the Manager can review join requests.");
+  }
+  if (!["approve", "deny"].includes(decision)) fail(400, "invalid_decision", "Decision must be approve or deny.");
+  const target = db
+    .prepare("SELECT status FROM room_join_requests WHERE room_id = ? AND user_id = ?")
+    .get(row.id, String(targetId));
+  if (!target || target.status !== "pending") fail(404, "request_missing", "That join request is no longer pending.");
+  const next = decision === "approve" ? "approved" : "denied";
+  const now = nowMs();
+  db.prepare(
+    "UPDATE room_join_requests SET status = ?, decided_at = ?, decided_by = ? WHERE room_id = ? AND user_id = ?"
+  ).run(next, now, String(userId), row.id, String(targetId));
+  addSystemMessage(db, row.id, decision === "approve" ? "A join request was approved." : "A join request was declined.", {
+    event: "room.request",
+    target: String(targetId),
+    decision
+  });
+  db.prepare("UPDATE rooms SET last_activity_at = ?, updated_at = ? WHERE id = ?").run(now, now, row.id);
+  return { ok: true, status: next };
 }
 
 export async function touchRoom(userId, code) {
@@ -497,25 +672,46 @@ export async function updateRoom(userId, staffRole, code, patch = {}) {
   if (patch.rules !== undefined) push("rules", cleanMultiline(patch.rules, 2000));
   if (patch.color !== undefined) push("color", cleanColor(patch.color));
   if (patch.iconUrl !== undefined) push("icon_url", cleanMediaUrl(patch.iconUrl, "Icon"));
-  if (patch.coverUrl !== undefined) push("cover_url", cleanMediaUrl(patch.coverUrl, "Cover"));
-  if (patch.visibility !== undefined) {
-    if (!VISIBILITIES.includes(patch.visibility)) fail(400, "invalid_visibility", "Visibility must be public, unlisted or private.");
-    push("visibility", patch.visibility);
+  let joinModeValue = null;
+  if (patch.joinMode !== undefined) {
+    if (!JOIN_MODES.includes(patch.joinMode)) {
+      fail(400, "invalid_join_mode", "Join mode must be open, approval, invite or password.");
+    }
+    joinModeValue = patch.joinMode;
+    push("join_mode", joinModeValue);
   }
+  let nextVisibility = null;
+  if (joinModeValue === "invite") {
+    nextVisibility = "private";
+  } else if (patch.visibility !== undefined) {
+    if (!VISIBILITIES.includes(patch.visibility)) fail(400, "invalid_visibility", "Visibility must be public, unlisted or private.");
+    nextVisibility = patch.visibility;
+  } else if (joinModeValue && row.visibility === "private") {
+    nextVisibility = "public";
+  }
+  if (nextVisibility) push("visibility", nextVisibility);
   if (patch.capacity !== undefined) {
     const capacity = Math.max(2, Math.min(MAX_CAPACITY, Math.round(Number(patch.capacity) || 6)));
     push("capacity", capacity);
   }
-  if (patch.password !== undefined) {
+  const passwordTouched = patch.password !== undefined || joinModeValue === "password";
+  if (passwordTouched) {
     const raw = String(patch.password || "").slice(0, 64);
-    if (!raw) {
-      push("password_hash", "");
-      push("privacy", "public");
-    } else {
+    const wantsPassword = joinModeValue ? joinModeValue === "password" : Boolean(raw);
+    if (wantsPassword) {
       if (raw.length < 4) fail(400, "weak_password", "Room password must be at least 4 characters.");
       push("password_hash", await bcrypt.hash(raw, 10));
       push("privacy", "password");
+      if (!joinModeValue) push("join_mode", "password");
+    } else {
+      push("password_hash", "");
+      push("privacy", "public");
+      if (!joinModeValue) push("join_mode", "open");
     }
+    clearRoomAccess(db, row.room_code);
+  } else if (joinModeValue && joinModeValue !== "password") {
+    push("password_hash", "");
+    push("privacy", "public");
     clearRoomAccess(db, row.room_code);
   }
   if (!sets.length) return getRoom(code, userId, staffRole);
@@ -659,6 +855,8 @@ export async function closeRoom(userId, staffRole, code, { password } = {}) {
     connection.prepare("UPDATE room_memberships SET left_at = ? WHERE room_id = ? AND left_at IS NULL").run(now, row.id);
     connection.prepare("UPDATE room_memberships SET left_at = NULL, role = 'host' WHERE room_id = ? AND user_id = ?").run(row.id, String(row.host_id));
     connection.prepare("UPDATE invitations SET revoked_at = ? WHERE room_id = ? AND revoked_at IS NULL").run(now, row.id);
+    connection.prepare("UPDATE room_join_requests SET status = 'cancelled', decided_at = ? WHERE room_id = ? AND status = 'pending'").run(now, row.id);
+    connection.prepare("UPDATE room_access SET expires_at = ? WHERE room_code = ?").run(now, row.room_code);
     connection.prepare("UPDATE rooms SET member_count = 1 WHERE id = ?").run(row.id);
     addSystemMessage(connection, row.id, "The room was closed by the Manager.", { event: "room.closed", by: String(userId) });
   });
@@ -671,4 +869,57 @@ export async function closeRoom(userId, staffRole, code, { password } = {}) {
     reason: "closed by manager"
   });
   return { ok: true };
+}
+
+export async function forceCloseRoom(code, byId = "") {
+  const db = await conn();
+  const row = roomRow(db, code);
+  if (!row) return { ok: true, room: null };
+  if (!row.is_active) return { ok: true, room: mapRoom(row) };
+  const now = nowMs();
+  transaction((connection) => {
+    connection
+      .prepare("UPDATE rooms SET is_active = 0, closed_at = ?, closed_by = ?, updated_at = ? WHERE id = ?")
+      .run(now, String(byId || ""), now, row.id);
+    connection.prepare("UPDATE room_memberships SET left_at = ? WHERE room_id = ? AND left_at IS NULL").run(now, row.id);
+    connection.prepare("UPDATE room_memberships SET left_at = NULL, role = 'host' WHERE room_id = ? AND user_id = ?").run(row.id, String(row.host_id));
+    connection.prepare("UPDATE invitations SET revoked_at = ? WHERE room_id = ? AND revoked_at IS NULL").run(now, row.id);
+    connection.prepare("UPDATE room_join_requests SET status = 'cancelled', decided_at = ? WHERE room_id = ? AND status = 'pending'").run(now, row.id);
+    connection.prepare("UPDATE room_access SET expires_at = ? WHERE room_code = ?").run(now, row.room_code);
+    connection.prepare("UPDATE rooms SET member_count = 1 WHERE id = ?").run(row.id);
+    addSystemMessage(connection, row.id, "The room was closed by the site owner.", { event: "room.closed", by: String(byId || "") });
+  });
+  return { ok: true, room: { ...mapRoom(roomRow(db, code)), hostId: row.host_id } };
+}
+
+export async function deleteRoom(userId, staffRole, code) {
+  const db = await conn();
+  const row = roomRow(db, code);
+  if (!row) fail(404, "room_not_found", "That room does not exist.");
+  if (String(row.host_id) !== String(userId) && !isStaff(staffRole)) {
+    fail(403, "forbidden", "Only the Manager or the site owner can delete this room.");
+  }
+  const now = nowMs();
+  transaction((connection) => {
+    connection
+      .prepare(
+        `UPDATE rooms SET is_active = 0, deleted_at = ?, deleted_by = ?, closed_at = COALESCE(closed_at, ?), updated_at = ?
+         WHERE id = ?`
+      )
+      .run(now, String(userId), now, now, row.id);
+    connection.prepare("UPDATE room_memberships SET left_at = ? WHERE room_id = ? AND left_at IS NULL").run(now, row.id);
+    connection.prepare("UPDATE invitations SET revoked_at = ? WHERE room_id = ? AND revoked_at IS NULL").run(now, row.id);
+    connection.prepare("UPDATE room_join_requests SET status = 'cancelled', decided_at = ? WHERE room_id = ? AND status = 'pending'").run(now, row.id);
+    connection.prepare("DELETE FROM room_access WHERE room_code = ?").run(row.room_code);
+    connection.prepare("UPDATE rooms SET member_count = 0 WHERE id = ?").run(row.id);
+  });
+  recordModerationAction({
+    moderatorId: userId,
+    action: "room_delete",
+    targetType: "room",
+    targetId: row.id,
+    roomCode: row.room_code,
+    reason: "room deleted"
+  });
+  return { ok: true, code: row.room_code, name: row.name, hostId: row.host_id };
 }
