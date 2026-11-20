@@ -167,7 +167,8 @@
       <section class="social-pane" id="pane-search" data-pane="search" hidden>
         <div class="pane-title"><h2 data-i18n="social.searchTitle">جست‌وجوی سراسری</h2></div>
         <div class="social-toolbar">
-          <input id="globalSearch" type="search" placeholder="کاربر، اتاق یا متن پیام…" data-i18n-ph="social.searchPh">
+          <input id="globalSearch" type="search" list="searchHistoryList" placeholder="کاربر، اتاق یا متن پیام…" data-i18n-ph="social.searchPh" autocomplete="off">
+          <datalist id="searchHistoryList"></datalist>
           <select id="searchType">
             <option value="all" data-i18n="social.searchAll">همه</option>
             <option value="users" data-i18n="social.searchUsers">کاربران</option>
@@ -175,13 +176,21 @@
             <option value="rooms" data-i18n="social.searchRooms">اتاق‌ها</option>
             <option value="messages" data-i18n="social.searchMessages">پیام‌ها</option>
           </select>
+          <select id="searchSort" aria-label="ترتیب" data-i18n-aria="social.searchSort">
+            <option value="relevance" data-i18n="social.searchRelevance">مرتبط‌ترین</option>
+            <option value="recent" data-i18n="social.searchRecent">تازه‌ترین</option>
+            <option value="name" data-i18n="social.searchName">الفبایی</option>
+            <option value="members" data-i18n="social.searchMembers">پرعضوترین</option>
+          </select>
         </div>
         <p class="hint spaced-hint" data-i18n="social.searchHint">حداقل ۲ حرف بنویس؛ نتیجه‌ها فقط از چیزهایی می‌آید که اجازهٔ دیدنشان را داری.</p>
+        <p class="hint spaced-hint" id="searchCount" hidden></p>
         <div id="searchResults"></div>
         <div class="social-empty" id="searchEmpty" hidden>
           <strong data-i18n="social.searchEmptyTitle">نتیجه‌ای نبود</strong>
           <span data-i18n="social.searchEmpty">عبارت دیگری را امتحان کن.</span>
         </div>
+        <button class="btn btn-secondary" id="searchMore" type="button" hidden data-i18n="social.searchMore">نتایج بیشتر</button>
       </section>
 
       <!-- notifications -->

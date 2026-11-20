@@ -1,4 +1,4 @@
-import { initI18n, t, getLang } from "./i18n.js";
+import { initI18n, t, getLang, fmtNumber } from "./i18n.js";
 import {
   $, $$, el, toast, initials, applyUIPrefs, registerServiceWorker,
   confirmDialog, copyText
@@ -40,6 +40,10 @@ const state = {
   myReports: [],
   staffReports: [],
   searchData: null,
+  searchPage: 1,
+  searchSeq: 0,
+  searchHasMore: false,
+  searchLoading: false,
   ws: null,
   wsReady: false,
   wsClosedByUs: false,
@@ -225,6 +229,7 @@ document.title = `${t("social.title")} — هم‌تماشا`;
   state.staff = STAFF_ROLES.includes(String(state.me.role || ""));
   $("#socialGate").hidden = true;
   $("#socialLayout").hidden = false;
+  renderSearchHistory();
   const requested = location.hash.replace(/^#/, "");
   switchPane(PANES.includes(requested) ? requested : "people");
   refreshBadges();
@@ -1625,27 +1630,95 @@ $("#staffReportFilter")?.addEventListener("change", () => loadStaffReports());
 /* ------------------------------------------------------------------ search */
 
 let searchTimer = 0;
+const SEARCH_PAGE = 20;
+const SEARCH_HISTORY_MAX = 8;
+
+function searchHistoryKey() {
+  return `wt.searchHist.v1:${state.me?.id || "anon"}`;
+}
+
+function readSearchHistory() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(searchHistoryKey()) || "[]");
+    return Array.isArray(raw) ? raw.filter((item) => typeof item === "string" && item.trim()).slice(0, SEARCH_HISTORY_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+
+function renderSearchHistory() {
+  const list = $("#searchHistoryList");
+  if (!list) return;
+  list.replaceChildren(...readSearchHistory().map((value) => el("option", { value })));
+}
+
+function rememberSearch(query) {
+  const clean = String(query || "").trim().slice(0, 60);
+  if (clean.length < 2) return;
+  const next = [clean, ...readSearchHistory().filter((item) => item.toLowerCase() !== clean.toLowerCase())].slice(0, SEARCH_HISTORY_MAX);
+  try { localStorage.setItem(searchHistoryKey(), JSON.stringify(next)); } catch {}
+  renderSearchHistory();
+}
+
 $("#globalSearch")?.addEventListener("input", () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(runSearch, 350);
+  searchTimer = setTimeout(() => runSearch(true), 350);
 });
-$("#searchType")?.addEventListener("change", runSearch);
+$("#globalSearch")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  clearTimeout(searchTimer);
+  rememberSearch(event.target.value);
+  runSearch(true);
+});
+$("#searchType")?.addEventListener("change", () => runSearch(true));
+$("#searchSort")?.addEventListener("change", () => runSearch(true));
+$("#searchMore")?.addEventListener("click", () => {
+  if (state.searchLoading || !state.searchHasMore) return;
+  state.searchPage += 1;
+  runSearch(false);
+});
 
-async function runSearch() {
+async function runSearch(reset = true) {
   const query = ($("#globalSearch")?.value || "").trim();
   const type = $("#searchType")?.value || "all";
+  const sort = $("#searchSort")?.value || "relevance";
+  if (reset) state.searchPage = 1;
   if (query.length < 2) {
     state.searchData = null;
+    state.searchHasMore = false;
+    state.searchLoading = false;
     renderSearch();
     return;
   }
-  try {
-    const data = await api(`/social/search?q=${enc(query)}&type=${enc(type)}`, { quiet: true });
-    state.searchData = data;
-  } catch {
-    state.searchData = null;
-  }
+  const seq = ++state.searchSeq;
+  state.searchLoading = true;
   renderSearch();
+  try {
+    const data = await api(`/social/search?q=${enc(query)}&type=${enc(type)}&sort=${enc(sort)}&page=${state.searchPage}&limit=${SEARCH_PAGE}`, { quiet: true });
+    if (seq !== state.searchSeq) return;
+    if (reset) {
+      state.searchData = data;
+    } else {
+      const prev = state.searchData || {};
+      const merged = { ...data };
+      for (const key of ["users", "friends", "rooms", "messages"]) merged[key] = [...(prev[key] || []), ...(data[key] || [])];
+      merged.results = [...(prev.results || []), ...(data.results || [])];
+      state.searchData = merged;
+    }
+    state.searchHasMore = Boolean(data.hasMore);
+  } catch {
+    if (seq !== state.searchSeq) return;
+    if (reset) {
+      state.searchData = null;
+      state.searchHasMore = false;
+    }
+  } finally {
+    if (seq === state.searchSeq) {
+      state.searchLoading = false;
+      renderSearch();
+    }
+  }
 }
 
 function renderSearch() {
@@ -1653,8 +1726,12 @@ function renderSearch() {
   if (!wrap) return;
   const data = state.searchData;
   wrap.replaceChildren();
+  const count = $("#searchCount");
+  const more = $("#searchMore");
   if (!data) {
     emptyState("searchEmpty", true);
+    if (count) count.hidden = true;
+    if (more) more.hidden = true;
     return;
   }
   const groups = [
@@ -1673,7 +1750,17 @@ function renderSearch() {
     for (const item of items) group.append(searchResult(item, key));
     wrap.append(group);
   }
-  emptyState("searchEmpty", total > 0);
+  if (count) {
+    count.hidden = false;
+    count.textContent = state.searchLoading
+      ? t("social.searchLoading")
+      : t("social.searchCount", { n: fmtNumber(Number(data.total || total)) });
+  }
+  if (more) {
+    more.hidden = !state.searchHasMore || state.searchLoading;
+    more.disabled = state.searchLoading;
+  }
+  emptyState("searchEmpty", total > 0 || state.searchLoading);
 }
 
 function searchResult(item, kind) {
@@ -1693,12 +1780,15 @@ function searchResult(item, kind) {
   if (kind === "rooms") {
     const main = el("div", { class: "person-main" });
     main.append(el("strong", { text: item.name || `#${item.roomCode}` }));
-    main.append(el("small", { text: `${item.roomCode} · ${t("social.roomMembers", { n: item.memberCount })}` }));
+    const meta = [`${item.roomCode} · ${t("social.roomMembers", { n: item.memberCount })}`];
+    if (item.description) meta.push(item.description);
+    main.append(el("small", { text: meta.join(" · "), dir: "auto" }));
     row.append(main);
     row.append(el("a", {
       class: "btn btn-secondary btn-sm",
       href: `room.html?room=${enc(item.roomCode)}`,
-      text: t("join.cta")
+      text: t("join.cta"),
+      onClick: () => rememberSearch(item.name || item.roomCode)
     }));
     return row;
   }

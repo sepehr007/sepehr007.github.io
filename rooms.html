@@ -82,14 +82,40 @@
 
     <div class="rooms-layout">
       <section class="rooms-main">
+        <section class="rooms-recs" id="recSection" hidden>
+          <h2 class="rooms-section-title" data-i18n="rooms.recTitle">پیشنهاد برای تو</h2>
+          <p class="hint" data-i18n="rooms.recSub">فقط از اتاق‌های عمومی و اطلاعاتی که خودت می‌بینی ساخته می‌شود.</p>
+          <div class="room-grid compact" id="recList"></div>
+        </section>
+
         <div class="rooms-toolbar">
-          <input id="searchInput" type="search" placeholder="جست‌وجوی نام یا توضیح اتاق…" data-i18n-ph="rooms.searchPh" aria-label="جست‌وجو در اتاق‌ها">
+          <input id="searchInput" type="search" list="searchSuggest" placeholder="جست‌وجوی نام یا توضیح اتاق…" data-i18n-ph="rooms.searchPh" aria-label="جست‌وجو در اتاق‌ها" autocomplete="off">
+          <datalist id="searchSuggest"></datalist>
+          <select id="sortSelect" aria-label="ترتیب اتاق‌ها" data-i18n-aria="rooms.sort">
+            <option value="activity" data-i18n="rooms.sortActivity">فعال‌ترین</option>
+            <option value="members" data-i18n="rooms.sortMembers">پرعضوترین</option>
+            <option value="newest" data-i18n="rooms.sortNewest">جدیدترین</option>
+            <option value="name" data-i18n="rooms.sortName">الفبایی</option>
+          </select>
           <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button" data-i18n="rooms.refresh">تازه‌سازی</button>
         </div>
-        <div class="room-grid" id="publicList" aria-live="polite"></div>
+        <div class="rooms-chips" id="filterChips" role="group" aria-label="فیلتر">
+          <span class="chips-label" data-i18n="rooms.filtersLabel">فیلتر</span>
+          <button class="chip" type="button" data-filter="open" aria-pressed="false" data-i18n="rooms.filterOpen">جا دارد</button>
+          <button class="chip" type="button" data-filter="nopass" aria-pressed="false" data-i18n="rooms.filterNoPass">بدون رمز</button>
+          <button class="chip" type="button" data-filter="active" aria-pressed="false" data-i18n="rooms.filterActive">فعال در ۲۴ ساعت</button>
+        </div>
+        <div class="rooms-history" id="searchHistory" hidden>
+          <span class="chips-label" data-i18n="rooms.historyTitle">جست‌وجوهای اخیر</span>
+          <div class="history-chips" id="historyChips"></div>
+          <button class="chip chip-clear" type="button" id="clearHistory" data-i18n="rooms.historyClear">پاک کردن</button>
+        </div>
+        <p class="rooms-count" id="publicCount" hidden></p>
+        <div class="room-grid" id="publicList" aria-live="polite" aria-busy="false"></div>
+        <button class="btn btn-secondary rooms-more" id="moreBtn" type="button" hidden data-i18n="rooms.loadMore">اتاق‌های بیشتر</button>
         <div class="social-empty" id="publicEmpty" hidden>
-          <strong data-i18n="rooms.emptyTitle">اتاق عمومی فعالی نیست</strong>
-          <span data-i18n="rooms.empty">اولین اتاق را تو بساز؛ چند ثانیه بیشتر طول نمی‌کشد.</span>
+          <strong id="publicEmptyTitle" data-i18n="rooms.emptyTitle">اتاق عمومی فعالی نیست</strong>
+          <span id="publicEmptyText" data-i18n="rooms.empty">اولین اتاق را تو بساز؛ چند ثانیه بیشتر طول نمی‌کشد.</span>
         </div>
 
         <h2 class="rooms-section-title" data-i18n="rooms.recentTitle">اخیراً رفتی</h2>

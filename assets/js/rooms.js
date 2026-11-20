@@ -9,9 +9,19 @@ const state = {
   publicRooms: [],
   recent: [],
   mine: [],
+  recs: [],
   joining: false,
   pwd: null,
-  searchTimer: 0
+  searchTimer: 0,
+  suggestTimer: 0,
+  suggestSeq: 0,
+  page: 1,
+  total: 0,
+  hasMore: false,
+  loading: false,
+  loadSeq: 0,
+  sort: "activity",
+  filters: new Set()
 };
 
 applyUIPrefs();
@@ -65,6 +75,54 @@ function setColor(node, color) {
 function empty(nodeId, isEmpty) {
   const node = document.getElementById(nodeId);
   if (node) node.hidden = !isEmpty;
+}
+
+/* ------------------------------------------------------------- search history */
+
+const HISTORY_MAX = 8;
+
+function historyKey() {
+  return `wt.searchHist.v1:${state.me?.id || "anon"}`;
+}
+
+function readHistory() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(historyKey()) || "[]");
+    return Array.isArray(raw) ? raw.filter((item) => typeof item === "string" && item.trim()).slice(0, HISTORY_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeHistory(list) {
+  try { localStorage.setItem(historyKey(), JSON.stringify(list.slice(0, HISTORY_MAX))); } catch {}
+}
+
+function rememberQuery(query) {
+  const clean = String(query || "").trim().slice(0, 60);
+  if (clean.length < 2) return;
+  const next = [clean, ...readHistory().filter((item) => item.toLowerCase() !== clean.toLowerCase())].slice(0, HISTORY_MAX);
+  writeHistory(next);
+  renderHistory();
+}
+
+function renderHistory() {
+  const wrap = $("#searchHistory");
+  const chips = $("#historyChips");
+  if (!wrap || !chips) return;
+  const items = readHistory();
+  wrap.hidden = items.length === 0;
+  chips.replaceChildren(...items.map((text) => el("button", {
+    type: "button",
+    class: "chip history-chip",
+    text,
+    onClick: () => {
+      state.q = text;
+      $("#searchInput").value = text;
+      state.page = 1;
+      loadPublic();
+    }
+  })));
 }
 
 function redirectLogin() {
@@ -182,7 +240,7 @@ async function handleDeepLink() {
 
 /* ------------------------------------------------------------------ render */
 
-function roomCard(room, { compact = false } = {}) {
+function roomCard(room, { compact = false, reason = "" } = {}) {
   const card = el("article", { class: "room-card" });
   setColor(card, room.color);
   if (!room.isActive) card.classList.add("is-closed");
@@ -211,6 +269,7 @@ function roomCard(room, { compact = false } = {}) {
     badges.append(badge(t("rooms.fullBadge"), "danger"));
   }
   if (room.joined) badges.append(badge(t("rooms.guest"), "accent"));
+  if (reason) badges.append(badge(reason, "rec"));
 
   card.append(head);
   if (!compact) card.append(el("p", { class: "room-card-desc", text: room.description || "" }));
@@ -232,6 +291,7 @@ function roomCard(room, { compact = false } = {}) {
     text: label,
     onClick: () => {
       if (closed) return;
+      rememberQuery(room.name);
       joinFlow(room.code);
     }
   });
@@ -247,27 +307,111 @@ function renderList(nodeId, rooms, opts = {}) {
   node.replaceChildren(...rooms.map((room) => roomCard(room, opts)));
 }
 
-function renderAll() {
+function renderSkeletons() {
+  const list = document.getElementById("publicList");
+  if (!list) return;
+  list.setAttribute("aria-busy", "true");
+  list.replaceChildren(...Array.from({ length: 3 }, () => el("article", { class: "room-card skeleton", "aria-hidden": "true" }, [
+    el("div", { class: "sk-line sk-title" }),
+    el("div", { class: "sk-line" }),
+    el("div", { class: "sk-line sk-short" })
+  ])));
+  empty("publicEmpty", false);
+  const count = $("#publicCount");
+  if (count) count.hidden = true;
+  const more = $("#moreBtn");
+  if (more) more.hidden = true;
+}
+
+function renderPublic() {
+  const list = document.getElementById("publicList");
+  if (!list) return;
+  list.setAttribute("aria-busy", String(state.loading));
   renderList("publicList", state.publicRooms);
+  const filtered = state.q.length > 0 || state.filters.size > 0;
+  const title = $("#publicEmptyTitle");
+  const text = $("#publicEmptyText");
+  const titleKey = filtered ? "rooms.emptyMatchTitle" : "rooms.emptyTitle";
+  const textKey = filtered ? "rooms.emptyMatch" : "rooms.empty";
+  if (title) { title.dataset.i18n = titleKey; title.textContent = t(titleKey); }
+  if (text) { text.dataset.i18n = textKey; text.textContent = t(textKey); }
+  empty("publicEmpty", !state.loading && state.publicRooms.length === 0);
+  const count = $("#publicCount");
+  if (count) {
+    count.hidden = state.loading || state.total === 0;
+    count.textContent = t("rooms.resultsCount", { n: fmtNumber(state.total) });
+  }
+  const more = $("#moreBtn");
+  if (more) {
+    more.hidden = state.loading || !state.hasMore;
+    more.disabled = state.loading;
+  }
+}
+
+function renderAll() {
+  renderPublic();
   renderList("recentList", state.recent, { compact: true });
   renderList("mineList", state.mine, { compact: true });
-  empty("publicEmpty", state.publicRooms.length === 0);
   empty("recentEmpty", state.recent.length === 0);
   empty("mineEmpty", state.mine.length === 0);
 }
 
+function renderRecs() {
+  const wrap = $("#recList");
+  const section = $("#recSection");
+  if (!wrap || !section) return;
+  section.hidden = state.recs.length === 0;
+  wrap.replaceChildren(...state.recs.map((item) => {
+    const reason = item.reason === "friend"
+      ? (item.friendNick ? t("rooms.recFriendNamed", { name: item.friendNick }) : t("rooms.recFriend"))
+      : item.reason === "live" ? t("rooms.recLive") : t("rooms.recFresh");
+    return roomCard(item.room, { compact: true, reason });
+  }));
+}
+
 /* -------------------------------------------------------------------- load */
 
-async function loadPublic() {
+async function loadPublic({ reset = true } = {}) {
+  if (reset) state.page = 1;
+  const seq = ++state.loadSeq;
+  state.loading = true;
+  if (reset) renderSkeletons();
+  else renderPublic();
   try {
-    const q = state.q ? `?q=${encodeURIComponent(state.q)}` : "";
-    const res = await apiFetch(`/rooms/discover${q}`, { timeoutMs: 12000 });
-    state.publicRooms = Array.isArray(res?.rooms) ? res.rooms : [];
+    const params = new URLSearchParams({ sort: state.sort, page: String(state.page), limit: "12" });
+    if (state.q) params.set("q", state.q);
+    if (state.filters.size) params.set("filter", [...state.filters].join(","));
+    const res = await apiFetch(`/rooms/discover?${params}`, { timeoutMs: 12000 });
+    if (seq !== state.loadSeq) return;
+    const rooms = Array.isArray(res?.rooms) ? res.rooms : [];
+    state.publicRooms = reset ? rooms : state.publicRooms.concat(rooms);
+    state.total = Number(res?.total || 0);
+    state.hasMore = Boolean(res?.hasMore);
   } catch (err) {
-    state.publicRooms = [];
+    if (seq !== state.loadSeq) return;
+    if (reset) {
+      state.publicRooms = [];
+      state.total = 0;
+      state.hasMore = false;
+    }
     if (err?.code !== "discovery_closed") toast(errorText(err), "error");
+    if (!reset) state.page = Math.max(1, state.page - 1);
+  } finally {
+    if (seq === state.loadSeq) {
+      state.loading = false;
+      renderPublic();
+    }
   }
-  renderAll();
+}
+
+async function loadRecommendations() {
+  try {
+    const res = await apiFetch("/rooms/recommend?limit=6", { timeoutMs: 12000 });
+    state.recs = Array.isArray(res?.rooms) ? res.rooms : [];
+  } catch {
+    state.recs = [];
+  }
+  renderRecs();
 }
 
 async function loadRecent() {
@@ -292,8 +436,7 @@ async function loadMine() {
 }
 
 function loadAll() {
-  renderAll();
-  return Promise.all([loadPublic(), loadRecent(), loadMine()]);
+  return Promise.all([loadPublic(), loadRecent(), loadMine(), loadRecommendations()]);
 }
 
 /* ---------------------------------------------------------------- actions */
@@ -332,6 +475,31 @@ async function createRoom(event) {
   }
 }
 
+async function updateSuggestions() {
+  const term = state.q;
+  const seq = ++state.suggestSeq;
+  const list = $("#searchSuggest");
+  if (!list) return;
+  const lower = term.toLowerCase();
+  const local = term ? readHistory().filter((item) => item.toLowerCase().includes(lower)) : readHistory();
+  const options = local.map((name) => el("option", { value: name }));
+  if (term.length >= 2) {
+    try {
+      const res = await apiFetch(`/rooms/suggest?q=${encodeURIComponent(term)}`, { timeoutMs: 8000 });
+      if (seq !== state.suggestSeq) return;
+      for (const item of res?.suggestions || []) {
+        if (!item.name || options.some((node) => node.value === item.name)) continue;
+        options.push(el("option", {
+          value: item.name,
+          label: `${item.code} · ${t("rooms.members", { n: fmtNumber(item.memberCount || 0) })}`
+        }));
+      }
+    } catch {}
+  }
+  if (seq !== state.suggestSeq) return;
+  list.replaceChildren(...options.slice(0, 10));
+}
+
 function wireStatic() {
   $("#createForm")?.addEventListener("submit", createRoom);
   $("#gateRetry")?.addEventListener("click", () => location.reload());
@@ -339,17 +507,52 @@ function wireStatic() {
   $("#searchInput")?.addEventListener("input", (event) => {
     state.q = event.target.value.trim();
     clearTimeout(state.searchTimer);
-    state.searchTimer = setTimeout(loadPublic, 300);
+    clearTimeout(state.suggestTimer);
+    state.searchTimer = setTimeout(() => loadPublic(), 300);
+    state.suggestTimer = setTimeout(updateSuggestions, 200);
+  });
+  $("#searchInput")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    clearTimeout(state.searchTimer);
+    rememberQuery(state.q);
+    loadPublic();
+  });
+  $("#sortSelect")?.addEventListener("change", (event) => {
+    state.sort = event.target.value;
+    loadPublic();
+  });
+  $("#filterChips")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-filter]");
+    if (!btn) return;
+    const key = btn.dataset.filter;
+    if (state.filters.has(key)) state.filters.delete(key);
+    else state.filters.add(key);
+    btn.setAttribute("aria-pressed", String(state.filters.has(key)));
+    loadPublic();
+  });
+  $("#moreBtn")?.addEventListener("click", () => {
+    if (state.loading || !state.hasMore) return;
+    state.page += 1;
+    loadPublic({ reset: false });
+  });
+  $("#clearHistory")?.addEventListener("click", () => {
+    writeHistory([]);
+    renderHistory();
+    toast(t("rooms.historyCleared"), "success");
   });
   $("#codeForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const code = $("#codeInput").value.trim().toUpperCase();
     if (!code) return;
+    rememberQuery(code);
     joinFlow(code);
   });
   document.addEventListener("langchange", () => {
     document.title = `${t("rooms.title")} — هم‌تماشا`;
     renderAll();
+    renderRecs();
+    renderHistory();
   });
   window.addEventListener("wt:api-unauthorized", () => showGate("login"));
 }
@@ -389,6 +592,7 @@ function showGate(kind) {
   }
   $("#roomsGate").hidden = true;
   $("#roomsBody").hidden = false;
+  renderHistory();
   await loadAll();
   await handleDeepLink();
 })();
