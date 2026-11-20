@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { hashPassword, verifyPassword } from "../password-pool.js";
+import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import {
   createUser,
@@ -158,7 +158,7 @@ async function issueEmailToken(user, kind, req, channel = "email") {
   const record = await createEmailToken({
     userId: user.id,
     kind,
-    codeHash: await hashPassword(code, CODE_HASH_ROUNDS),
+    codeHash: await bcrypt.hash(code, CODE_HASH_ROUNDS),
     linkHash: linkToken ? hashLinkToken(linkToken) : "",
     expiresAt: Date.now() + minutes * 60_000
   });
@@ -216,7 +216,7 @@ async function issueOwnerCode(user, channel) {
   const record = await createEmailToken({
     userId: user.id,
     kind,
-    codeHash: await hashPassword(code, CODE_HASH_ROUNDS),
+    codeHash: await bcrypt.hash(code, CODE_HASH_ROUNDS),
     linkHash: "",
     expiresAt: Date.now() + OWNER_CODE_TTL_MINUTES * 60_000
   });
@@ -562,8 +562,8 @@ export default async function authRoutes(app) {
         usernameLower,
         email,
         phone,
-        passwordHash: await hashPassword(password, BCRYPT_ROUNDS),
-        recoveryHash: await hashPassword(normalizeCode(recoveryCode), RECOVERY_ROUNDS),
+        passwordHash: await bcrypt.hash(password, BCRYPT_ROUNDS),
+        recoveryHash: await bcrypt.hash(normalizeCode(recoveryCode), RECOVERY_ROUNDS),
         nick,
         birthdate,
         city,
@@ -631,7 +631,7 @@ export default async function authRoutes(app) {
       identifier.includes("@") ? { email: identifier } : { usernameLower: identifier }
     );
     const user = rows[0] || null;
-    const valid = user ? await verifyPassword(password, user.passwordHash) : false;
+    const valid = user ? await bcrypt.compare(password, user.passwordHash) : false;
     if (!user || !valid) {
       await bumpCounter(failKey, LOGIN_FAIL_WINDOW_MS);
       await audit("auth.login_failed", req, {
@@ -854,7 +854,7 @@ export default async function authRoutes(app) {
     if (user.role === "owner" || user.role === "super_owner") {
       return fail(reply, 403, "owner_protected", "The owner account cannot be deleted from this flow.");
     }
-    const valid = await verifyPassword(password, user.passwordHash);
+    const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) return fail(reply, 403, "wrong_password", "Password is incorrect.");
     const done = await softDeleteUser(user.id);
     if (!done) return fail(reply, 404, "user_missing", "Account not found.");
@@ -905,10 +905,10 @@ export default async function authRoutes(app) {
     if (isOwnerAccount(user)) {
       return fail(reply, 403, "owner_console_only", OWNER_CONSOLE_ONLY);
     }
-    const valid = await verifyPassword(current, user.passwordHash);
+    const valid = await bcrypt.compare(current, user.passwordHash);
     if (!valid) return fail(reply, 403, "wrong_password", "Current password is incorrect.");
 
-    await updateUser(user.id, { passwordHash: await hashPassword(next, BCRYPT_ROUNDS) });
+    await updateUser(user.id, { passwordHash: await bcrypt.hash(next, BCRYPT_ROUNDS) });
     await revokeAllSessions(user.id);
     const issued = await issueToken(user, req);
     await cacheDel(`user:${user.id}`);
@@ -945,7 +945,7 @@ export default async function authRoutes(app) {
       identifier.includes("@") ? { email: identifier } : { usernameLower: identifier }
     );
     const user = rows[0] || null;
-    const valid = user?.recoveryHash ? await verifyPassword(code, user.recoveryHash) : false;
+    const valid = user?.recoveryHash ? await bcrypt.compare(code, user.recoveryHash) : false;
     if (!user || !valid) {
       return fail(reply, 401, "invalid_recovery", "That username and recovery code do not match.");
     }
@@ -955,8 +955,8 @@ export default async function authRoutes(app) {
 
     const recoveryCode = newRecoveryCode();
     const updated = await updateUser(user.id, {
-      passwordHash: await hashPassword(next, BCRYPT_ROUNDS),
-      recoveryHash: await hashPassword(normalizeCode(recoveryCode), RECOVERY_ROUNDS)
+      passwordHash: await bcrypt.hash(next, BCRYPT_ROUNDS),
+      recoveryHash: await bcrypt.hash(normalizeCode(recoveryCode), RECOVERY_ROUNDS)
     });
     await revokeAllSessions(user.id);
     await cacheDel(`user:${user.id}`);
@@ -993,10 +993,10 @@ export default async function authRoutes(app) {
     if (isOwnerAccount(user)) {
       return fail(reply, 403, "owner_console_only", OWNER_CONSOLE_ONLY);
     }
-    const valid = await verifyPassword(password, user.passwordHash);
+    const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) return fail(reply, 403, "wrong_password", "Current password is incorrect.");
     const recoveryCode = newRecoveryCode();
-    await updateUser(user.id, { recoveryHash: await hashPassword(normalizeCode(recoveryCode), RECOVERY_ROUNDS) });
+    await updateUser(user.id, { recoveryHash: await bcrypt.hash(normalizeCode(recoveryCode), RECOVERY_ROUNDS) });
     await audit("auth.recovery_code_rotate", req, { targetType: "user", targetId: user.id });
     await deliverNotice(req.server, user.id, {
       kind: "security",
@@ -1073,7 +1073,7 @@ export default async function authRoutes(app) {
 
     const token = await findActiveEmailToken(user.id, "verify");
     if (!token) return fail(reply, 400, "code_expired", "The code expired. Request a new one.");
-    const valid = await verifyPassword(code, token.codeHash || "");
+    const valid = await bcrypt.compare(code, token.codeHash || "");
     if (!valid) {
       const attempts = await bumpEmailTokenAttempts(token.id);
       if (attempts >= MAX_CODE_ATTEMPTS) {
@@ -1217,7 +1217,7 @@ export default async function authRoutes(app) {
       return fail(reply, 403, "owner_console_only", OWNER_CONSOLE_ONLY);
     }
     if (checkCode) {
-      const valid = await verifyPassword(code, record.codeHash || "");
+      const valid = await bcrypt.compare(code, record.codeHash || "");
       if (!valid) {
         const attempts = await bumpEmailTokenAttempts(record.id);
         if (attempts >= MAX_CODE_ATTEMPTS) {
@@ -1231,8 +1231,8 @@ export default async function authRoutes(app) {
 
     const recoveryCode = newRecoveryCode();
     const updated = await updateUser(user.id, {
-      passwordHash: await hashPassword(next, BCRYPT_ROUNDS),
-      recoveryHash: await hashPassword(normalizeCode(recoveryCode), RECOVERY_ROUNDS),
+      passwordHash: await bcrypt.hash(next, BCRYPT_ROUNDS),
+      recoveryHash: await bcrypt.hash(normalizeCode(recoveryCode), RECOVERY_ROUNDS),
       emailVerified: true,
       emailVerifiedAt: user.emailVerifiedAt || new Date()
     });
@@ -1359,7 +1359,7 @@ export default async function authRoutes(app) {
     if ((channel === "email" && !contact.emailReady) || (channel === "sms" && !contact.phoneReady)) {
       return fail(reply, 409, "owner_contact_missing", "Set a verified owner email or the owner phone on the server first.");
     }
-    if (await verifyPassword(next, user.passwordHash)) {
+    if (await bcrypt.compare(next, user.passwordHash)) {
       return fail(reply, 400, "password_unchanged", "Choose a password different from the current one.");
     }
 
@@ -1367,7 +1367,7 @@ export default async function authRoutes(app) {
     if (!record) {
       return fail(reply, 400, "code_expired", "The code expired. Request a fresh code.");
     }
-    const codeOk = await verifyPassword(code, record.codeHash || "");
+    const codeOk = await bcrypt.compare(code, record.codeHash || "");
     if (!codeOk) {
       const attempts = await bumpEmailTokenAttempts(record.id);
       if (attempts >= MAX_CODE_ATTEMPTS) {
@@ -1378,7 +1378,7 @@ export default async function authRoutes(app) {
     }
 
     const updated = await updateUser(user.id, {
-      passwordHash: await hashPassword(next, BCRYPT_ROUNDS)
+      passwordHash: await bcrypt.hash(next, BCRYPT_ROUNDS)
     });
     await consumeEmailToken(record.id);
     await revokeAllSessions(user.id);
