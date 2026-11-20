@@ -1,0 +1,70 @@
+/* Server-side room management panel (settings tab). Additive. */
+
+.mgmt-card{
+  border:1px solid rgba(var(--brand-rgb),.35);
+  border-radius:var(--r-md);
+  background:linear-gradient(180deg,rgba(var(--brand-rgb),.08),rgba(255,255,255,.02));
+  padding:14px;
+  display:flex;flex-direction:column;gap:10px;
+}
+.mgmt-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mgmt-head strong{font-size:13.5px;font-weight:800}
+.mgmt-role-badge{
+  font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;
+  color:var(--accent);border:1px solid rgba(var(--brand-rgb),.5);background:rgba(var(--brand-rgb),.12);
+  white-space:nowrap;
+}
+.mgmt-hint{margin:0;font-size:11px;line-height:1.7;color:var(--text-faint)}
+.mgmt-meta{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;color:var(--text-dim)}
+.mgmt-sub{
+  margin:6px 0 0;font-size:11.5px;font-weight:800;letter-spacing:.02em;
+  color:var(--text);padding-top:8px;border-top:1px dashed var(--border);
+}
+.mgmt-rules{margin:0;font-size:12px;line-height:1.8;color:var(--text-dim);white-space:pre-wrap}
+
+.mgmt-members{display:flex;flex-direction:column;gap:6px}
+.mgmt-member{
+  display:flex;align-items:center;gap:8px;padding:6px 8px;
+  border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.02);
+}
+.mgmt-member-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.mgmt-member-main b{font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mgmt-member-main small{font-size:10px;color:var(--text-faint)}
+.mgmt-role-select{
+  flex:none;width:auto;min-height:30px;padding:4px 8px;font:inherit;font-size:11px;
+  border-radius:8px;border:1px solid var(--border);background:var(--bg-2);color:var(--text);
+}
+.mgmt-member .btn{flex:none}
+
+.mgmt-block{display:flex;flex-direction:column;gap:8px}
+.mgmt-grid{display:grid;grid-template-columns:1fr;gap:8px}
+.mgmt-field{display:flex;flex-direction:column;gap:4px;min-width:0;font-size:11px;color:var(--text-dim)}
+.mgmt-field.wide{grid-column:1 / -1}
+.mgmt-field input[type="text"],
+.mgmt-field input[type="number"],
+.mgmt-field input[type="password"],
+.mgmt-field select,
+.mgmt-field textarea{
+  width:100%;min-height:34px;padding:6px 9px;font:inherit;font-size:12px;border-radius:9px;
+  border:1px solid var(--border);background:var(--bg-2);color:var(--text);
+}
+.mgmt-field textarea{resize:vertical;min-height:54px}
+.mgmt-field input[type="color"]{width:100%;height:34px;padding:2px;cursor:pointer;border-radius:9px;border:1px solid var(--border);background:var(--bg-2)}
+.mgmt-field input:focus,.mgmt-field select:focus,.mgmt-field textarea:focus{border-color:var(--accent);outline:none}
+.mgmt-check{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--text-dim);cursor:pointer;grid-column:1 / -1}
+.mgmt-check input{accent-color:var(--accent);width:14px;height:14px;margin:0}
+.mgmt-inline{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end}
+.mgmt-inline .btn{grid-column:1 / -1;justify-self:start}
+.mgmt-inline.single{grid-template-columns:1fr auto}
+.mgmt-inline.single .btn{grid-column:auto;justify-self:auto}
+.mgmt-link{display:flex;gap:6px;align-items:center}
+.mgmt-link input{
+  flex:1;min-width:0;min-height:34px;padding:6px 9px;font-family:var(--font-mono);font-size:11px;
+  border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text-dim);
+}
+.mgmt-link .btn{flex:none}
+
+@media (max-width:640px){
+  .mgmt-inline{grid-template-columns:1fr}
+  .mgmt-inline .btn{grid-column:auto;justify-self:start}
+}

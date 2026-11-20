@@ -287,7 +287,9 @@ export default async function socialRoutes(app) {
       q: req.query?.q,
       type: req.query?.type,
       page: req.query?.page,
-      limit: req.query?.limit
+      limit: req.query?.limit,
+      sort: req.query?.sort,
+      filter: req.query?.filter
     });
     return { ok: true, ...result };
   }));

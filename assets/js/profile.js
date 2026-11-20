@@ -1,4 +1,5 @@
-import { initI18n, t } from "./i18n.js";
+import { initI18n, t, fmtDateTime } from "./i18n.js";
+import { apiFetch } from "./api.js";
 import {
   $, $$, el, toast, initials, applyUIPrefs, getPrefs, savePrefs, resetPrefs,
   ACCENTS, lightenHex, registerServiceWorker, RateGuard,
@@ -104,6 +105,11 @@ async function boot(me) {
   wireAppearance();
   wireMisc();
   wireNotifications();
+  wireSessions();
+  wirePrivacy();
+  wireDelete();
+  loadSessions();
+  loadPrivacy();
   document.addEventListener("langchange", () => {
     applySiteConfig(siteCfg);
     document.title = `${t("profile.title")} — هم‌تماشا`;
@@ -116,6 +122,7 @@ async function boot(me) {
     refreshNotifUI();
     paintMemberSince();
     paintAppearance();
+    renderSessions();
   });
 }
 
@@ -778,6 +785,175 @@ function wireAppearance() {
     resetPrefs();
     paint();
     note(t("profile.lookResetDone"), "ok");
+  });
+}
+
+/* ---------- sessions ---------- */
+let sessionsCache = [];
+
+function apiMessage(err, fallback) {
+  if (err?.payload?.code === "wrong_password") return t("profile.deleteWrong");
+  if (err?.status === 401) return t("social.err.auth");
+  if (err?.status === 409) return t("profile.serverOnly");
+  return fallback || t("profile.serverOnly");
+}
+
+function sessionDeviceLabel(ua) {
+  const s = String(ua || "");
+  const browser = /Edg\//.test(s) ? "Edge"
+    : /OPR\//.test(s) ? "Opera"
+      : /Firefox\//.test(s) ? "Firefox"
+        : /Chrome\//.test(s) ? "Chrome"
+          : /Safari\//.test(s) ? "Safari"
+            : "";
+  const os = /Windows/.test(s) ? "Windows"
+    : /Android/.test(s) ? "Android"
+      : /iPhone|iPad|iPod/.test(s) ? "iOS"
+        : /Mac OS X/.test(s) ? "macOS"
+          : /Linux/.test(s) ? "Linux"
+            : "";
+  const label = [browser, os].filter(Boolean).join(" · ");
+  return label || t("profile.sessionUnknown");
+}
+
+function renderSessions() {
+  const list = $("#sessionList");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!sessionsCache.length) {
+    list.append(el("li", { class: "friend-empty", text: t("profile.sessionsEmpty") }));
+    return;
+  }
+  for (const s of sessionsCache) {
+    const li = el("li", { class: "friend-item" });
+    const info = el("div", { class: "friend-info" });
+    const meta = [];
+    if (s.ip) meta.push(s.ip);
+    if (s.lastSeenAt) meta.push(`${t("profile.sessionLastSeen")}: ${fmtDateTime(s.lastSeenAt)}`);
+    else if (s.createdAt) meta.push(`${t("profile.sessionCreated")}: ${fmtDateTime(s.createdAt)}`);
+    info.append(
+      el("strong", { text: sessionDeviceLabel(s.ua) }),
+      el("span", { class: "friend-user", dir: "ltr", text: meta.join(" · ") })
+    );
+    li.append(info);
+    if (s.current) {
+      li.append(el("span", { class: "cap-pill ok", text: t("profile.sessionsCurrent") }));
+    } else {
+      const btn = el("button", { class: "friend-remove", type: "button", title: t("profile.sessionsRevoke") });
+      btn.textContent = "✕";
+      btn.addEventListener("click", () => revokeSession(s.id));
+      li.append(btn);
+    }
+    list.append(li);
+  }
+}
+
+async function loadSessions() {
+  const msg = $("#sessionsMsg");
+  if (msg) {
+    msg.textContent = "";
+    msg.classList.remove("ok");
+  }
+  try {
+    const data = await apiFetch("/auth/sessions", { timeoutMs: 6000 });
+    sessionsCache = Array.isArray(data?.sessions) ? data.sessions : [];
+  } catch (err) {
+    sessionsCache = [];
+    if (msg) msg.textContent = apiMessage(err);
+  }
+  renderSessions();
+}
+
+async function revokeSession(id) {
+  const msg = $("#sessionsMsg");
+  try {
+    await apiFetch(`/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE", timeoutMs: 6000 });
+    toast(t("profile.sessionsRevoked"), "success");
+    await loadSessions();
+  } catch (err) {
+    if (msg) msg.textContent = apiMessage(err);
+  }
+}
+
+function wireSessions() {
+  $("#sessionsRefresh")?.addEventListener("click", loadSessions);
+  $("#sessionsRevokeOthers")?.addEventListener("click", async () => {
+    const msg = $("#sessionsMsg");
+    if (!window.confirm(t("profile.sessionsRevokeOthers"))) return;
+    try {
+      await apiFetch("/auth/sessions/revoke-others", { method: "POST", timeoutMs: 6000 });
+      toast(t("profile.sessionsOthersDone"), "success");
+      await loadSessions();
+    } catch (err) {
+      if (msg) msg.textContent = apiMessage(err);
+    }
+  });
+}
+
+/* ---------- privacy ---------- */
+async function loadPrivacy() {
+  const msg = $("#privacyMsg");
+  try {
+    const data = await apiFetch("/auth/privacy", { timeoutMs: 6000 });
+    if ($("#privacyProfile")) $("#privacyProfile").value = data.profileVisibility || "public";
+    if ($("#privacyLastActive")) $("#privacyLastActive").value = data.lastActiveVisibility || "friends";
+    if ($("#privacyActivity")) $("#privacyActivity").value = data.activityVisibility || "friends";
+  } catch (err) {
+    if (msg) msg.textContent = apiMessage(err);
+  }
+}
+
+function wirePrivacy() {
+  $("#privacyForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = $("#privacyMsg");
+    try {
+      await apiFetch("/auth/privacy", {
+        method: "PATCH",
+        timeoutMs: 6000,
+        body: {
+          profileVisibility: $("#privacyProfile").value,
+          lastActiveVisibility: $("#privacyLastActive").value
+        }
+      });
+      msg.textContent = t("profile.privacySaved");
+      msg.classList.add("ok");
+    } catch (err) {
+      msg.classList.remove("ok");
+      msg.textContent = apiMessage(err);
+    }
+  });
+}
+
+/* ---------- delete account ---------- */
+function wireDelete() {
+  const form = $("#deleteForm");
+  if (!form) return;
+  const btn = $("#deleteBtn");
+  const check = $("#deleteConfirm");
+  check?.addEventListener("change", () => {
+    btn.disabled = !check.checked;
+  });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = $("#deleteMsg");
+    const password = $("#deletePassword").value;
+    if (!password) {
+      msg.textContent = t("profile.deletePassword");
+      return;
+    }
+    btn.disabled = true;
+    try {
+      await apiFetch("/auth/me", { method: "DELETE", body: { password }, timeoutMs: 8000 });
+      msg.classList.add("ok");
+      msg.textContent = t("profile.deleteDone");
+      logout();
+      setTimeout(() => location.replace("./"), 700);
+    } catch (err) {
+      btn.disabled = false;
+      msg.classList.remove("ok");
+      msg.textContent = err?.payload?.code === "owner_protected" ? t("profile.deleteOwner") : apiMessage(err);
+    }
   });
 }
 

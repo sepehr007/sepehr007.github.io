@@ -14,12 +14,24 @@ import {
   findEmailTokenByLink,
   bumpEmailTokenAttempts,
   consumeEmailToken,
-  purgeEmailTokens
+  purgeEmailTokens,
+  softDeleteUser
 } from "../userStore.js";
 import { sendVerificationMail, sendResetMail, sendTestMail, mailMode, mailState, applyMailSettings } from "../mailer.js";
 import { sendResetSms, sendTestSms, smsMode, smsState } from "../sms.js";
 import { loadConnections, saveConnections, safeConnections } from "../settings.js";
-import { saveDbSession, getDbSession, touchDbSession, revokeDbSession, revokeDbUserSessions } from "../sessionStore.js";
+import {
+  saveDbSession,
+  getDbSession,
+  touchDbSession,
+  revokeDbSession,
+  revokeDbUserSessions,
+  listDbUserSessions,
+  revokeDbUserSession,
+  revokeDbOtherSessions
+} from "../sessionStore.js";
+import { getPrivacy, setPrivacy } from "../stores/privacy.js";
+import { dbReady } from "../db.js";
 import { audit } from "../audit.js";
 import { resolveFeatureState, isEnabled } from "../features.js";
 import { settingBool, settingNumber } from "../platformSettings.js";
@@ -28,6 +40,7 @@ import {
   getSession,
   revokeSession,
   revokeUserSessions,
+  listUserSessions,
   cacheGet,
   cacheSet,
   cacheDel,
@@ -601,6 +614,108 @@ export default async function authRoutes(app) {
     await cacheDel(`user:${safe.id}`);
     await cacheSet(`user:${safe.id}`, safe, USER_CACHE_TTL);
     return verification ? { user: safe, verification } : { user: safe };
+  });
+
+  app.get("/sessions", { preHandler: [requireAuth] }, async (req) => {
+    const now = Date.now();
+    const rows = (await listDbUserSessions(req.auth.userId)).filter((s) => !s.expiresAt || s.expiresAt > now);
+    if (!rows.length) {
+      const live = await listUserSessions(req.auth.userId);
+      for (const s of live) rows.push({ ...s, createdAt: null, lastSeenAt: null });
+    }
+    const sessions = rows.map((s) => ({ ...s, current: s.id === req.auth.jti }));
+    if (!sessions.some((s) => s.current)) {
+      sessions.unshift({
+        id: req.auth.jti,
+        ip: req.ip || "",
+        ua: cleanString(req.headers["user-agent"], 220),
+        role: req.auth.role,
+        createdAt: null,
+        lastSeenAt: null,
+        expiresAt: null,
+        current: true
+      });
+    }
+    return { sessions };
+  });
+
+  app.delete("/sessions/:jti", { preHandler: [requireAuth] }, async (req, reply) => {
+    const jti = cleanString(req.params?.jti, 80);
+    if (!jti) return fail(reply, 400, "invalid_session", "A session id is required.");
+    if (jti === req.auth.jti) {
+      return fail(reply, 400, "current_session", "Use logout to end the current session.");
+    }
+    const removed = await revokeDbUserSession(req.auth.userId, jti);
+    let owned = removed;
+    if (!owned) {
+      const live = await listUserSessions(req.auth.userId);
+      owned = live.some((s) => s.id === jti);
+    }
+    if (!owned) return fail(reply, 404, "session_missing", "That session was not found.");
+    await revokeSession(jti);
+    await audit("auth.session_revoke", req, { targetType: "session", targetId: jti });
+    return { ok: true };
+  });
+
+  app.post("/sessions/revoke-others", { preHandler: [requireAuth] }, async (req) => {
+    const revoked = await revokeDbOtherSessions(req.auth.userId, req.auth.jti);
+    const live = await listUserSessions(req.auth.userId);
+    for (const s of live) {
+      if (s.id && s.id !== req.auth.jti) await revokeSession(s.id);
+    }
+    await audit("auth.session_revoke_others", req, { targetType: "user", targetId: req.auth.userId });
+    return { ok: true, revoked };
+  });
+
+  app.delete("/me", { preHandler: [requireAuth, loginLimit] }, async (req, reply) => {
+    if (dbReady()) {
+      return fail(reply, 409, "unsupported", "Account deletion is available on the SQLite deployment.");
+    }
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const password = String(body.password ?? "");
+    if (!password) return fail(reply, 400, "password_required", "Enter your password to delete the account.");
+    const user = await findUserById(req.auth.userId);
+    if (!user) return fail(reply, 401, "user_missing", "Account not found.");
+    if (user.role === "owner" || user.role === "super_owner") {
+      return fail(reply, 403, "owner_protected", "The owner account cannot be deleted from this flow.");
+    }
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) return fail(reply, 403, "wrong_password", "Password is incorrect.");
+    const done = await softDeleteUser(user.id);
+    if (!done) return fail(reply, 404, "user_missing", "Account not found.");
+    await revokeAllSessions(user.id);
+    await cacheDel(`user:${user.id}`);
+    await audit("auth.account_delete", req, { targetType: "user", targetId: user.id });
+    return { ok: true };
+  });
+
+  app.get("/privacy", { preHandler: [requireAuth] }, async (req, reply) => {
+    const data = await getPrivacy(req.auth.userId);
+    if (data.unsupported) {
+      return fail(reply, 409, "unsupported", "Privacy settings are available on the SQLite deployment.");
+    }
+    return data;
+  });
+
+  app.patch("/privacy", { preHandler: [requireAuth] }, async (req, reply) => {
+    if (dbReady()) {
+      return fail(reply, 409, "unsupported", "Privacy settings are available on the SQLite deployment.");
+    }
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const data = await setPrivacy(req.auth.userId, {
+        profileVisibility: body.profileVisibility,
+        lastActiveVisibility: body.lastActiveVisibility,
+        activityVisibility: body.activityVisibility
+      });
+      await audit("auth.privacy_update", req, { targetType: "user", targetId: req.auth.userId });
+      return { ok: true, ...data };
+    } catch (err) {
+      if (String(err?.message || "") === "database_unavailable") {
+        return fail(reply, 503, "database_unavailable", "Database is not connected yet.");
+      }
+      return fail(reply, 409, "unsupported", "Privacy settings are available on the SQLite deployment.");
+    }
   });
 
   app.post("/password", { preHandler: [requireAuth] }, async (req, reply) => {

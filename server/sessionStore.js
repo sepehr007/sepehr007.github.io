@@ -74,3 +74,46 @@ export async function revokeDbUserSessions(userId) {
     .run(Date.now(), String(userId));
   return Number(info.changes || 0);
 }
+
+export async function listDbUserSessions(userId) {
+  if (!userId || !activeMode()) return [];
+  const db = await getDatabase();
+  if (!db) return [];
+  return db
+    .prepare(
+      `SELECT jti, role, ip, user_agent, created_at, last_seen_at, expires_at
+       FROM sessions
+       WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
+       ORDER BY last_seen_at DESC, created_at DESC LIMIT 50`
+    )
+    .all(String(userId), Date.now())
+    .map((row) => ({
+      id: String(row.jti),
+      ip: row.ip || "",
+      ua: row.user_agent || "",
+      role: row.role || "user",
+      createdAt: Number(row.created_at) || null,
+      lastSeenAt: row.last_seen_at ? Number(row.last_seen_at) : null,
+      expiresAt: Number(row.expires_at) || null
+    }));
+}
+
+export async function revokeDbUserSession(userId, jti) {
+  if (!userId || !jti || !activeMode()) return false;
+  const db = await getDatabase();
+  if (!db) return false;
+  const info = db
+    .prepare("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND jti = ? AND revoked_at IS NULL")
+    .run(Date.now(), String(userId), String(jti));
+  return Number(info.changes || 0) > 0;
+}
+
+export async function revokeDbOtherSessions(userId, keepJti) {
+  if (!userId || !activeMode()) return 0;
+  const db = await getDatabase();
+  if (!db) return 0;
+  const info = db
+    .prepare("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND jti <> ? AND revoked_at IS NULL")
+    .run(Date.now(), String(userId), String(keepJti || ""));
+  return Number(info.changes || 0);
+}

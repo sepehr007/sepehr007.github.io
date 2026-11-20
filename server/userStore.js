@@ -264,6 +264,32 @@ export async function updateUser(id, patch) {
   return findUserById(id);
 }
 
+export async function softDeleteUser(userId) {
+  if (!userId || dbReady()) return false;
+  const db = await getDatabase();
+  if (!db) throw new Error("store_unavailable");
+  const id = String(userId);
+  const row = db.prepare("SELECT id FROM users WHERE id = ? AND deleted_at IS NULL").get(id);
+  if (!row) return false;
+  const stamp = id.replace(/-/g, "").slice(0, 12);
+  const now = Date.now();
+  transaction((conn) => {
+    conn
+      .prepare(
+        `UPDATE users SET
+           username = ?, username_lower = ?, email = ?, phone = '', bio = '', avatar = '', nick = '',
+           recovery_hash = '', password_hash = 'deleted-account', email_verified = 0, email_verified_at = NULL,
+           status = 'deleted', deleted_at = ?, last_seen_at = NULL, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(`deleted_${stamp}`, `deleted_${stamp}`, `deleted_${stamp}@invalid.local`, now, now, id);
+    conn.prepare("DELETE FROM email_tokens WHERE user_id = ?").run(id);
+    conn.prepare("DELETE FROM profiles WHERE user_id = ?").run(id);
+    conn.prepare("UPDATE dm_conversations SET updated_at = ? WHERE user_a = ? OR user_b = ?").run(now, id, id);
+  });
+  return true;
+}
+
 export async function countUsers() {
   if (dbReady()) return User.estimatedDocumentCount();
   const db = await getDatabase();

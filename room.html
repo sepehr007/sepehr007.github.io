@@ -27,6 +27,7 @@
 <link rel="stylesheet" href="assets/css/design-system.css">
 <link rel="stylesheet" href="assets/css/style.css">
 <link rel="stylesheet" href="assets/css/nebula.css">
+<link rel="stylesheet" href="assets/css/room-mgmt.css">
 <link rel="stylesheet" href="assets/css/device-compat.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%236c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
 </head>
@@ -77,6 +78,7 @@
             <span data-i18n="menu.language">زبان</span>
             <span class="menu-tag" id="langTag">EN</span>
           </button>
+          <a class="top-menu-item" href="rooms.html" role="menuitem" data-i18n="rooms.nav">اتاق‌ها</a>
           <a class="top-menu-item" href="profile.html" role="menuitem">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
             <span data-i18n="menu.profile">پروفایل</span>
@@ -133,9 +135,16 @@
         </button>
         <div class="screen-layer hidden" id="screenLayer">
           <video id="screenVideo" playsinline autoplay muted></video>
+          <audio id="screenAudio" autoplay></audio>
           <div class="screen-bar">
             <span class="screen-live" aria-hidden="true"></span>
             <span class="screen-who" id="screenWho"></span>
+            <button class="screen-ctl hidden" id="screenAudioBtn" type="button" data-i18n-title="screen.audioOff" title="روشن کردن صدای اشتراک" aria-label="روشن کردن صدای اشتراک" data-i18n-aria="screen.audioOff" aria-pressed="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 5L6 9H3v6h3l5 4V5z"/><path class="sa-wave" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/><path class="sa-slash" d="M4 4l16 16"/></svg>
+            </button>
+            <button class="screen-ctl hidden" id="screenStopBtn" type="button" data-i18n-title="screen.stop" title="توقف اشتراک صفحه" aria-label="توقف اشتراک صفحه" data-i18n-aria="screen.stop">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </button>
             <button class="screen-ctl" id="screenFitBtn" type="button" data-i18n-title="screen.expand" title="بزرگ/کوچک کردن" aria-label="بزرگ/کوچک کردن" data-i18n-aria="screen.expand">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3H3v6M15 21h6v-6M21 9V3h-6M3 15v6h6"/></svg>
             </button>
@@ -184,6 +193,15 @@
             <span data-i18n="net.lostSub">میزبان در دسترس نیست. بعد از برگشتن شبکه دوباره وصل شو.</span>
           </div>
           <button class="btn btn-primary btn-sm" id="reconnectBtn" type="button" data-i18n="net.reconnect">اتصال دوباره</button>
+        </div>
+
+        <div class="conn-lost hidden" id="autoPauseBar" role="status">
+          <span class="conn-ico" aria-hidden="true">⏸</span>
+          <div class="conn-body">
+            <strong data-i18n="autoPause.title">پخش متوقف شد</strong>
+            <span id="autoPauseSub"></span>
+          </div>
+          <button class="btn btn-primary btn-sm" id="autoResumeBtn" type="button" data-i18n="autoPause.resume">ادامهٔ پخش</button>
         </div>
 
         <div class="file-offer hidden" id="fileOfferBar">
@@ -377,6 +395,7 @@
 
     <section class="panel" data-panel="settings">
       <div class="panel-head"><h2 data-i18n="settings.title">تنظیمات اتاق</h2></div>
+      <div id="roomMgmtHost"></div>
       <div class="settings-list" id="settingsList">
         <div class="pref-card" id="prefCard">
           <div class="pref-head">
@@ -463,6 +482,12 @@
           <input type="checkbox" id="optApproval">
           <span class="switch"></span>
         </label>
+        <label class="switch-row">
+          <span data-i18n="settings.pauseOnLeave">توقف پخش وقتی کسی قطع می‌شود</span>
+          <input type="checkbox" id="optPauseOnLeave">
+          <span class="switch"></span>
+        </label>
+        <p class="hint" data-i18n="settings.pauseOnLeaveHint">اگر عضوی هنگام پخش خارج شود، پخش متوقف می‌شود و ادامه فقط با تأیید مدیر انجام می‌شود.</p>
         <div class="setting">
           <label for="optSlow" data-i18n="settings.slow">حالت آهستهٔ چت</label>
           <select id="optSlow">

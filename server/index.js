@@ -18,6 +18,7 @@ import billingRoutes from "./routes/billing.js";
 import adminRoutes from "./routes/admin.js";
 import platformRoutes from "./routes/platform.js";
 import socialRoutes from "./routes/social.js";
+import roomRoutes from "./routes/rooms.js";
 import { startMaintenance, getDatabase, databaseState, stopMaintenance, closeDatabase } from "./database/index.js";
 import { Room } from "./models/Room.js";
 import { Message } from "./models/Message.js";
@@ -45,6 +46,12 @@ function cleanName(value) {
 }
 
 const socialSockets = new Map();
+let roomNotifier = null;
+
+export function notifyRoom(roomCode, payload) {
+  if (!roomNotifier) return 0;
+  return roomNotifier(String(roomCode || "").toUpperCase(), payload);
+}
 
 export function notifyUser(userId, payload) {
   const key = String(userId || "");
@@ -102,6 +109,8 @@ function registerRealtime(app) {
       } catch {}
     }
   };
+
+  roomNotifier = (room, payload) => broadcast(room, payload);
 
   const leaveRoom = (client) => {
     const room = client.room;
@@ -393,6 +402,7 @@ function registerRealtime(app) {
     }
     rooms.clear();
     socialSockets.clear();
+    roomNotifier = null;
   });
 }
 
@@ -409,6 +419,7 @@ export async function buildServer() {
   });
 
   app.decorate("notifyUser", notifyUser);
+  app.decorate("notifyRoom", notifyRoom);
 
   for (const warning of configWarnings()) {
     if (warning.level === "error") app.log.error(`[config] ${warning.message}`);
@@ -495,6 +506,7 @@ export async function buildServer() {
   await app.register(adminRoutes, { prefix: "/api/admin" });
   await app.register(platformRoutes, { prefix: "/api/admin" });
   await app.register(socialRoutes, { prefix: "/api/social" });
+  await app.register(roomRoutes, { prefix: "/api/rooms" });
 
   app.get("/api/features", async (req) => {
     const auth = readAuth(req);

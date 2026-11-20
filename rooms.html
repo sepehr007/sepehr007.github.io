@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0c0b1d">
+<script src="assets/js/theme-boot.js"></script>
+<title>اتاق‌ها — هم‌تماشا</title>
+<meta name="description" content="اتاق‌های تماشای هم‌زمان هم‌تماشا: کشف اتاق عمومی، ساخت اتاق با قوانین و ظرفیت، دعوت دوستان و مدیریت کامل.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preload" as="image" href="assets/img/nx-hero.webp" type="image/webp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/design-system.css">
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="stylesheet" href="assets/css/nebula.css">
+<link rel="stylesheet" href="assets/css/social.css">
+<link rel="stylesheet" href="assets/css/device-compat.css">
+<link rel="stylesheet" href="assets/css/rooms.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%236c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+</head>
+<body class="page-social page-rooms">
+
+<div class="bg-aurora" aria-hidden="true">
+  <span class="aurora a1"></span>
+  <span class="aurora a2"></span>
+  <span class="aurora a3"></span>
+  <div class="grid-overlay"></div>
+</div>
+
+<nav class="nx-rail" aria-label="هم‌تماشا">
+  <a class="nx-rail-item nx-rail-brand" href="./" aria-label="خانه" data-i18n-aria="common.home"><svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg></a>
+  <span class="nx-rail-sep" aria-hidden="true"></span>
+  <a class="nx-rail-item" href="social.html" aria-label="شبکه" data-i18n-aria="social.nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 5 18.5V20"/><circle cx="11" cy="8" r="3.5"/><path d="M20 20v-1.2a3 3 0 0 0-2.2-2.9M15.5 4.7a3.5 3.5 0 0 1 0 6.6"/></svg></a>
+  <a class="nx-rail-item" href="rooms.html" aria-current="page" aria-label="اتاق‌ها" data-i18n-aria="rooms.title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 11l4 2-4 2v-4z"/></svg></a>
+  <a class="nx-rail-item" href="profile.html" aria-label="پروفایل" data-i18n-aria="menu.profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></a>
+</nav>
+
+<header class="site-header">
+  <a class="brand" href="./">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg>
+    </span>
+    <span class="brand-text">هم‌تماشا</span>
+  </a>
+  <div class="header-actions">
+    <a class="btn btn-ghost btn-sm" href="./" data-i18n="common.home">خانه</a>
+    <a class="btn btn-ghost btn-sm" href="social.html" data-i18n="social.nav">شبکه</a>
+    <button class="btn btn-ghost btn-sm" id="langToggle" type="button" aria-label="تغییر زبان" data-i18n-aria="common.language">EN</button>
+  </div>
+</header>
+
+<main class="rooms-shell">
+  <div class="social-head">
+    <div>
+      <h1 data-i18n="rooms.title">اتاق‌های هم‌تماشا</h1>
+      <p data-i18n="rooms.sub">اتاق پیدا کن، بساز یا مستقیم با کد وارد شو.</p>
+    </div>
+  </div>
+
+  <section class="social-gate card" id="roomsGate" hidden>
+    <h2 data-i18n="rooms.gateTitle">برای اتاق‌ها وارد شو</h2>
+    <p class="muted" data-i18n="rooms.gateText">کشف اتاق، ساخت و عضویت روی حساب سروری ذخیره می‌شود.</p>
+    <div class="gate-actions">
+      <a class="btn btn-primary" href="auth.html?next=rooms.html" data-i18n="rooms.gateBtn">ورود به حساب</a>
+      <button class="btn btn-secondary" id="gateRetry" type="button" data-i18n="rooms.retry">تلاش دوباره</button>
+    </div>
+  </section>
+
+  <div id="roomsBody" hidden>
+    <section class="rooms-hero card">
+      <div class="rooms-hero-copy">
+        <h2 data-i18n="rooms.discoverTitle">اتاق‌های عمومی</h2>
+      </div>
+      <form class="rooms-code" id="codeForm" autocomplete="off">
+        <input id="codeInput" type="text" dir="ltr" maxlength="16" placeholder="ROOM CODE" data-i18n-ph="rooms.codePh" aria-label="کد اتاق">
+        <button class="btn btn-primary" type="submit" data-i18n="rooms.codeJoin">برو به اتاق</button>
+      </form>
+    </section>
+
+    <div class="rooms-layout">
+      <section class="rooms-main">
+        <div class="rooms-toolbar">
+          <input id="searchInput" type="search" placeholder="جست‌وجوی نام یا توضیح اتاق…" data-i18n-ph="rooms.searchPh" aria-label="جست‌وجو در اتاق‌ها">
+          <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button" data-i18n="rooms.refresh">تازه‌سازی</button>
+        </div>
+        <div class="room-grid" id="publicList" aria-live="polite"></div>
+        <div class="social-empty" id="publicEmpty" hidden>
+          <strong data-i18n="rooms.emptyTitle">اتاق عمومی فعالی نیست</strong>
+          <span data-i18n="rooms.empty">اولین اتاق را تو بساز؛ چند ثانیه بیشتر طول نمی‌کشد.</span>
+        </div>
+
+        <h2 class="rooms-section-title" data-i18n="rooms.recentTitle">اخیراً رفتی</h2>
+        <div class="room-grid compact" id="recentList"></div>
+        <div class="social-empty small" id="recentEmpty" hidden><span data-i18n="rooms.recentEmpty">هنوز وارد اتاقی نشده‌ای.</span></div>
+
+        <h2 class="rooms-section-title" data-i18n="rooms.mineTitle">اتاق‌های تو</h2>
+        <div class="room-grid compact" id="mineList"></div>
+        <div class="social-empty small" id="mineEmpty" hidden><span data-i18n="rooms.mineEmpty">عضو هیچ اتاقی نیستی.</span></div>
+      </section>
+
+      <aside class="rooms-side">
+        <section class="social-form card" id="createCard">
+          <h3 data-i18n="rooms.createTitle">ساخت اتاق</h3>
+          <p class="hint" data-i18n="rooms.createSub">اسم، توضیح و قوانین اتاق را همین‌جا بگذار.</p>
+          <form id="createForm" autocomplete="off">
+            <label class="field">
+              <span data-i18n="rooms.name">نام اتاق</span>
+              <input id="newName" maxlength="80" required placeholder="شب فیلم جمعه" data-i18n-ph="rooms.namePh">
+            </label>
+            <label class="field">
+              <span data-i18n="rooms.description">توضیح کوتاه</span>
+              <input id="newDesc" maxlength="600" placeholder="چه فیلمی می‌بینیم؟" data-i18n-ph="rooms.descriptionPh">
+            </label>
+            <label class="field">
+              <span data-i18n="rooms.rules">قوانین اتاق</span>
+              <textarea id="newRules" maxlength="2000" rows="3" placeholder="هر خط یک قانون…" data-i18n-ph="rooms.rulesPh"></textarea>
+            </label>
+            <div class="form-row">
+              <label class="field">
+                <span data-i18n="rooms.visibility">دسترسی</span>
+                <select id="newVisibility">
+                  <option value="public" data-i18n="rooms.visPublic">عمومی — در فهرست دیده می‌شود</option>
+                  <option value="unlisted" data-i18n="rooms.visUnlisted">فقط با لینک</option>
+                  <option value="private" data-i18n="rooms.visPrivate">خصوصی — فقط با دعوت</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="rooms.capacity">ظرفیت</span>
+                <input id="newCapacity" type="number" min="2" max="48" value="6" dir="ltr">
+              </label>
+            </div>
+            <div class="form-row">
+              <label class="field">
+                <span data-i18n="rooms.color">رنگ اتاق</span>
+                <input id="newColor" type="color" value="#6c5cff">
+              </label>
+              <label class="field">
+                <span data-i18n="rooms.password">رمز اتاق (اختیاری)</span>
+                <input id="newPassword" type="password" maxlength="64" dir="ltr" placeholder="حداقل ۴ کاراکتر" data-i18n-ph="rooms.passwordPh">
+              </label>
+            </div>
+            <button class="btn btn-primary" type="submit" data-i18n="rooms.createCta">ساخت اتاق</button>
+          </form>
+        </section>
+      </aside>
+    </div>
+  </div>
+</main>
+
+<div class="modal-backdrop hidden" id="pwdBackdrop">
+  <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="pwdTitle">
+    <h2 id="pwdTitle" data-i18n="rooms.askPassword">رمز اتاق را وارد کن</h2>
+    <p class="muted" id="pwdRoomName"></p>
+    <p class="form-msg" id="pwdMsg" role="alert" hidden></p>
+    <input type="password" id="pwdInput" dir="ltr" maxlength="64" autocomplete="off" style="margin-top:12px">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="pwdCancel" type="button" data-i18n="common.cancel">انصراف</button>
+      <button class="btn btn-primary" id="pwdOk" type="button" data-i18n="rooms.join">ورود</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
+
+<script type="module" src="assets/js/rooms.js"></script>
+<script type="module" src="assets/js/fx.js"></script>
+</body>
+</html>

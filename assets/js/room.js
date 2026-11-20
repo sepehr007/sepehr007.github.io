@@ -8,6 +8,7 @@ import { Net } from "./net.js";
 import { LiveFeed } from "./livefeed.js";
 import { Player, parseSubtitles } from "./player.js";
 import { Voice } from "./voice.js";
+import { initRoomMgmt } from "./room-mgmt.js";
 import { currentUser, isLocallyBanned } from "./auth.js";
 import { touchLobby, forceCloseLobby } from "./lobbies.js";
 import { dbPut, dbGetByIndex, dbDelete, recordActivity } from "./db.js";
@@ -98,9 +99,16 @@ let selfVoice = false;
 let screenSharing = false;
 let screenStream = null;
 let screenSentTo = new Set();
+let screenHasAudio = false;
+let screenAudioMuted = false;
+let screenAudioBlocked = false;
+let screenRetryTimers = new Map();
+let screenRetryCount = new Map();
 const screenViews = new Map();
 let activeScreen = "";
 let currentPlayback = null;
+let autoPause = null;
+let autoResumeBusy = false;
 let localMode = false;
 let currentLocalUrl = null;
 let localFileId = "";
@@ -290,6 +298,7 @@ async function boot() {
   });
 
   guardPlaybackFlags();
+  guardAutoResume();
   wirePlayer();
   wireChat();
   wireChatTimer();
@@ -318,6 +327,15 @@ async function boot() {
   broadcastTimer = setInterval(() => { if (!document.hidden) broadcastLocalState(); }, 4000);
 
   createNet();
+  initRoomMgmt({ code, nick, onEvent: handleServerRoomEvent }).catch(() => {});
+}
+
+function handleServerRoomEvent(event) {
+  if (!event || typeof event !== "object") return;
+  if (event.event === "closed" || (event.type === "room" && event.event === "removed")) {
+    toast(t(event.event === "closed" ? "room.closedToast" : "room.removedSelf"), "error", 6000);
+    setTimeout(() => { location.href = "rooms.html"; }, 2600);
+  }
 }
 
 function applyCapabilityGates() {
@@ -465,7 +483,10 @@ function wireNet() {
     const dot = $("#netStatus");
     dot.dataset.state = s;
     $("#netLabel").textContent = s === "online" ? t("net.online") : s === "connecting" ? t("net.connecting") : t("net.offline");
-    if (s === "online") $("#connLostBar")?.classList.add("hidden");
+    if (s === "online") {
+      $("#connLostBar")?.classList.add("hidden");
+      requestPlaybackSync();
+    }
     if (s !== "online") {
       $("#netPing")?.classList.add("hidden");
       $("#netLink")?.classList.add("hidden");
@@ -604,7 +625,7 @@ function wireNet() {
       }
       return;
     }
-    if (state?.url && state.url !== player.url) localMode = false;
+    if (state?.url && state.url !== player.url) { localMode = false; clearAutoPause(); }
     localFileId = "";
     fileOfferId = "";
     $("#fileOfferBar").classList.add("hidden");
@@ -613,7 +634,30 @@ function wireNet() {
     player.applyState(currentPlayback);
     updatePlayUI(currentPlayback.playing);
     syncStageEmpty();
-    if (currentPlayback.playing) watchAutoplay(currentPlayback);
+    if (currentPlayback.playing) { clearAutoPause(); watchAutoplay(currentPlayback); }
+  });
+
+  net.on("autoPaused", ({ nick: n }) => {
+    if (isHost) return;
+    showAutoPause(n);
+  });
+
+  net.on("memberLeft", ({ nick: n }) => {
+    if (!isHost || !roomInfo?.pauseOnLeave || autoPause) return;
+    if (!n) return;
+    if (localMode) {
+      if (player.video && !player.video.paused) {
+        player.video.pause();
+        broadcastLocalState();
+        showAutoPause(n);
+        net.announceAutoPause(n);
+      }
+      return;
+    }
+    if (!currentPlayback?.playing && player.video?.paused) return;
+    net.command("control", { action: "pause", time: player.expectedTime() });
+    showAutoPause(n);
+    net.announceAutoPause(n);
   });
 
   net.on("fileOffer", ({ id, name, size }) => {
@@ -648,6 +692,7 @@ function wireNet() {
       if (!pwd) { location.replace("./"); return; }
       roomPassword = pwd;
       sessionStorage.setItem(`pwd:${code}`, pwd);
+      window.dispatchEvent(new CustomEvent("wt:room-pwd", { detail: pwd }));
       try { net.destroy(); } catch {}
       createNet();
       return;
@@ -732,7 +777,7 @@ function wireNet() {
   net.on("screenStream", ({ from, stream }) => {
     screenViews.delete(from);
     screenViews.set(from, stream);
-    if (!activeScreen) showScreenView(from, stream);
+    if (!activeScreen || activeScreen === from) showScreenView(from, stream);
   });
   net.on("screenEnded", (from) => {
     if (!screenViews.has(from)) return;
@@ -745,6 +790,14 @@ function wireNet() {
     }
     toast(t("toast.screenEnded", { name: who }), "info");
   });
+  net.on("screenStopRequested", () => {
+    if (!screenSharing) return;
+    toast(t("toast.screenManagerStopped"), "info", 6000);
+    stopScreenShare({ quiet: true });
+  });
+  net.on("screenPeerRetry", (peerId) => scheduleScreenRetry(peerId));
+  net.on("screenConnected", (peerId) => { screenRetryCount.delete(peerId); });
+  net.on("status", (status) => { if (status === "online") syncScreenSharePeers(); });
 
   net.on("error", (kind) => {
     if (kind === "code-taken") toast(getLang() === "fa" ? "این کد در حال استفاده است" : "Code already in use", "error");
@@ -1050,6 +1103,65 @@ function resumeOrTogglePlay() {
     return;
   }
   player.togglePlay();
+}
+
+function requestPlaybackSync() {
+  if (!net || isHost || !net.ready) return;
+  net.command("syncRequest");
+}
+
+function showAutoPause(name) {
+  const bar = $("#autoPauseBar");
+  if (!bar) return;
+  const first = !autoPause;
+  autoPause = { nick: name || "", at: Date.now() };
+  const allowed = player.canControl();
+  $("#autoPauseSub").textContent = t(allowed ? "autoPause.sub" : "autoPause.subGuest", { name: name || "?" });
+  $("#autoResumeBtn").classList.toggle("hidden", !allowed);
+  bar.classList.remove("hidden");
+  if (first) toast(t("toast.autoPausedBy", { name: name || "?" }), "info", 7000);
+}
+
+function clearAutoPause() {
+  if (!autoPause) return;
+  autoPause = null;
+  autoResumeBusy = false;
+  const btn = $("#autoResumeBtn");
+  if (btn) btn.disabled = false;
+  $("#autoPauseBar")?.classList.add("hidden");
+}
+
+async function confirmAutoResume(doPlay) {
+  if (!autoPause || autoResumeBusy) return;
+  if (!player.canControl()) return toast(t("toast.cantControl"), "error");
+  autoResumeBusy = true;
+  const name = autoPause.nick || "?";
+  const ok = await confirmDialog({
+    title: t("autoPause.confirmTitle"),
+    text: t("autoPause.confirmText", { name }),
+    okLabel: t("autoPause.resume")
+  });
+  autoResumeBusy = false;
+  if (!ok) return;
+  clearAutoPause();
+  doPlay();
+}
+
+function guardAutoResume() {
+  const original = player.togglePlay.bind(player);
+  player.togglePlay = (...args) => {
+    if (autoPause && player.video?.paused) {
+      if (!player.canControl()) { toast(t("toast.cantControl"), "error"); return false; }
+      confirmAutoResume(() => original(...args));
+      return false;
+    }
+    return original(...args);
+  };
+  $("#autoResumeBtn")?.addEventListener("click", () => {
+    if (!autoPause) return;
+    if (!player.video?.paused) return clearAutoPause();
+    confirmAutoResume(() => player.togglePlay());
+  });
 }
 
 function updatePlayUI(playing) {
@@ -2625,10 +2737,11 @@ function applyRoomSettings(room) {
   $("#optControl").value = room.control === "all" ? "all" : "host";
   $("#optLock").checked = !!room.locked;
   $("#optApproval").checked = !!room.approval;
+  if ($("#optPauseOnLeave")) $("#optPauseOnLeave").checked = !!room.pauseOnLeave;
   $("#optSlow").value = String(room.slow || 0);
   paintManagerOptions(room);
   const locked = !manager;
-  [$("#optControl"), $("#optLock"), $("#optApproval"), $("#optSlow"), $("#optManager")].forEach((n) => { if (n) n.disabled = locked; });
+  [$("#optControl"), $("#optLock"), $("#optApproval"), $("#optPauseOnLeave"), $("#optSlow"), $("#optManager")].forEach((n) => { if (n) n.disabled = locked; });
   if (room.managerId && room.managerId === me.id && lastManagerSeen !== me.id) {
     toast(t("toast.youAreManager"), "success");
   }
@@ -2744,6 +2857,7 @@ function wireSettings() {
     if (!allow("rooms.approval", "اتاق با تأیید غیرفعال شده است.")) { e.target.checked = false; return; }
     push({ approval: e.target.checked });
   });
+  $("#optPauseOnLeave")?.addEventListener("change", (e) => push({ pauseOnLeave: e.target.checked }));
   $("#optSlow").addEventListener("change", (e) => push({ slow: Number(e.target.value) }));
   $("#optManager")?.addEventListener("change", (e) => push({ managerId: e.target.value }));
   $("#optQuality").addEventListener("change", (e) => {
@@ -3222,65 +3336,187 @@ function sendScreenTo(peerId) {
 function syncScreenSharePeers() {
   if (!screenSharing || !net) return;
   const live = new Set(members.map((m) => m.id).filter((id) => id && id !== me.id));
-  for (const id of live) if (!screenSentTo.has(id)) sendScreenTo(id);
+  for (const id of live) if (!net.screenCalls?.has(id)) sendScreenTo(id);
   for (const id of [...screenSentTo]) {
     if (live.has(id)) continue;
     screenSentTo.delete(id);
     net.closeScreen(id, false);
+    screenRetryCount.delete(id);
+    clearTimeout(screenRetryTimers.get(id));
+    screenRetryTimers.delete(id);
   }
+}
+
+function screenErrorKey(err) {
+  switch (err?.name) {
+    case "NotAllowedError":
+    case "PermissionDeniedError":
+      return "toast.screenDenied";
+    case "NotFoundError":
+      return "toast.screenMissing";
+    case "NotSupportedError":
+      return "toast.screenUnsupported";
+    case "NotReadableError":
+    case "TrackStartError":
+    case "InvalidStateError":
+      return "toast.screenBusy";
+    case "SecurityError":
+      return "toast.screenInsecure";
+    default:
+      return "toast.screenUnsupported";
+  }
+}
+
+async function requestDisplayStream() {
+  const video = { frameRate: { ideal: 30, max: 60 } };
+  const attempts = [
+    {
+      video,
+      audio: { suppressLocalAudioPlayback: true },
+      systemAudio: "include",
+      selfBrowserSurface: "exclude",
+      surfaceSwitching: "include",
+      monitorTypeSurfaces: "include"
+    },
+    { video, audio: true },
+    { video, audio: false }
+  ];
+  let lastErr;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getDisplayMedia(constraints);
+    } catch (err) {
+      lastErr = err;
+      if (!["TypeError", "NotSupportedError"].includes(err?.name)) throw err;
+    }
+  }
+  throw lastErr;
+}
+
+function scheduleScreenRetry(peerId) {
+  if (!screenSharing || !peerId) return;
+  const tries = screenRetryCount.get(peerId) || 0;
+  if (tries >= 3) {
+    toast(t("toast.screenRetryFailed"), "error", 7000);
+    return;
+  }
+  screenRetryCount.set(peerId, tries + 1);
+  toast(t("toast.screenReconnecting"), "info", 3500);
+  clearTimeout(screenRetryTimers.get(peerId));
+  screenRetryTimers.set(peerId, setTimeout(() => {
+    screenRetryTimers.delete(peerId);
+    if (screenSharing) syncScreenSharePeers();
+  }, 1800 * (tries + 1)));
 }
 
 async function startScreenShare() {
   if (screenSharing) return;
   if (!allow("screen.share", "اشتراک صفحه غیرفعال شده است.")) return;
+  if (!window.isSecureContext) return toast(t("toast.screenInsecure"), "error", 6500);
   if (!navigator.mediaDevices?.getDisplayMedia) return toast(t("toast.screenUnsupported"), "error");
   let stream;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 24 }, audio: false });
+    stream = await requestDisplayStream();
   } catch (err) {
     if (err?.name === "AbortError") return;
-    const key = err?.name === "NotFoundError" ? "toast.screenMissing"
-      : err?.name === "NotSupportedError" ? "toast.screenUnsupported"
-        : "toast.screenDenied";
-    return toast(t(key), "error");
+    return toast(t(screenErrorKey(err)), "error", 6500);
   }
   screenStream = stream;
   screenSharing = true;
+  screenHasAudio = stream.getAudioTracks().length > 0;
+  screenAudioMuted = false;
+  screenAudioBlocked = false;
   clearShareEndState();
   screenSentTo = new Set();
+  screenRetryCount = new Map();
+  for (const timer of screenRetryTimers.values()) clearTimeout(timer);
+  screenRetryTimers = new Map();
   recordFeatureUse("screen.share", { plan: flagContext.plan, role: flagContext.role, room: code });
-  stream.getVideoTracks().forEach((track) => track.addEventListener("ended", stopScreenShare));
+  stream.getTracks().forEach((track) => track.addEventListener("ended", () => stopScreenShare()));
   for (const m of members) sendScreenTo(m.id);
   showScreenView("self", stream);
   paintScreenState();
-  toast(t("toast.screenStarted"), "success");
+  toast(t(screenHasAudio ? "toast.screenStartedAudio" : "toast.screenStarted"), "success");
 }
 
-function stopScreenShare() {
+function stopScreenShare({ quiet = false } = {}) {
   if (!screenSharing) return;
   screenSharing = false;
+  for (const timer of screenRetryTimers.values()) clearTimeout(timer);
+  screenRetryTimers = new Map();
+  screenRetryCount = new Map();
   for (const id of screenSentTo) net?.closeScreen(id, true);
   screenSentTo.clear();
   screenStream?.getTracks().forEach((t) => t.stop());
   screenStream = null;
+  screenHasAudio = false;
+  try {
+    const audio = $("#screenAudio");
+    audio.pause();
+    audio.srcObject = null;
+  } catch {}
   if (activeScreen === "self") {
     const next = [...screenViews.entries()].pop();
     if (next) showScreenView(next[0], next[1]);
     else hideScreenView();
   }
   paintScreenState();
-  paintShareEnded();
-  toast(t("toast.screenStopped"));
+  if (!quiet) {
+    paintShareEnded();
+    toast(t("toast.screenStopped"));
+  }
+}
+
+function syncScreenBar() {
+  const audioBtn = $("#screenAudioBtn");
+  const stopBtn = $("#screenStopBtn");
+  if (!audioBtn || !stopBtn) return;
+  const local = activeScreen === "self";
+  const stream = local ? screenStream : screenViews.get(activeScreen);
+  const remoteAudio = !local && (stream?.getAudioTracks?.().length || 0) > 0;
+  audioBtn.classList.toggle("hidden", !remoteAudio);
+  audioBtn.classList.toggle("is-muted", screenAudioMuted || screenAudioBlocked);
+  audioBtn.classList.toggle("is-blocked", screenAudioBlocked);
+  audioBtn.title = t(screenAudioMuted ? "screen.audioOff" : "screen.audioOn");
+  audioBtn.setAttribute("aria-label", audioBtn.title);
+  audioBtn.setAttribute("aria-pressed", String(!screenAudioMuted));
+  const canForce = !local && !!activeScreen && canControl();
+  stopBtn.classList.toggle("hidden", !local && !canForce);
+  stopBtn.title = t(local ? "screen.stopShare" : "screen.forceStop");
+  stopBtn.setAttribute("aria-label", stopBtn.title);
 }
 
 function showScreenView(id, stream) {
   activeScreen = id;
-  $("#screenWho").textContent = id === "self" ? t("screen.you") : nickFor(id);
+  const local = id === "self";
+  $("#screenWho").textContent = local ? t("screen.sharingYou") : t("screen.viewing", { name: nickFor(id) });
   const video = $("#screenVideo");
   video.srcObject = stream;
+  video.muted = true;
   video.play?.().catch(() => {});
+  const audio = $("#screenAudio");
+  const audioTracks = stream.getAudioTracks?.() || [];
+  if (!local && audioTracks.length) {
+    audio.srcObject = stream;
+    audio.muted = screenAudioMuted;
+    audio.play?.().then(() => {
+      screenAudioBlocked = false;
+      syncScreenBar();
+    }).catch(() => {
+      screenAudioBlocked = true;
+      syncScreenBar();
+      toast(t("screen.audioBlocked"), "info", 6000);
+    });
+  } else {
+    try {
+      audio.pause();
+      audio.srcObject = null;
+    } catch {}
+    screenAudioBlocked = false;
+  }
   $("#screenLayer").classList.remove("hidden");
   $("#screenPeek").classList.add("hidden");
+  syncScreenBar();
 }
 
 function hideScreenView() {
@@ -3288,11 +3524,17 @@ function hideScreenView() {
   const video = $("#screenVideo");
   try { video.pause(); } catch {}
   video.srcObject = null;
+  try {
+    const audio = $("#screenAudio");
+    audio.pause();
+    audio.srcObject = null;
+  } catch {}
   const layer = $("#screenLayer");
   if (layer?.classList.contains("expanded")) popOverlayState();
   layer?.classList.add("hidden");
   layer?.classList.remove("expanded");
   $("#screenPeek").classList.toggle("hidden", screenViews.size === 0);
+  syncScreenBar();
 }
 
 function wireScreen() {
@@ -3301,9 +3543,26 @@ function wireScreen() {
     if (screenSharing) stopScreenShare();
     else startScreenShare();
   });
-  $("#screenHideBtn").addEventListener("click", () => {
-    if (activeScreen === "self") stopScreenShare();
-    else hideScreenView();
+  $("#screenHideBtn").addEventListener("click", () => hideScreenView());
+  $("#screenAudioBtn").addEventListener("click", async () => {
+    const audio = $("#screenAudio");
+    screenAudioMuted = !screenAudioMuted;
+    audio.muted = screenAudioMuted;
+    if (!screenAudioMuted) {
+      try {
+        await audio.play();
+        screenAudioBlocked = false;
+      } catch {
+        screenAudioBlocked = true;
+      }
+    }
+    syncScreenBar();
+  });
+  $("#screenStopBtn").addEventListener("click", () => {
+    if (activeScreen === "self") return stopScreenShare();
+    if (!activeScreen || !canControl()) return;
+    net?.stopRemoteScreen(activeScreen);
+    toast(t("screen.forceStopSent"), "info");
   });
   $("#screenFitBtn").addEventListener("click", () => {
     const layer = $("#screenLayer");
@@ -3318,10 +3577,15 @@ function wireScreen() {
   });
   document.addEventListener("langchange", () => {
     paintScreenState();
-    if (!activeScreen) return;
-    $("#screenWho").textContent = activeScreen === "self" ? t("screen.you") : nickFor(activeScreen);
+    if (activeScreen) {
+      $("#screenWho").textContent = activeScreen === "self"
+        ? t("screen.sharingYou")
+        : t("screen.viewing", { name: nickFor(activeScreen) });
+    }
+    syncScreenBar();
   });
   paintScreenState();
+  syncScreenBar();
 }
 
 /* ---------- push-to-talk ---------- */
@@ -3896,6 +4160,7 @@ function wireInterruptions() {
   window.addEventListener("online", () => {
     try { net?.retry?.(); } catch {}
     if (currentPlayback?.playing && player?.url && player.video.paused) player.applyState(currentPlayback);
+    requestPlaybackSync();
   });
 
   let wasPlaying = false;
@@ -3912,6 +4177,7 @@ function wireInterruptions() {
       player.applyState(currentPlayback);
     }
     wasPlaying = false;
+    requestPlaybackSync();
     if (v.readyState >= 3) $("#videoFrame")?.classList.remove("buffering");
     if (hiddenAt && Date.now() - hiddenAt > 90000 && !net?.isReady?.()) {
       try { net?.retry?.(); } catch {}

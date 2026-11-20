@@ -203,6 +203,40 @@ export async function revokeSession(jti) {
   return true;
 }
 
+export async function listUserSessions(userId) {
+  const out = [];
+  const seen = new Set();
+  const push = (jti, rec) => {
+    if (!rec || seen.has(jti)) return;
+    seen.add(jti);
+    out.push({
+      id: jti,
+      ip: rec.ip || "",
+      ua: rec.ua || "",
+      role: rec.role || "user",
+      expiresAt: rec.expiresAt || null
+    });
+  };
+  for (const jti of sessionIndex(userId)) push(jti, memGet(memory, SESSION_PREFIX + jti));
+  if (redisReady()) {
+    try {
+      const jtis = await state.client.smembers(USER_SESSIONS_PREFIX + userId);
+      for (const jti of jtis) {
+        if (seen.has(jti)) continue;
+        const raw = await state.client.get(SESSION_PREFIX + jti);
+        if (raw) {
+          try {
+            push(jti, JSON.parse(raw));
+          } catch {}
+        }
+      }
+    } catch (err) {
+      state.error = err.message;
+    }
+  }
+  return out;
+}
+
 export async function revokeUserSessions(userId) {
   if (!userId) return 0;
   let revoked = 0;

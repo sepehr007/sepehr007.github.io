@@ -869,5 +869,39 @@ export const MIGRATIONS = [
       db.exec(social);
       addColumn(db, "invitations", "code_hint", "TEXT NOT NULL DEFAULT ''");
     }
+  },
+  {
+    version: 10,
+    name: "profile-privacy",
+    up(db) {
+      addColumn(db, "profiles", "last_active_visibility", "TEXT NOT NULL DEFAULT 'friends'");
+      addColumn(db, "profiles", "activity_visibility", "TEXT NOT NULL DEFAULT 'friends'");
+    }
+  },
+  {
+    version: 11,
+    name: "watch-room-management",
+    up(db) {
+      addColumn(db, "rooms", "description", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "rooms", "rules", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "rooms", "icon_url", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "rooms", "cover_url", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "rooms", "color", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "rooms", "visibility", "TEXT NOT NULL DEFAULT 'public'");
+      addColumn(db, "rooms", "updated_at", "INTEGER");
+      addColumn(db, "rooms", "closed_by", "TEXT");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS room_visits (
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+          last_visited_at INTEGER NOT NULL,
+          visits INTEGER NOT NULL DEFAULT 1,
+          PRIMARY KEY (user_id, room_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_room_visits_user ON room_visits(user_id, last_visited_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_rooms_visibility ON rooms(visibility, is_active, last_activity_at DESC);
+      `);
+      db.prepare("UPDATE rooms SET updated_at = created_at WHERE updated_at IS NULL").run();
+    }
   }
 ];

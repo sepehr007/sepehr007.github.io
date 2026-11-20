@@ -15,6 +15,8 @@ const MAX_CHAT = 400;
 const JOIN_RETRY_MS = 2500;
 const JOIN_MAX_TRIES = 9;
 const PRESENCE_MS = 30000;
+const SIGNAL_CHUNK_OVER = 3800;
+const SIGNAL_CHUNK_SIZE = 2600;
 const AVATAR_RE = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
 const LIVE_REACTIONS = ["❤️", "😂", "😮", "👏", "🔥", "🍿"];
 
@@ -66,6 +68,7 @@ class Signal {
     this.handlers = new Set();
     this.closed = false;
     this.ready = false;
+    this.parts = new Map();
   }
 
   on(fn) { this.handlers.add(fn); }
@@ -89,6 +92,8 @@ class Signal {
         if (outer.event !== "message" || !outer.message) return;
         let msg;
         try { msg = JSON.parse(outer.message); } catch { return; }
+        if (msg?.k === "chunk") msg = this.#reassemble(msg);
+        if (!msg) return;
         this.handlers.forEach((fn) => { try { fn(msg); } catch {} });
       });
       setTimeout(done, 6000);
@@ -105,16 +110,53 @@ class Signal {
     }, 2000);
   }
 
-  async send(obj) {
-    if (this.closed) return false;
+  #reassemble(msg) {
+    const id = msg.id;
+    if (!id || !Number.isInteger(msg.i) || !Number.isInteger(msg.n) || typeof msg.d !== "string") return null;
+    if (msg.n < 1 || msg.n > 200 || msg.i < 0 || msg.i >= msg.n) return null;
+    let rec = this.parts.get(id);
+    if (!rec) {
+      if (this.parts.size > 40) {
+        const cut = Date.now() - 60000;
+        for (const [key, val] of this.parts) if (val.at < cut) this.parts.delete(key);
+        if (this.parts.size > 40) return null;
+      }
+      rec = { n: msg.n, got: new Array(msg.n), count: 0, at: Date.now() };
+      this.parts.set(id, rec);
+    }
+    if (rec.n !== msg.n) return null;
+    rec.at = Date.now();
+    if (rec.got[msg.i] == null) { rec.got[msg.i] = msg.d; rec.count++; }
+    if (rec.count < rec.n) return null;
+    this.parts.delete(id);
+    try { return JSON.parse(rec.got.join("")); } catch { return null; }
+  }
+
+  async #post(body) {
     try {
       const res = await fetch(`${SIGNAL_BASE}/${this.topic}`, {
         method: "POST",
-        body: JSON.stringify(obj),
+        body,
         headers: { "Content-Type": "text/plain" }
       });
       return res.ok;
     } catch { return false; }
+  }
+
+  async send(obj) {
+    if (this.closed) return false;
+    let body;
+    try { body = JSON.stringify(obj); } catch { return false; }
+    if (body.length <= SIGNAL_CHUNK_OVER) return this.#post(body);
+    const id = `${obj.from || "sig"}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    const chunks = [];
+    for (let i = 0; i < body.length; i += SIGNAL_CHUNK_SIZE) chunks.push(body.slice(i, i + SIGNAL_CHUNK_SIZE));
+    let ok = true;
+    for (let i = 0; i < chunks.length; i++) {
+      const part = JSON.stringify({ k: "chunk", id, i, n: chunks.length, d: chunks[i], from: obj.from, to: obj.to });
+      if (!(await this.#post(part))) ok = false;
+    }
+    return ok;
   }
 
   close() {
@@ -208,6 +250,7 @@ export class Net {
       managerId: "",
       locked: false,
       approval: false,
+      pauseOnLeave: false,
       slow: 0
     };
     this.members = new Map();
@@ -344,6 +387,15 @@ export class Net {
         return this.#applyAnswer(msg);
       case "sice":
         return this.#addIce(msg);
+      case "sstop":
+        if (this.isHost) {
+          if (this.canControl(this.members.get(msg.from))) this.emit("screenStopRequested", msg.from);
+        } else {
+          const room = this.roomState;
+          const allowed = msg.from === this.hostId || (!!room?.managerId && msg.from === room.managerId);
+          if (allowed) this.emit("screenStopRequested", msg.from);
+        }
+        return;
       case "bye":
         return this.#peerBye(msg);
       default:
@@ -413,6 +465,7 @@ export class Net {
 
   async #guestAcceptOffer(msg) {
     const key = `d:${msg.from}`;
+    if (msg.from) this.hostId = msg.from;
     if (this.pcs.has(key)) {
       if (this.dc?.readyState === "open") return;
       const rec = this.pcs.get(key);
@@ -546,7 +599,7 @@ export class Net {
       case "closeLobby": return this.#hostClose(member);
       case "voice": return this.#hostVoice(member, !!msg.on);
       case "fileRequest": return this.#hostFileSend(conn.peer, msg.id);
-      case "syncRequest": return this.#sendTo(conn.peer, { t: "playback", state: this.playback });
+      case "syncRequest": return this.#sendTo(conn.peer, { t: "playback", state: this.#nowPlayback() });
       default: return;
     }
   }
@@ -583,10 +636,19 @@ export class Net {
       self: { id: member.id, nick: member.nick, avatar: member.avatar || "", role: member.role },
       room: { ...this.room },
       members: this.#membersPublic(),
-      playback: this.playback,
+      playback: this.#nowPlayback(),
       chat: this.chat,
       queue: this.queue
     };
+  }
+
+  /* Playback state with the position resolved at send time, so late joiners
+     start where the room actually is instead of at the original start time. */
+  #nowPlayback() {
+    const p = this.playback;
+    if (!p?.playing) return p;
+    const time = (p.time || 0) + ((Date.now() - (p.at || Date.now())) / 1000) * (p.rate || 1);
+    return { ...p, time, at: Date.now() };
   }
 
   #membersPublic() {
@@ -618,7 +680,8 @@ export class Net {
   }
 
   #dropMember(peerId) {
-    if (!this.members.has(peerId)) return;
+    const gone = this.members.get(peerId);
+    if (!gone) return;
     this.members.delete(peerId);
     this.conns.delete(peerId);
     const rec = this.pcs.get(`d:${peerId}`);
@@ -630,14 +693,21 @@ export class Net {
     }
     this.#broadcastMembers();
     this.emit("voice", { id: peerId, on: false, left: true });
+    this.emit("memberLeft", { id: peerId, nick: gone.nick });
+  }
+
+  announceAutoPause(nick) {
+    if (!this.isHost) return;
+    this.#broadcast({ t: "autoPaused", nick: String(nick || ""), time: this.playback?.time || 0 });
   }
 
   canControl(member) {
     if (!member) return false;
     if (member.role === "owner") return true;
-    if (this.room.managerId && member.id === this.room.managerId) return true;
-    if (this.room.control === "all") return true;
-    return false;
+    const room = this.room || this.roomState;
+    if (!room) return false;
+    if (room.managerId && member.id === room.managerId) return true;
+    return room.control === "all";
   }
   isManager(member) {
     return !!member && (member.role === "owner" || (!!this.room.managerId && member.id === this.room.managerId));
@@ -827,7 +897,7 @@ export class Net {
   #hostSettings(member, patch) {
     if (!this.isManager(member) || !patch) return;
     if (!this.#allow(member, "settings", 10, 3000)) return;
-    const allowed = ["control", "locked", "approval", "capacity", "slow", "managerId"];
+    const allowed = ["control", "locked", "approval", "capacity", "slow", "managerId", "pauseOnLeave"];
     for (const k of allowed) {
       if (!(k in patch)) continue;
       if (k === "capacity") this.room.capacity = Math.min(24, Math.max(2, Number(patch[k]) || 6));
@@ -922,6 +992,7 @@ export class Net {
       case "slow": this.emit("slow", Number(msg.wait) || 0); break;
       case "throttle": this.emit("throttle", { kind: msg.kind, wait: Number(msg.wait) || 0 }); break;
       case "playback": this.emit("playback", msg.state); break;
+      case "autoPaused": this.emit("autoPaused", { nick: msg.nick, time: msg.time }); break;
       case "ping": this.#sendTo(this.hostId, { t: "pong", ts: msg.ts }); break;
       case "room": this.roomState = msg.room; this.emit("room", msg.room); break;
       case "queue": this.emit("queue", msg.items); break;
@@ -1201,9 +1272,13 @@ export class Net {
     this.screenCalls.set(peerId, pc);
     pc.onconnectionstatechange = () => {
       if (this.screenCalls.get(peerId) !== pc) return;
-      if (["failed", "closed"].includes(pc.connectionState)) this.#endScreenPeer(peerId, false);
+      if (["failed", "closed"].includes(pc.connectionState)) {
+        const failed = pc.connectionState === "failed";
+        this.#endScreenPeer(peerId, false);
+        if (failed) this.emit("screenPeerRetry", peerId);
+      }
     };
-    stream.getVideoTracks().forEach((t) => pc.addTrack(t, stream));
+    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
     (async () => {
       try {
         const offer = await pc.createOffer();
@@ -1249,6 +1324,11 @@ export class Net {
 
   closeScreen(peerId, notify = true) {
     this.#endScreenPeer(peerId, notify);
+  }
+
+  stopRemoteScreen(peerId) {
+    if (!peerId || peerId === this.selfId) return;
+    this.#sig({ k: "sstop", to: peerId, from: this.selfId });
   }
 
   #endScreenPeer(peerId, notify) {

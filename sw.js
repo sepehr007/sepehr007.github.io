@@ -1,10 +1,11 @@
-const CACHE = "wt-v102";
+const CACHE = "wt-v105";
 const SHELL = [
   "./",
   "./index.html",
   "./auth.html",
   "./profile.html",
   "./room.html",
+  "./rooms.html",
   "./social.html",
   "./owner.html",
   "./offline.html",
@@ -21,6 +22,8 @@ const SHELL = [
   "./assets/js/fx.js",
   "./assets/js/theme-boot.js",
   "./assets/css/social.css",
+  "./assets/css/rooms.css",
+  "./assets/css/room-mgmt.css",
   "./assets/css/device-compat.css",
   "./assets/data/site-config.json",
   "./assets/js/site-config.js",
@@ -36,6 +39,8 @@ const SHELL = [
   "./assets/js/landing.js",
   "./assets/js/profile.js",
   "./assets/js/room.js",
+  "./assets/js/rooms.js",
+  "./assets/js/room-mgmt.js",
   "./assets/js/livefeed.js",
   "./assets/js/net.js",
   "./assets/js/player.js",

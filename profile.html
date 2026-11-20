@@ -32,6 +32,7 @@
   <a class="nx-rail-item nx-rail-brand" href="./" aria-label="خانه" data-i18n-aria="common.home"><svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg></a>
   <span class="nx-rail-sep" aria-hidden="true"></span>
   <a class="nx-rail-item" href="social.html" aria-label="شبکه" data-i18n-aria="social.nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 5 18.5V20"/><circle cx="11" cy="8" r="3.5"/><path d="M20 20v-1.2a3 3 0 0 0-2.2-2.9M15.5 4.7a3.5 3.5 0 0 1 0 6.6"/></svg></a>
+  <a class="nx-rail-item" href="rooms.html" aria-label="اتاق‌ها" data-i18n-aria="rooms.title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="4" width="7" height="7" rx="2"/><rect x="14" y="4" width="7" height="7" rx="2"/><rect x="3" y="15" width="7" height="7" rx="2"/><rect x="14" y="15" width="7" height="7" rx="2"/></svg></a>
   <a class="nx-rail-item" href="profile.html" aria-current="page" aria-label="پروفایل" data-i18n-aria="menu.profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></a>
   <a class="nx-rail-item nx-rail-add" href="index.html#create" aria-label="ساخت لابی" data-i18n-aria="v8.createCta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></a>
 </nav>
@@ -130,6 +131,57 @@
           <button class="btn btn-primary" type="submit" data-i18n="profile.changePassword">تغییر رمز</button>
           <button class="link-btn recovery-btn" id="recoveryGen" type="button" data-i18n="profile.recoveryNew">ساخت کد بازیابی جدید</button>
           <p class="form-msg recovery-msg" id="recoveryMsg" role="status"></p>
+        </form>
+      </section>
+
+      <section class="card profile-card" id="sessionsCard">
+        <h2 data-i18n="profile.sessionsTitle">دستگاه‌ها و نشست‌ها</h2>
+        <p class="hint" data-i18n="profile.sessionsHint">هر جا با این حساب وارد شده‌اید اینجا دیده می‌شود. نشست مشکوک را همان‌جا ببندید.</p>
+        <ul class="friend-list" id="sessionList"></ul>
+        <p class="form-msg" id="sessionsMsg" role="alert"></p>
+        <button class="btn btn-secondary btn-sm" id="sessionsRefresh" type="button" data-i18n="profile.sessionsRefresh">به‌روزرسانی</button>
+        <button class="btn btn-secondary btn-sm danger-text" id="sessionsRevokeOthers" type="button" data-i18n="profile.sessionsOthers">خروج از بقیهٔ دستگاه‌ها</button>
+      </section>
+
+      <section class="card profile-card" id="privacyCard">
+        <h2 data-i18n="profile.privacyTitle">حریم خصوصی</h2>
+        <form id="privacyForm" autocomplete="off">
+          <label class="field">
+            <span data-i18n="profile.privacyProfile">چه کسی پروفایل من را ببیند؟</span>
+            <select id="privacyProfile">
+              <option value="public" data-i18n="profile.visPublic">همه</option>
+              <option value="unlisted" data-i18n="profile.visUnlisted">فقط با لینک مستقیم</option>
+              <option value="private" data-i18n="profile.visPrivate">هیچ‌کس</option>
+            </select>
+          </label>
+          <label class="field">
+            <span data-i18n="profile.privacyLastActive">آخرین فعالیت من</span>
+            <select id="privacyLastActive">
+              <option value="everyone" data-i18n="profile.visEveryone">همه ببینند</option>
+              <option value="friends" data-i18n="profile.visFriends">فقط دوستان</option>
+              <option value="nobody" data-i18n="profile.visNobody">هیچ‌کس</option>
+            </select>
+          </label>
+          <p class="form-msg" id="privacyMsg" role="alert"></p>
+          <button class="btn btn-primary" type="submit" data-i18n="profile.privacySave">ذخیرهٔ حریم خصوصی</button>
+        </form>
+      </section>
+
+      <section class="card profile-card" id="dangerCard">
+        <h2 data-i18n="profile.deleteTitle">حذف حساب</h2>
+        <p class="hint" data-i18n="profile.deleteHint">حساب برای همیشه غیرفعال می‌شود، نشست‌ها بسته و اطلاعات شخصی پاک می‌شود. این کار برگشت‌پذیر نیست.</p>
+        <form id="deleteForm" autocomplete="off">
+          <label class="field">
+            <span data-i18n="profile.deletePassword">برای تأیید، رمز فعلی را وارد کنید</span>
+            <input id="deletePassword" type="password" maxlength="64" autocomplete="current-password">
+          </label>
+          <label class="switch-row">
+            <span data-i18n="profile.deleteConfirm">می‌دانم که حساب حذف می‌شود.</span>
+            <input type="checkbox" id="deleteConfirm">
+            <span class="switch"></span>
+          </label>
+          <p class="form-msg" id="deleteMsg" role="alert"></p>
+          <button class="btn btn-secondary danger-text" id="deleteBtn" type="submit" disabled data-i18n="profile.deleteSubmit">حذف حساب</button>
         </form>
       </section>
 

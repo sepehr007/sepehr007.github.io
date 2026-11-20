@@ -155,14 +155,24 @@ export async function sqlListPeople(userId, q = "", limit = 20) {
   const size = pageLimit(limit, 20, 50);
   const term = cleanText(q, 80);
   const base = `
-    SELECT u.id, u.username, u.nick, u.avatar, u.last_seen_at,
+    SELECT u.id, u.username, u.nick, u.avatar,
+      CASE
+        WHEN p.user_id IS NULL THEN u.last_seen_at
+        WHEN p.last_active_visibility = 'nobody' THEN NULL
+        WHEN p.last_active_visibility = 'friends'
+          AND NOT EXISTS(SELECT 1 FROM friendships f2 WHERE (f2.user_a = ? AND f2.user_b = u.id) OR (f2.user_a = u.id AND f2.user_b = ?))
+          THEN NULL
+        ELSE u.last_seen_at
+      END AS last_seen_at,
       EXISTS(SELECT 1 FROM friendships f WHERE (f.user_a = ? AND f.user_b = u.id) OR (f.user_a = u.id AND f.user_b = ?)) AS is_friend,
       EXISTS(SELECT 1 FROM friend_requests r WHERE r.from_user = ? AND r.to_user = u.id AND r.status = 'pending') AS pending_out,
       EXISTS(SELECT 1 FROM friend_requests r WHERE r.from_user = u.id AND r.to_user = ? AND r.status = 'pending') AS pending_in,
       EXISTS(SELECT 1 FROM blocks b WHERE (b.blocker_id = ? AND b.blocked_id = u.id) OR (b.blocker_id = u.id AND b.blocked_id = ?)) AS blocked
     FROM users u
-    WHERE u.id <> ? AND u.deleted_at IS NULL AND u.status = 'active'`;
-  const params = [userId, userId, userId, userId, userId, userId, userId];
+    LEFT JOIN profiles p ON p.user_id = u.id
+    WHERE u.id <> ? AND u.deleted_at IS NULL AND u.status = 'active'
+      AND COALESCE(p.visibility, 'public') = 'public'`;
+  const params = [userId, userId, userId, userId, userId, userId, userId, userId, userId];
   let sql = base;
   if (term) {
     sql += " AND (u.username_lower LIKE ? ESCAPE '\\' OR lower(u.nick) LIKE ? ESCAPE '\\')";
@@ -186,9 +196,11 @@ export async function sqlListFriends(userId) {
   const db = await conn();
   const rows = db
     .prepare(
-      `SELECT u.id, u.username, u.nick, u.avatar, u.last_seen_at, f.created_at AS friend_since
+      `SELECT u.id, u.username, u.nick, u.avatar, f.created_at AS friend_since,
+         CASE WHEN p.last_active_visibility = 'nobody' THEN NULL ELSE u.last_seen_at END AS last_seen_at
        FROM friendships f
        JOIN users u ON u.id = CASE WHEN f.user_a = ? THEN f.user_b ELSE f.user_a END
+       LEFT JOIN profiles p ON p.user_id = u.id
        WHERE (f.user_a = ? OR f.user_b = ?) AND u.deleted_at IS NULL
        ORDER BY u.username_lower ASC`
     )
@@ -227,6 +239,10 @@ export async function sqlSendFriendRequest(userId, username, message = "") {
   const target = requireTargetUser(db, username, userId);
   const me = requireUser(db, userId);
   assertNotBlocked(db, userId, target.id);
+  const privacy = db.prepare("SELECT visibility FROM profiles WHERE user_id = ?").get(String(target.id));
+  if (privacy?.visibility === "private") {
+    fail(403, "private_profile", "This user's profile is private and does not accept friend requests.");
+  }
   if (isFriend(db, userId, target.id)) fail(409, "already_friends", "You are already friends.");
   if (friendshipRequest(db, userId, target.id)) fail(409, "request_pending", "A friend request is already pending.");
   if (friendshipRequest(db, target.id, userId)) fail(409, "request_pending", "They already sent you a friend request. Check your requests.");
@@ -647,73 +663,186 @@ export async function sqlSetConversationPref(userId, conversationId, { muted, ar
 
 /* ------------------------------------------------------------------ search */
 
-export async function sqlSearch(userId, { q, type = "all", page = 1, limit = 20 }) {
+const SEARCH_SCOPES = ["all", "users", "friends", "rooms", "messages"];
+const SEARCH_SORTS = ["relevance", "recent", "name", "members"];
+const SEARCH_ROOM_FILTERS = ["open", "nopass", "active"];
+
+function roomFilters(raw) {
+  const wanted = new Set(
+    String(raw || "")
+      .split(",")
+      .map((token) => token.trim().toLowerCase())
+      .filter((token) => SEARCH_ROOM_FILTERS.includes(token))
+  );
+  return wanted;
+}
+
+function roomScore(row, term) {
+  const needle = term.toLowerCase();
+  const name = String(row.name || "").toLowerCase();
+  const code = String(row.room_code || "").toLowerCase();
+  const managerNick = String(row.manager_nick || "").toLowerCase();
+  const managerUser = String(row.manager_username || "").toLowerCase();
+  const description = String(row.description || "").toLowerCase();
+  if (code === needle) return 100;
+  if (name === needle) return 90;
+  if (name.startsWith(needle)) return 80;
+  if (code.startsWith(needle)) return 75;
+  if (name.includes(needle)) return 65;
+  if (managerNick === needle || managerUser === needle) return 60;
+  if (managerNick.includes(needle) || managerUser.includes(needle)) return 45;
+  if (code.includes(needle)) return 40;
+  return 30;
+}
+
+export async function sqlSearch(userId, { q, type = "all", page = 1, limit = 20, sort = "relevance", filter = "" } = {}) {
   const db = await conn();
   const term = cleanText(q, 80);
   if (term.length < 2) fail(400, "invalid_query", "Search needs at least 2 characters.");
   const size = pageLimit(limit, 20, 50);
   const currentPage = Math.max(1, Math.min(1000, Math.floor(toNumber(page, 1))));
   const offset = (currentPage - 1) * size;
-  const scope = ["all", "users", "friends", "rooms", "messages"].includes(String(type)) ? String(type) : "all";
+  const scope = SEARCH_SCOPES.includes(String(type)) ? String(type) : "all";
+  const order = SEARCH_SORTS.includes(String(sort)) ? String(sort) : "relevance";
+  const filters = roomFilters(filter);
   const pattern = likeArg(term.toLowerCase());
+  const viewer = String(userId);
   const results = [];
   const grouped = { users: [], friends: [], rooms: [], messages: [] };
+  const counts = { users: 0, friends: 0, rooms: 0, messages: 0 };
 
   if (scope === "all" || scope === "users") {
+    const where = `u.deleted_at IS NULL AND u.status = 'active' AND u.id <> ?
+      AND COALESCE(p.visibility, 'public') = 'public'
+      AND (u.username_lower LIKE ? ESCAPE '\\' OR lower(u.nick) LIKE ? ESCAPE '\\')`;
+    counts.users = Number(
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE ${where}`)
+        .get(viewer, pattern, pattern)?.n || 0
+    );
+    const orderSql =
+      order === "recent"
+        ? "COALESCE(u.last_seen_at, 0) DESC, u.username_lower ASC"
+        : order === "relevance"
+          ? "CASE WHEN u.username_lower = lower(?) THEN 0 WHEN lower(u.nick) = lower(?) THEN 1 WHEN u.username_lower LIKE ? ESCAPE '\\' THEN 2 ELSE 3 END, u.username_lower ASC"
+          : "u.username_lower ASC";
+    const orderParams = order === "relevance" ? [term, term, `${term.toLowerCase()}%`] : [];
     const rows = db
       .prepare(
-        `SELECT id, username, nick, avatar, last_seen_at FROM users
-         WHERE deleted_at IS NULL AND status = 'active' AND id <> ?
-           AND (username_lower LIKE ? ESCAPE '\\' OR lower(nick) LIKE ? ESCAPE '\\')
-         ORDER BY username_lower ASC LIMIT ? OFFSET ?`
+        `SELECT u.id, u.username, u.nick, u.avatar,
+           CASE
+             WHEN p.user_id IS NULL THEN u.last_seen_at
+             WHEN p.last_active_visibility = 'nobody' THEN NULL
+             WHEN p.last_active_visibility = 'friends'
+               AND NOT EXISTS(SELECT 1 FROM friendships f WHERE (f.user_a = ? AND f.user_b = u.id) OR (f.user_a = u.id AND f.user_b = ?))
+               THEN NULL
+             ELSE u.last_seen_at
+           END AS last_seen_at
+         FROM users u
+         LEFT JOIN profiles p ON p.user_id = u.id
+         WHERE ${where}
+         ORDER BY ${orderSql} LIMIT ? OFFSET ?`
       )
-      .all(String(userId), pattern, pattern, size, offset);
+      .all(viewer, viewer, viewer, pattern, pattern, ...orderParams, size, offset);
     grouped.users = rows.map(mapUser);
   }
 
   if (scope === "all" || scope === "friends") {
+    const where = `(f.user_a = ? OR f.user_b = ?) AND u.deleted_at IS NULL
+      AND (u.username_lower LIKE ? ESCAPE '\\' OR lower(u.nick) LIKE ? ESCAPE '\\')`;
+    counts.friends = Number(
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM friendships f JOIN users u ON u.id = CASE WHEN f.user_a = ? THEN f.user_b ELSE f.user_a END WHERE ${where}`)
+        .get(viewer, viewer, viewer, pattern, pattern)?.n || 0
+    );
     const rows = db
       .prepare(
-        `SELECT u.id, u.username, u.nick, u.avatar, u.last_seen_at
+        `SELECT u.id, u.username, u.nick, u.avatar,
+           CASE WHEN p.last_active_visibility = 'nobody' THEN NULL ELSE u.last_seen_at END AS last_seen_at
          FROM friendships f
          JOIN users u ON u.id = CASE WHEN f.user_a = ? THEN f.user_b ELSE f.user_a END
-         WHERE (f.user_a = ? OR f.user_b = ?) AND u.deleted_at IS NULL
-           AND (u.username_lower LIKE ? ESCAPE '\\' OR lower(u.nick) LIKE ? ESCAPE '\\')
+         LEFT JOIN profiles p ON p.user_id = u.id
+         WHERE ${where}
          ORDER BY u.username_lower ASC LIMIT ? OFFSET ?`
       )
-      .all(String(userId), String(userId), String(userId), pattern, pattern, size, offset);
+      .all(viewer, viewer, viewer, pattern, pattern, size, offset);
     grouped.friends = rows.map(mapUser);
   }
 
   if (scope === "all" || scope === "rooms") {
+    const likeName = likeArg(term);
+    const likeCode = likeArg(term.toUpperCase());
     const rows = db
       .prepare(
-        `SELECT id, room_code, name, host_id, capacity, member_count, created_at
-         FROM rooms
-         WHERE is_active = 1 AND deleted_at IS NULL AND privacy = 'public'
-           AND (room_code LIKE ? ESCAPE '\\' OR lower(name) LIKE ? ESCAPE '\\')
-         ORDER BY last_activity_at DESC LIMIT ? OFFSET ?`
+        `SELECT r.id, r.room_code, r.name, r.description, r.color, r.icon_url, r.capacity, r.member_count,
+           r.last_activity_at, r.created_at, r.host_id, r.password_hash,
+           u.username AS manager_username, u.nick AS manager_nick, u.avatar AS manager_avatar,
+           (SELECT COUNT(*) FROM room_memberships m WHERE m.room_id = r.id AND m.left_at IS NULL) AS active_members,
+           EXISTS(SELECT 1 FROM room_memberships vm WHERE vm.room_id = r.id AND vm.user_id = ? AND vm.left_at IS NULL) AS joined
+         FROM rooms r
+         LEFT JOIN users u ON u.id = r.host_id
+         WHERE r.is_active = 1 AND r.deleted_at IS NULL AND r.visibility = 'public'
+           AND (r.name LIKE ? ESCAPE '\\' OR r.description LIKE ? ESCAPE '\\' OR r.room_code LIKE ? ESCAPE '\\'
+             OR u.nick LIKE ? ESCAPE '\\' OR u.username LIKE ? ESCAPE '\\')
+         ORDER BY r.last_activity_at DESC LIMIT 200`
       )
-      .all(likeArg(term.toUpperCase()), pattern, size, offset);
-    grouped.rooms = rows.map((row) => ({
+      .all(viewer, likeName, likeName, likeCode, likeName, likeName);
+    const activeSince = Date.now() - 24 * 60 * 60 * 1000;
+    const filtered = rows
+      .map((row) => ({ row, score: roomScore(row, term) }))
+      .filter(({ row }) => {
+        const members = Number(row.active_members || 0);
+        if (filters.has("open") && members >= Number(row.capacity || 0)) return false;
+        if (filters.has("nopass") && row.password_hash) return false;
+        if (filters.has("active") && Number(row.last_activity_at || 0) < activeSince) return false;
+        return true;
+      });
+    filtered.sort((a, b) => {
+      if (order === "members") return Number(b.row.active_members || 0) - Number(a.row.active_members || 0);
+      if (order === "name") return String(a.row.name || "").localeCompare(String(b.row.name || ""));
+      if (order === "recent") return Number(b.row.last_activity_at || 0) - Number(a.row.last_activity_at || 0);
+      if (b.score !== a.score) return b.score - a.score;
+      return Number(b.row.last_activity_at || 0) - Number(a.row.last_activity_at || 0);
+    });
+    counts.rooms = filtered.length;
+    grouped.rooms = filtered.slice(offset, offset + size).map(({ row, score }) => ({
       id: row.id,
       roomCode: row.room_code,
+      code: row.room_code,
       name: row.name || "",
-      hostId: row.host_id,
+      description: row.description || "",
+      color: row.color || "",
+      iconUrl: row.icon_url || "",
       capacity: Number(row.capacity || 0),
-      memberCount: Number(row.member_count || 0),
-      createdAt: Number(row.created_at || 0)
+      memberCount: Number(row.active_members ?? row.member_count ?? 0),
+      hasPassword: Boolean(row.password_hash),
+      lastActivityAt: Number(row.last_activity_at || 0),
+      createdAt: Number(row.created_at || 0),
+      joined: Boolean(row.joined),
+      manager: {
+        id: row.host_id,
+        username: row.manager_username || "",
+        nick: row.manager_nick || "",
+        avatar: row.manager_avatar || ""
+      },
+      score
     }));
   }
 
   if (scope === "all" || scope === "messages") {
+    const where = `m.deleted_at IS NULL AND r.is_active = 1 AND r.deleted_at IS NULL AND r.visibility = 'public'
+      AND m.content LIKE ? ESCAPE '\\'`;
+    counts.messages = Number(
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM messages m JOIN rooms r ON r.id = m.room_id WHERE ${where}`)
+        .get(pattern)?.n || 0
+    );
     const rows = db
       .prepare(
         `SELECT m.id, m.room_id, m.user_id, m.username, m.content, m.created_at, r.room_code
          FROM messages m
          JOIN rooms r ON r.id = m.room_id
-         WHERE m.deleted_at IS NULL AND r.is_active = 1 AND r.deleted_at IS NULL AND r.privacy = 'public'
-           AND m.content LIKE ? ESCAPE '\\'
+         WHERE ${where}
          ORDER BY m.created_at DESC LIMIT ? OFFSET ?`
       )
       .all(pattern, size, offset);
@@ -732,7 +861,32 @@ export async function sqlSearch(userId, { q, type = "all", page = 1, limit = 20 
   for (const friend of grouped.friends) results.push({ type: "friend", ...friend });
   for (const room of grouped.rooms) results.push({ type: "room", ...room });
   for (const message of grouped.messages) results.push({ type: "message", ...message });
-  return { query: term, type: scope, page: currentPage, limit: size, results, ...grouped };
+
+  const activeCounts = [
+    scope === "all" || scope === "users" ? counts.users : 0,
+    scope === "all" || scope === "friends" ? counts.friends : 0,
+    scope === "all" || scope === "rooms" ? counts.rooms : 0,
+    scope === "all" || scope === "messages" ? counts.messages : 0
+  ];
+  const total = activeCounts.reduce((sum, value) => sum + value, 0);
+  const hasMore = ["users", "friends", "rooms", "messages"].some((key) => {
+    const inScope = scope === "all" || scope === key;
+    if (!inScope) return false;
+    const shown = grouped[key].length;
+    return shown === size && counts[key] > offset + size;
+  });
+  return {
+    query: term,
+    type: scope,
+    sort: order,
+    page: currentPage,
+    limit: size,
+    total,
+    counts,
+    hasMore,
+    results,
+    ...grouped
+  };
 }
 
 /* ----------------------------------------------------------------- reports */
