@@ -788,6 +788,7 @@ function guardPlaybackFlags() {
     if (idle && !allow("watch.play", "پخش توسط مالک سایت محدود شده است.")) return false;
     if (!idle && !allow("watch.pause", "توقف پخش توسط مالک سایت محدود شده است.")) return false;
     recordFeatureUse(idle ? "watch.play" : "watch.pause", { plan: flagContext.plan, role: flagContext.role, room: code });
+    centerPingAt = performance.now();
     return originalTogglePlay(...args);
   };
   const originalSeekTo = player.seekTo.bind(player);
@@ -1084,20 +1085,38 @@ function requestPlaybackSync() {
   net.command("syncRequest");
 }
 
+let centerPingAt = 0;
+let centerPingTimer = 0;
+
+function flashCenter(playing) {
+  const ping = $("#centerPing");
+  if (!ping) return;
+  $(".i-play", ping).classList.toggle("hidden", playing);
+  $(".i-pause", ping).classList.toggle("hidden", !playing);
+  ping.classList.remove("hidden", "pop");
+  void ping.offsetWidth;
+  ping.classList.add("pop");
+  clearTimeout(centerPingTimer);
+  centerPingTimer = setTimeout(() => ping.classList.add("hidden"), 640);
+}
+
 function updatePlayUI(playing) {
   $("#playBtn .i-play").classList.toggle("hidden", playing);
   $("#playBtn .i-pause").classList.toggle("hidden", !playing);
   const big = $("#bigPlayBtn");
   if (big) {
-    big.classList.toggle("hidden", !!playing);
+    big.classList.remove("hidden");
+    big.classList.toggle("is-playing", !!playing);
     $(".i-play", big).classList.toggle("hidden", !!playing);
     $(".i-pause", big).classList.toggle("hidden", !playing);
     const label = t(playing ? "player.pause" : "player.play");
     big.title = label;
     big.setAttribute("aria-label", label);
     big.setAttribute("aria-pressed", String(!!playing));
-    const text = $("#bigPlayLabel");
-    if (text) text.textContent = label;
+    if (centerPingAt && performance.now() - centerPingAt < 500) {
+      centerPingAt = 0;
+      flashCenter(!!playing);
+    }
   }
 }
 

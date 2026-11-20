@@ -10,6 +10,13 @@
    Breakpoints: 480 (small phone), 640 (phone), 768 (tablet),
    1024 (small desktop), 1280 (desktop shell max width).
    ============================================================ */
+@font-face{
+  font-family:"Vazirmatn";
+  src:url("../fonts/vazirmatn-var.woff2") format("woff2-variations");
+  font-weight:100 900;
+  font-style:normal;
+  font-display:swap;
+}
 :root{
   color-scheme:dark;
 

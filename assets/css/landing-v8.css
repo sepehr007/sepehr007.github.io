@@ -48,9 +48,9 @@ html[dir="ltr"] .hv-frame{transform:perspective(1300px) rotateY(5deg) rotateX(2.
 .hv-sync{position:absolute;top:10px;inset-inline-end:10px;display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:700;padding:3px 8px;border-radius:99px;background:rgba(6,8,14,.6);border:1px solid rgba(255,255,255,.14);color:#c8d8ff;backdrop-filter:blur(6px)}
 .hv-sync i{width:5px;height:5px;border-radius:50%;background:#9db8ff;box-shadow:0 0 8px #9db8ff}
 .hv-chat{position:absolute;inset-inline-start:10px;bottom:12px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;max-width:70%}
-.hv-bubble{max-width:100%;padding:5px 9px;border-radius:10px;background:rgba(8,10,17,.62);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(8px);font-size:10.5px;line-height:1.5;color:#eef4ff;box-shadow:0 8px 18px rgba(0,0,0,.35);opacity:0;animation:bubbleIn .65s ease forwards}
-.hv-bubble b{color:#d7e4ff;font-weight:800}
-.hv-bubble span{color:var(--text-dim)}
+.hv-bubble{max-width:100%;padding:5px 9px;border-radius:10px;background:rgba(8,10,17,.76);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(8px);font-size:10.5px;line-height:1.5;color:#f2f5ff;box-shadow:0 8px 18px rgba(0,0,0,.45);opacity:0;animation:bubbleIn .65s ease forwards}
+.hv-bubble b{color:#dbe5ff;font-weight:800}
+.hv-bubble span{color:#aebadd}
 .hv-b2{animation-delay:.9s}
 .hv-b3{animation-delay:1.8s;background:rgba(52,211,153,.16);border-color:rgba(52,211,153,.32)}
 .hv-reactions{position:absolute;inset-inline-end:10px;bottom:12px;display:flex;gap:3px;padding:4px 7px;border-radius:99px;background:rgba(8,10,17,.58);border:1px solid rgba(255,255,255,.13);backdrop-filter:blur(6px);font-size:11px}
@@ -204,6 +204,19 @@ html.v8-ready [data-reveal].in{opacity:1;transform:none}
   .hv-float{display:none}
   .hv-frame{transform:none}
   html[dir="ltr"] .hv-frame{transform:none}
+  /* mobile: one readable bubble over the poster, no reaction strip */
+  .hv-b2,.hv-b3,.hv-reactions{display:none}
+  .hv-chat{max-width:88%;bottom:10px;gap:0}
+  .hv-screen .hv-bubble{
+    font-size:10px;padding:5px 9px;
+    background:rgba(7,8,15,.86);border-color:rgba(255,255,255,.17);
+    backdrop-filter:none;-webkit-backdrop-filter:none;
+    box-shadow:0 6px 16px rgba(0,0,0,.55);
+  }
+  .hv-screen .hv-bubble b{color:#e3ebff}
+  .hv-screen .hv-bubble span{color:#b6c2e2}
+  .hv-play{width:44px;height:44px}
+  .hv-play svg{width:19px;height:19px}
   .lobby-strip{padding:15px}
   .lobby-copy h2{font-size:15.5px}
   .lobby-code{width:100%;justify-content:center}

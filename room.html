@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#0c0b1d">
 <script src="assets/js/theme-boot.js"></script>
+<style>html{background:#0c0b1d}html[data-theme="light"]{background:#f4f2ff}</style>
 <title>اتاق — هم‌تماشا</title>
 <meta name="description" content="به اتاق تماشای هم‌زمان هم‌تماشا بپیوند؛ پخش همگام، چت زنده و صدای گروهی در مرورگر.">
 <meta property="og:type" content="website">
@@ -21,9 +22,7 @@
 <meta name="twitter:image" content="https://sepehr007.github.io/assets/img/og-cover.png">
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300..900&family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preload" as="font" href="assets/fonts/vazirmatn-var.woff2" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="assets/css/design-system.css">
 <link rel="stylesheet" href="assets/css/style.css">
 <link rel="stylesheet" href="assets/css/nebula.css">
@@ -125,8 +124,11 @@
         <button class="player-big-play hidden" id="bigPlayBtn" type="button" data-i18n-title="player.play" title="پخش" aria-label="پخش" data-i18n-aria="player.play">
           <svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5L8 5.5z"/></svg>
           <svg class="i-pause hidden" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
-          <span class="big-play-label" id="bigPlayLabel" data-i18n="player.play">پخش</span>
         </button>
+        <div class="center-ping hidden" id="centerPing" aria-hidden="true">
+          <svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5L8 5.5z"/></svg>
+          <svg class="i-pause hidden" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+        </div>
         <div class="seek-tip hidden" id="seekTip" aria-hidden="true">0:00</div>
 
         <button class="screen-peek hidden" id="screenPeek" type="button" data-i18n-title="screen.peek" title="نمایش دوبارهٔ اشتراک صفحه" aria-label="نمایش دوبارهٔ اشتراک صفحه" data-i18n-aria="screen.peek">
