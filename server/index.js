@@ -37,12 +37,11 @@ import { Room } from "./models/Room.js";
 import { Message } from "./models/Message.js";
 import { PlaybackState } from "./models/PlaybackState.js";
 import { sqlRecentMessages, sqlAddMessage, sqlSavePlaybackState } from "./stores/rooms.js";
+import { checkChat, chatGuardStatus } from "./chatGuard.js";
 
 const PORT = appConfig.port;
 const HOST = appConfig.host;
 const ROOM_RE = /^[A-Z0-9-]{4,16}$/;
-const CHAT_WINDOW_MS = 5000;
-const CHAT_MAX = 10;
 const WS_VERSION = 1;
 const WS_MAX_FRAME = 64 * 1024;
 const WS_RT_MAX = 32 * 1024;
@@ -53,6 +52,7 @@ const WS_REPLAY_MAX = 100;
 const WS_HEARTBEAT_MS = 30_000;
 const CHAT_CID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const PLAYBACK_ACTIONS = new Set(["play", "pause", "seek", "state", "rate", "ended", "stop"]);
+const ROOM_ROLE_WIRE = { host: "owner", administrator: "admin", moderator: "mod", member: "member", guest: "guest" };
 
 function cleanRoom(value) {
   const room = String(value || "").trim().toUpperCase();
@@ -176,6 +176,8 @@ function registerRealtime(app) {
     }
     client.room = "";
     client.roomId = "";
+    client.roomRole = "";
+    client.roomHost = false;
     client.mutedUntil = 0;
   };
 
@@ -192,21 +194,21 @@ function registerRealtime(app) {
   };
 
   const roomAccess = async (room, client) => {
-    if (dbReady()) return { ok: true, roomId: "" };
+    if (dbReady()) return { ok: true, roomId: "", roomRole: client.userId ? "member" : "guest" };
     let db;
     try {
       db = await getDatabase();
     } catch {
       return { ok: false, code: "database_unavailable" };
     }
-    if (!db) return { ok: true, roomId: "" };
+    if (!db) return { ok: true, roomId: "", roomRole: client.userId ? "member" : "guest" };
     const row = db
       .prepare(
         `SELECT id, host_id, capacity, visibility, password_hash, is_active, deleted_at, join_mode
          FROM rooms WHERE room_code = ?`
       )
       .get(String(room).toUpperCase());
-    if (!row) return { ok: true, roomId: "" };
+    if (!row) return { ok: true, roomId: "", roomRole: client.userId ? "member" : "guest" };
     if (row.deleted_at) return { ok: false, code: "room_not_found" };
     if (!row.is_active) return { ok: false, code: "room_closed" };
     const member = client.userId
@@ -238,7 +240,13 @@ function registerRealtime(app) {
         .get(row.id);
       if (Number(active?.n || 0) >= Number(row.capacity || 6)) return { ok: false, code: "room_full" };
     }
-    return { ok: true, roomId: row.id, mutedUntil: Number(member?.muted_until || 0) };
+    return {
+      ok: true,
+      roomId: row.id,
+      mutedUntil: Number(member?.muted_until || 0),
+      roomRole: isHost ? "owner" : ROOM_ROLE_WIRE[member?.role] || "member",
+      host: isHost
+    };
   };
 
   const refreshMute = async (client) => {
@@ -264,6 +272,8 @@ function registerRealtime(app) {
       role: "guest",
       room: "",
       roomId: "",
+      roomRole: "",
+      roomHost: false,
       userId: "",
       status: { muted: false, video: false, speaking: false },
       mutedUntil: 0,
@@ -383,10 +393,25 @@ function registerRealtime(app) {
           st.emptyAt = 0;
           client.room = room;
           client.roomId = access.roomId || client.roomId;
+          client.roomRole = access.roomRole || (client.userId ? "member" : "guest");
+          client.roomHost = Boolean(access.host);
           client.mutedUntil = access.mutedUntil || 0;
           client.muteCheckedAt = Date.now();
 
           send(ws, { type: "joined", room, self: client.id, seq: st.seq, members: memberList(st) });
+
+          if (client.userId) {
+            const guard = await chatGuardStatus(client);
+            if (guard.retryAfter > 0) {
+              send(ws, {
+                type: "chat_blocked",
+                code: "chat_cooldown",
+                retryAfter: guard.retryAfter,
+                strikes: guard.strikes,
+                message: "You are sending messages too quickly."
+              });
+            }
+          }
 
           const since = Number(msg.since);
           if (Number.isFinite(since) && since >= 0 && since < st.seq) {
@@ -455,6 +480,23 @@ function registerRealtime(app) {
           if (!raw || raw.length > WS_RT_MAX) {
             return send(ws, { type: "error", code: "relay_too_large", message: "Relay payload is too large." });
           }
+          if (data.t === "chat") {
+            const echoedByHost = client.roomHost && data.msg && data.msg.by && data.msg.by !== client.id;
+            if (!echoedByHost) {
+              const chatText = data.msg ? data.msg.text : data.text;
+              const guard = await checkChat(client, client.room, chatText);
+              if (!guard.ok) {
+                return send(ws, {
+                  type: "chat_blocked",
+                  code: guard.code,
+                  cid: cleanText(data.cid || data.msg?.cid, 64),
+                  retryAfter: guard.retryAfter,
+                  strikes: guard.strikes,
+                  message: "You are sending messages too quickly."
+                });
+              }
+            }
+          }
           const out = { type: "rt", from: client.id, data };
           const to = cleanText(msg.to, 32);
           if (to && to !== "*") {
@@ -489,41 +531,45 @@ function registerRealtime(app) {
           }
           const mutedUntil = await refreshMute(client);
           if (mutedUntil && Date.now() < mutedUntil) {
-            return send(ws, { type: "error", code: "muted", message: "You are muted in this room." });
+            return send(ws, { type: "chat_blocked", code: "muted", retryAfter: mutedUntil - Date.now(), message: "You are muted in this room." });
           }
-          const now = Date.now();
-          const windowMs = await settingNumber("limits.chatWindowMs", CHAT_WINDOW_MS);
-          const maxPerWindow = await settingNumber("limits.chatPerWindow", CHAT_MAX);
-          client.hits = client.hits.filter((t) => now - t < windowMs);
-          if (client.hits.length >= maxPerWindow) {
-            return send(ws, {
-              type: "error",
-              code: "chat_rate_limited",
-              message: "Slow down a little."
-            });
-          }
-          client.hits.push(now);
-
           const maxLength = Math.max(100, Math.round(await settingNumber("chat.maxLength", 2000)));
           const content = cleanText(msg.content, maxLength);
           if (!content) {
             return send(ws, { type: "error", code: "empty_message", message: "Message is empty." });
           }
           const cid = cleanText(msg.cid, 64);
-          const st = rooms.get(client.room);
           const cidKey = cid && CHAT_CID_RE.test(cid) ? `${client.userId || client.id}:${cid}` : "";
+          const st = rooms.get(client.room);
           if (st && cidKey) {
             const seen = st.cids.get(cidKey);
             if (seen) {
               return send(ws, { type: "chat-ack", cid, id: seen.id, seq: seen.seq, duplicate: true });
             }
           }
+          const guard = await checkChat(client, client.room, content);
+          if (!guard.ok) {
+            return send(ws, {
+              type: "chat_blocked",
+              code: guard.code,
+              cid,
+              retryAfter: guard.retryAfter,
+              strikes: guard.strikes,
+              message: "You are sending messages too quickly."
+            });
+          }
 
+          const replyTo = cleanText(msg.replyTo, 64);
           const message = {
             id: crypto.randomUUID(),
             room: client.room,
+            by: client.id,
+            nick: client.name,
             username: client.name,
+            role: client.roomRole || "member",
             content,
+            cid,
+            replyTo: replyTo || null,
             type: "text",
             createdAt: new Date().toISOString()
           };
@@ -540,6 +586,7 @@ function registerRealtime(app) {
           if (client.roomId) {
             if (dbReady()) {
               Message.create({
+                _id: message.id,
                 roomId: client.roomId,
                 username: client.name,
                 content,
@@ -547,12 +594,13 @@ function registerRealtime(app) {
               }).catch((err) => app.log.warn({ err }, "chat message persist failed"));
             } else {
               sqlAddMessage({
+                id: message.id,
                 roomId: client.roomId,
                 userId: client.userId || null,
                 username: client.name,
                 content,
                 type: "text",
-                meta: cid ? { cid } : {}
+                meta: { cid, by: client.id, role: message.role }
               }).catch((err) => app.log.warn({ err }, "chat message persist failed"));
             }
           }

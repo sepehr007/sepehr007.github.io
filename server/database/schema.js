@@ -1231,5 +1231,21 @@ export const MIGRATIONS = [
          WHERE status = 'accepted'`
       ).run();
     }
+  },
+  {
+    version: 22,
+    name: "chat-anti-spam-guard",
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS chat_guard (
+          user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          blocked_until INTEGER NOT NULL DEFAULT 0,
+          strikes INTEGER NOT NULL DEFAULT 0,
+          last_block_at INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_guard_blocked ON chat_guard(blocked_until);
+      `);
+    }
   }
 ];

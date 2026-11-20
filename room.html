@@ -267,7 +267,7 @@
 
         <div class="cine-chat" id="cineChat" aria-label="چت شناور" data-i18n-aria="cine.title">
           <div class="cine-head">
-            <button class="cine-title-btn" id="cineExpandBtn" type="button" aria-expanded="false">
+            <button class="cine-title-btn" id="cineExpandBtn" type="button" aria-expanded="false" title="چت شناور — مستقل از چت اصلی">
               <span class="cine-live" aria-hidden="true"></span>
               <span class="cine-title" data-i18n="cine.title">چت شناور</span>
               <span class="cine-unread hidden" id="cineUnread">0</span>
@@ -281,10 +281,13 @@
           <div class="cine-style hidden" id="cineStyle">
             <label><span data-i18n="prefs.brightShort">روشنایی</span><input id="cineBrightRange" type="range" min="40" max="160" step="5"></label>
             <label><span data-i18n="prefs.sizeShort">اندازهٔ متن</span><input id="cineSizeRange" type="range" min="10" max="22" step="0.5"></label>
+            <label class="cine-stay"><input type="checkbox" id="cineStayOpen" checked><span data-i18n="cine.stayOpen">بعد از ارسال باز بماند</span></label>
+            <p class="cine-hint" data-i18n="cine.independent">این پنل مستقل از چت اصلی اتاق است.</p>
           </div>
           <div class="cine-list" id="cineList"></div>
+          <div class="cine-cooldown hidden" id="cineCooldown" role="status"></div>
           <form class="cine-form" id="cineForm" autocomplete="off">
-            <input id="cineInput" type="text" maxlength="500" data-i18n-ph="cine.placeholder" placeholder="پیام سریع…">
+            <input id="cineInput" type="text" maxlength="500" data-i18n-ph="cine.placeholder" placeholder="پیام سریع در چت شناور…">
             <button type="submit" class="cine-send" aria-label="ارسال پیام">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12l16-8-6 16-3-6-7-2z"/></svg>
               <span class="cine-send-label" data-i18n="cine.send">ارسال</span>
@@ -346,6 +349,7 @@
         <span id="chatJumpLabel" data-i18n="chat.jumpLatest">آخرین پیام</span>
       </button>
       <div class="typing-line" id="typingLine"></div>
+      <div class="chat-cooldown hidden" id="chatCooldown" role="status"></div>
       <form class="chat-form" id="chatForm" autocomplete="off">
         <div class="reply-bar hidden" id="replyBar">
           <span id="replyBarText"></span>

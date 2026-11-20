@@ -42,6 +42,7 @@ export const SETTINGS_REGISTRY = [
   { id: "chat.maxLength", label: "حداکثر طول پیام", category: "chat", ...number(100, 4000) },
   { id: "limits.chatPerWindow", label: "پیام مجاز در بازه", category: "chat", ...number(2, 60) },
   { id: "limits.chatWindowMs", label: "طول بازهٔ چت (ms)", category: "chat", ...number(1000, 30000) },
+  { id: "limits.chatCooldownMs", label: "مکث ضدهرزنامه (ms)", category: "chat", ...number(1000, 120000) },
   { id: "chat.retentionDays", label: "نگهداری پیام (روز، ۰=همیشه)", category: "chat", ...number(0, 3650) },
   { id: "limits.avatarChanges", label: "تغییر آواتار در بازه", category: "profile", ...number(1, 20) },
   { id: "limits.avatarWindowMs", label: "بازهٔ آواتار (ms)", category: "profile", ...number(500, 30000) },

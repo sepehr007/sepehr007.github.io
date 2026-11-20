@@ -48,16 +48,16 @@ export async function sqlRecentMessages(roomId, limit = 50) {
   return rows.reverse().map(mapMessage);
 }
 
-export async function sqlAddMessage({ roomId, userId = null, username = "", content, type = "text", meta = {} }) {
+export async function sqlAddMessage({ id = "", roomId, userId = null, username = "", content, type = "text", meta = {} }) {
   const db = await getDatabase();
   if (!db) return null;
-  const id = crypto.randomUUID();
+  const rowId = id || crypto.randomUUID();
   const now = Date.now();
   db.prepare(
     `INSERT INTO messages (id, room_id, user_id, username, content, type, meta_json, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, String(roomId), userId ? String(userId) : null, username || "", content, type, JSON.stringify(meta || {}), now);
-  return mapMessage(db.prepare("SELECT * FROM messages WHERE id = ?").get(id));
+  ).run(rowId, String(roomId), userId ? String(userId) : null, username || "", content, type, JSON.stringify(meta || {}), now);
+  return mapMessage(db.prepare("SELECT * FROM messages WHERE id = ?").get(rowId));
 }
 
 export async function sqlSavePlaybackState({ roomId, mediaUrl = "", mediaType = "", position = 0, paused = true, rate = 1, userId = null }) {

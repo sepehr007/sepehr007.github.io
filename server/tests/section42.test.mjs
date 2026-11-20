@@ -778,6 +778,89 @@ await step("media", "realtime chat delivery and playback sync", async () => {
   b.close();
 });
 
+/* ============================================================ chat guard */
+await step("chat", "anti-spam is per user and survives a reconnect", async () => {
+  const spammer = await register("qachat1");
+  const listener = await register("qachat2");
+  const tuned = await api("PUT", "/api/admin/settings", {
+    token: owner.token,
+    body: { values: { "limits.chatPerWindow": 3, "limits.chatWindowMs": 30000, "limits.chatCooldownMs": 4000 } }
+  });
+  assert.equal(tuned.status, 200, tuned.text);
+
+  const a = await wsClient();
+  const b = await wsClient();
+  a.send({ type: "identify", token: spammer.token });
+  await a.next("identified");
+  a.send({ type: "join", room: "QACHAT1", name: "spammer" });
+  await a.next("joined");
+  b.send({ type: "identify", token: listener.token });
+  await b.next("identified");
+  b.send({ type: "join", room: "QACHAT1", name: "listener" });
+  await b.next("joined");
+
+  for (let i = 0; i < 3; i++) {
+    const cid = `guard-ok-${i}`;
+    a.send({ type: "chat", content: `پیام ${i}`, cid });
+    const ack = await a.next((m) => m.type === "chat-ack" && m.cid === cid);
+    assert.ok(ack.id, "allowed messages must still be acked");
+  }
+  const blockedPending = a.next("chat_blocked");
+  a.send({ type: "chat", content: "پیام چهارم", cid: "guard-blocked" });
+  const blocked = await blockedPending;
+  assert.equal(blocked.code, "chat_rate_limited", "spammer must hit the per-user cooldown");
+  assert.ok(blocked.retryAfter >= 1000, "cooldown must expose retryAfter");
+
+  b.send({ type: "chat", content: "پیام سالم", cid: "guard-legit" });
+  const bAck = await b.next((m) => m.type === "chat-ack" && m.cid === "guard-legit");
+  assert.ok(bAck.id, "another user must keep sending while one is restricted");
+
+  const row = db.prepare("SELECT blocked_until, strikes FROM chat_guard WHERE user_id = ?").get(spammer.user.id);
+  assert.ok(row, "chat_guard row must be persisted");
+  assert.ok(Number(row.blocked_until) > Date.now(), "blocked_until must be in the future");
+  assert.ok(Number(row.strikes) >= 1, "strikes must be recorded");
+
+  a.close();
+  const again = await wsClient();
+  again.send({ type: "identify", token: spammer.token });
+  await again.next("identified");
+  again.send({ type: "join", room: "QACHAT1", name: "spammer" });
+  await again.next("joined");
+  const restored = await again.next("chat_blocked", 4000);
+  assert.ok(restored.retryAfter > 0, "reconnecting must not clear the cooldown");
+  again.close();
+  b.close();
+});
+
+await step("chat", "repeated identical messages trigger a cooldown", async () => {
+  const repeat = await register("qachat3");
+  const tuned = await api("PUT", "/api/admin/settings", {
+    token: owner.token,
+    body: { values: { "limits.chatPerWindow": 10, "limits.chatWindowMs": 5000, "limits.chatCooldownMs": 3000 } }
+  });
+  assert.equal(tuned.status, 200, tuned.text);
+  const c = await wsClient();
+  c.send({ type: "identify", token: repeat.token });
+  await c.next("identified");
+  c.send({ type: "join", room: "QACHAT2", name: "repeater" });
+  await c.next("joined");
+  for (let i = 0; i < 2; i++) {
+    const cid = `dup-${i}`;
+    c.send({ type: "chat", content: "این پیام تکرار می‌شود", cid });
+    await c.next((m) => m.type === "chat-ack" && m.cid === cid);
+  }
+  const dupPending = c.next("chat_blocked");
+  c.send({ type: "chat", content: "این پیام تکرار می‌شود", cid: "dup-2" });
+  const dup = await dupPending;
+  assert.equal(dup.code, "chat_rate_limited", "third identical message must be blocked");
+  c.close();
+  const restored = await api("PUT", "/api/admin/settings", {
+    token: owner.token,
+    body: { values: { "limits.chatPerWindow": 10, "limits.chatWindowMs": 5000, "limits.chatCooldownMs": 8000 } }
+  });
+  assert.equal(restored.status, 200, restored.text);
+});
+
 /* ====================================================== administration */
 await step("business", "plan listing, order, manual payment verify", async () => {
   const plans = await api("GET", "/api/billing/plans");

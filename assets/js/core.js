@@ -191,7 +191,8 @@ export const PREF_DEFAULTS = {
   chatBright: 100,
   glass: 60,
   cineBright: 100,
-  cineSize: 14
+  cineSize: 14,
+  cineStayOpen: true
 };
 
 /* Accounts still carrying an earlier skin default move to the Nebula

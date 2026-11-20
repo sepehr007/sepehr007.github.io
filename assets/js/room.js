@@ -205,6 +205,11 @@ let chatTimerSince = null;
 const ALWAYS_SCROLL_KEY = "wt.alwaysScroll";
 let alwaysScroll = store.get(ALWAYS_SCROLL_KEY, false) === true;
 let chatHidden = store.get("wt.chatHidden", false) === true;
+let cineStayOpen = getPrefs().cineStayOpen !== false;
+const pendingChat = new Map();
+const pendingDeletes = new Set();
+let chatCooldownUntil = 0;
+let chatCooldownTimer = 0;
 let chatFollow = true;
 let chatUserPaused = false;
 let chatScrollLock = false;
@@ -505,6 +510,7 @@ function wireNet() {
     $("#netLabel").textContent = s === "online" ? t("net.online") : s === "connecting" ? t("net.connecting") : t("net.offline");
     if (s === "online") {
       $("#connLostBar")?.classList.add("hidden");
+      resendPendingChat();
       requestPlaybackSync();
     }
     if (s !== "online") {
@@ -608,6 +614,7 @@ function wireNet() {
   });
 
   net.on("chat", (msg) => {
+    reconcileChat(msg);
     notifyChat(authUser?.username, {
       roomId: code,
       roomName: $("#roomTitle")?.textContent || `Room ${code}`,
@@ -642,7 +649,7 @@ function wireNet() {
   net.on("chatUpdate", (msg) => updateMessage(msg));
   net.on("chatClear", ({ by } = {}) => {
     clearChatHistory();
-    toast(t("toast.chatClearedBy", { name: by || "?" }), "info");
+    toast(t("toast.chatClearedBy", { name: by || "?" }), "success");
   });
   net.on("typing", ({ id, nick: n }) => {
     if (id === me.id) return;
@@ -766,10 +773,38 @@ function wireNet() {
   net.on("denied", (reason) => {
     if (reason === "control") toast(t("toast.cantControl"), "error");
     else if (reason === "blocked") toast(t("toast.blockedDomain"), "error");
+    else if (reason === "chat_clear") toast(t("chat.clearDenied"), "error");
+    else if (reason === "chat_delete") toast(t("chat.deleteFailed"), "error");
     else toast(t("toast.videoInvalid"), "error");
   });
 
+  net.on("chatClearResult", ({ ok, code } = {}) => {
+    if (ok) return;
+    if (code === "empty") toast(t("chat.clearEmpty"), "info", 3200);
+    else toast(t("chat.clearDenied"), "error");
+  });
+
+  net.on("chatDeleteResult", ({ ok } = {}) => {
+    if (!ok) toast(t("chat.deleteFailed"), "error");
+  });
+
   net.on("throttle", () => toast(t("toast.slowDown"), "error"));
+
+  net.on("chatAck", (ack) => ackChat(ack));
+
+  net.on("chatBlocked", ({ code, cid, retryAfter } = {}) => {
+    if (cid) dropPendingChat(cid, { restore: true });
+    if (code === "muted") {
+      toast(t("chat.mutedSelf"), "error", 4200);
+      return;
+    }
+    if (code === "chat_disabled") {
+      toast(t("toast.chatDisabled"), "error", 4200);
+      return;
+    }
+    if (retryAfter > 0) startChatCooldown(retryAfter);
+    else toast(t("toast.slowDown"), "error");
+  });
 
   net.on("joinRequest", async ({ peerId, nick: n }) => {
     const ok = await confirmDialog({
@@ -1719,6 +1754,123 @@ async function pruneRoomMessages() {
   } catch {}
 }
 
+function newChatCid() {
+  const raw = globalThis.crypto?.randomUUID?.() || `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  return String(raw).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+}
+
+function chatCooldownLeft() {
+  return Math.max(0, chatCooldownUntil - Date.now());
+}
+
+function paintChatCooldown() {
+  const left = chatCooldownLeft();
+  const secs = Math.ceil(left / 1000);
+  for (const id of ["chatCooldown", "cineCooldown"]) {
+    const node = $(`#${id}`);
+    if (!node) continue;
+    node.classList.toggle("hidden", left <= 0);
+    if (left > 0) node.textContent = t("chat.cooldownLeft", { s: String(secs) });
+  }
+  const cooling = left > 0;
+  $("#chatForm .send-btn")?.toggleAttribute("disabled", cooling);
+  $("#cineForm .cine-send")?.toggleAttribute("disabled", cooling);
+  if (!cooling) {
+    if (chatCooldownTimer) { clearInterval(chatCooldownTimer); chatCooldownTimer = 0; }
+    return;
+  }
+  if (!chatCooldownTimer) {
+    chatCooldownTimer = setInterval(() => {
+      if (chatCooldownLeft() > 0) {
+        paintChatCooldown();
+      } else {
+        chatCooldownUntil = 0;
+        paintChatCooldown();
+        toast(t("chat.cooldownEnded"), "info", 2600);
+      }
+    }, 1000);
+  }
+}
+
+function startChatCooldown(ms) {
+  const wait = Math.max(1000, Number(ms) || 0);
+  chatCooldownUntil = Math.max(chatCooldownUntil, Date.now() + wait);
+  paintChatCooldown();
+  toast(t("chat.cooldownLeft", { s: String(Math.ceil(wait / 1000)) }), "error", 3600);
+}
+
+function addOptimisticChat({ cid, text, replyTo: ref, inputId }) {
+  const entry = {
+    id: `p:${cid}`, cid, by: me.id, nick: me.nick, role: me.role,
+    text, at: Date.now(), replyTo: ref || null, pending: true
+  };
+  appendMessage(entry, true);
+  chatList.querySelector(`[data-id="p:${cssEscape(cid)}"]`)?.classList.add("pending");
+  const timer = setTimeout(() => failPendingChat(cid), 12000);
+  pendingChat.set(cid, { entry, timer, inputId });
+}
+
+function dropPendingChat(cid, { restore = true } = {}) {
+  const rec = pendingChat.get(cid);
+  if (!rec) return;
+  pendingChat.delete(cid);
+  clearTimeout(rec.timer);
+  chatList.querySelector(`[data-id="p:${cssEscape(cid)}"]`)?.remove();
+  const before = cineMsgs.length;
+  cineMsgs = cineMsgs.filter((m) => m.id !== `p:${cid}`);
+  if (cineMsgs.length !== before) renderCine();
+  syncChatEmpty();
+  if (restore) {
+    const input = $(`#${rec.inputId}`) || $("#chatInput");
+    if (input && !input.value.trim()) input.value = rec.entry.text;
+  }
+}
+
+function failPendingChat(cid) {
+  if (!pendingChat.has(cid)) return;
+  dropPendingChat(cid, { restore: true });
+  toast(t("chat.sendFailed"), "error", 4200);
+}
+
+function reconcileChat(msg) {
+  if (!msg?.cid) return;
+  const rec = pendingChat.get(msg.cid);
+  if (!rec) return;
+  pendingChat.delete(msg.cid);
+  clearTimeout(rec.timer);
+  chatList.querySelector(`[data-id="p:${cssEscape(msg.cid)}"]`)?.remove();
+  cineMsgs = cineMsgs.filter((m) => m.id !== `p:${msg.cid}`);
+}
+
+function ackChat({ cid, id } = {}) {
+  if (!cid || !id) return;
+  const rec = pendingChat.get(cid);
+  if (!rec) return;
+  pendingChat.delete(cid);
+  clearTimeout(rec.timer);
+  const node = chatList.querySelector(`[data-id="p:${cssEscape(cid)}"]`);
+  if (node) {
+    node.dataset.id = id;
+    node.classList.remove("pending");
+    try {
+      const data = JSON.parse(node.dataset.msg || "{}");
+      data.id = id;
+      node.dataset.msg = JSON.stringify(data);
+    } catch {}
+  }
+  const cine = cineMsgs.find((m) => m.id === `p:${cid}`);
+  if (cine) cine.id = id;
+}
+
+function resendPendingChat() {
+  for (const [cid, rec] of pendingChat) {
+    if (Date.now() - rec.entry.at < 2000) continue;
+    clearTimeout(rec.timer);
+    rec.timer = setTimeout(() => failPendingChat(cid), 12000);
+    net.command("chat", { text: rec.entry.text, replyTo: rec.entry.replyTo, cid });
+  }
+}
+
 function sendChatText(text) {
   if (!chatEnabled) {
     toast(getLang() === "fa" ? "چت توسط مدیر سایت موقتاً غیرفعال شده است." : "Chat is temporarily disabled by the site owner.", "error");
@@ -1726,12 +1878,21 @@ function sendChatText(text) {
   }
   const clean = String(text || "").trim();
   if (!clean) return false;
+  if (chatCooldownLeft() > 0) {
+    toast(t("chat.cooldownLeft", { s: String(Math.ceil(chatCooldownLeft() / 1000)) }), "error");
+    paintChatCooldown();
+    return false;
+  }
   if (!canSend()) { toast(getLang() === "fa" ? "کمی صبر کن" : "Slow down", "error"); return false; }
   const slow = Number(roomInfo?.slow) || 0;
   const wait = slow ? Math.ceil((slow * 1000 - (Date.now() - lastChatMsgAt)) / 1000) : 0;
   if (wait > 0) { toast(t("toast.slowWait", { s: String(wait) }), "info"); return false; }
+  const cid = newChatCid();
+  const inputId = cineExpanded ? "cineInput" : "chatInput";
+  const optimistic = !isHost || net.relayMode;
+  if (optimistic) addOptimisticChat({ cid, text: clean, replyTo, inputId });
   const queued = !net.isReady();
-  net.command("chat", { text: clean, replyTo });
+  net.command("chat", { text: clean, replyTo, cid });
   if (queued && Date.now() - chatQueuedToastAt > 4000) {
     chatQueuedToastAt = Date.now();
     toast(t("toast.chatQueued"), "info", 2400);
@@ -1922,7 +2083,7 @@ function wireChat() {
   chatList.addEventListener("click", onChatAction);
 }
 
-function onChatAction(e) {
+async function onChatAction(e) {
   const btn = e.target.closest("[data-act]");
   if (!btn) {
     const reply = e.target.closest(".msg-reply");
@@ -1948,11 +2109,28 @@ function onChatAction(e) {
     startEdit(data);
   } else if (act === "delete") {
     if (!allow("chat.delete", "حذف پیام غیرفعال شده است.")) return;
+    if (data.by !== me.id) {
+      const ok = await confirmDialog({
+        title: t("chat.deleteConfirmTitle"),
+        text: t("chat.deleteConfirmText"),
+        okLabel: t("common.delete")
+      });
+      if (!ok) return;
+    }
+    markDeletePending(id);
     net.command("chatDelete", { id });
   } else if (act === "reaction") {
     if (!allow("chat.reactions", "واکنش‌ها غیرفعال شده است.")) return;
     net.command("react", { id, emoji: btn.dataset.emoji });
   }
+}
+
+function markDeletePending(id) {
+  if (!id) return;
+  pendingDeletes.add(id);
+  setTimeout(() => {
+    if (pendingDeletes.delete(id)) toast(t("chat.deleteFailed"), "error", 3600);
+  }, 8000);
 }
 
 function startReply(msg) {
@@ -2058,7 +2236,7 @@ function formatChatText(raw) {
 function buildMessage(msg) {
   const mine = msg.by === me.id;
   const isMod = msg.role === "owner" || msg.role === "mod";
-  const node = el("div", { class: `msg${mine ? " own" : ""}${msg.edited ? " edited" : ""}`, "data-id": msg.id });
+  const node = el("div", { class: `msg${mine ? " own" : ""}${msg.edited ? " edited" : ""}${msg.pending ? " pending" : ""}`, "data-id": msg.id });
   node.dataset.text = msg.text || "";
   node.dataset.msg = JSON.stringify({ id: msg.id, by: msg.by, nick: msg.nick, text: msg.text, role: msg.role, pinned: !!msg.pinned, deleted: !!msg.deleted });
 
@@ -2140,6 +2318,9 @@ function updateMessage(msg) {
   renderReactions(node, msg);
   refreshPinned();
   pushCine(msg, { quiet: true });
+  if (msg.deleted && pendingDeletes.delete(msg.id)) {
+    toast(t("chat.deleteDone"), "success", 2600);
+  }
 }
 
 function refreshPinned() {
@@ -3045,13 +3226,15 @@ function wireSettings() {
   applySubStyle();
 
   $("#clearChatBtn")?.addEventListener("click", async () => {
-    if (!isModSelf() || !chatList.children.length) return;
+    if (!isModSelf()) { toast(t("chat.clearDenied"), "error"); return; }
+    if (!chatList.children.length) { toast(t("chat.clearEmpty"), "info", 3400); return; }
     const ok = await confirmDialog({
       title: t("settings.clearChat"),
       text: t("settings.clearChatHint"),
       okLabel: t("settings.clearChat")
     });
-    if (ok) net.command("chatClear");
+    if (!ok) return;
+    net.command("chatClear");
   });
 }
 
@@ -3887,10 +4070,20 @@ function wireCineChat() {
   const styleBox = $("#cineStyle");
   const brightRange = $("#cineBrightRange");
   const sizeRange = $("#cineSizeRange");
+  const stayOpt = $("#cineStayOpen");
+  if (stayOpt) {
+    stayOpt.checked = cineStayOpen;
+    stayOpt.addEventListener("change", () => {
+      cineStayOpen = stayOpt.checked;
+      savePrefs({ cineStayOpen });
+      toast(t(cineStayOpen ? "cine.stayOn" : "cine.stayOff"), "info", 2600);
+    });
+  }
   const fillStyleRanges = () => {
     const p = getPrefs();
     if (brightRange) brightRange.value = String(p.cineBright);
     if (sizeRange) sizeRange.value = String(p.cineSize);
+    if (stayOpt) stayOpt.checked = cineStayOpen;
   };
   const syncPrefRows = () => {
     const p = getPrefs();
@@ -3933,6 +4126,7 @@ function wireCineChat() {
     input.value = "";
     input.focus();
     scrollChat(true);
+    if (!cineStayOpen) setTimeout(() => { if (cineExpanded) setCineExpanded(false); }, 450);
   });
   box.querySelector(".cine-head")?.addEventListener("click", (e) => {
     if (e.target.closest(".cine-min") || e.target.closest(".cine-title-btn")) return;

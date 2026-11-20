@@ -205,6 +205,7 @@ class WsSignal {
     this.fatal = false;
     this.selfId = "";
     this.retryTimer = null;
+    this.lastSeq = 0;
   }
   on(fn) { this.handlers.add(fn); }
   start() {
@@ -225,13 +226,45 @@ class WsSignal {
           onMessage: (msg) => {
             if (!msg || typeof msg !== "object") return;
             if (msg.type === "identified") {
-              try { ws.send(JSON.stringify({ type: "join", room: this.code, name: this.net.nick })); } catch {}
+              try {
+                const join = { type: "join", room: this.code, name: this.net.nick };
+                if (this.lastSeq > 0) join.since = this.lastSeq;
+                ws.send(JSON.stringify(join));
+              } catch {}
               return;
             }
             if (msg.type === "joined") {
+              this.lastSeq = Math.max(this.lastSeq, Number(msg.seq) || 0);
               this.ready = true;
               this.selfId = String(msg.self || "");
               done(true);
+              return;
+            }
+            if (msg.type === "resumed") {
+              this.lastSeq = Math.max(this.lastSeq, Number(msg.seq) || 0);
+              return;
+            }
+            if (msg.type === "chat") {
+              this.lastSeq = Math.max(this.lastSeq, Number(msg.seq) || 0);
+              this.net.serverChat(msg.message || {});
+              return;
+            }
+            if (msg.type === "chat-ack") {
+              this.net.emit("chatAck", {
+                cid: String(msg.cid || ""),
+                id: String(msg.id || ""),
+                seq: Number(msg.seq) || 0,
+                duplicate: Boolean(msg.duplicate)
+              });
+              return;
+            }
+            if (msg.type === "chat_blocked") {
+              this.net.emit("chatBlocked", {
+                code: String(msg.code || "chat_rate_limited"),
+                cid: String(msg.cid || ""),
+                retryAfter: Math.max(0, Number(msg.retryAfter) || 0),
+                strikes: Number(msg.strikes) || 0
+              });
               return;
             }
             if (msg.type === "rt") {
@@ -241,6 +274,10 @@ class WsSignal {
             }
             if (msg.type === "error") {
               const code = String(msg.code || "");
+              if (this.ready && /^chat_/.test(code)) {
+                this.net.emit("chatBlocked", { code, cid: "", retryAfter: 0, strikes: 0 });
+                return;
+              }
               if (/^(verification_required|realtime_disabled|rooms_closed|room_)/.test(code)) this.fatal = true;
               done(false);
             }
@@ -271,6 +308,7 @@ class WsSignal {
   }
   send(obj) { return this.#raw({ type: "rt", data: obj }); }
   sendTo(to, obj) { return this.#raw({ type: "rt", to, data: obj }); }
+  command(type, payload = {}) { return this.#raw({ type, ...payload }); }
   close() {
     this.closed = true;
     clearTimeout(this.retryTimer);
@@ -388,6 +426,35 @@ export class Net {
   }
   emit(type, data) {
     this.handlers.get(type)?.forEach((fn) => { try { fn(data); } catch (err) { console.error(err); } });
+  }
+
+  /* Server-authoritative room chat (relay mode). Every participant receives
+     one event per message, so messages stay ordered and are not re-broadcast
+     by the host. */
+  serverChat(message) {
+    if (!message || !message.id) return;
+    const member = this.isHost ? this.members.get(String(message.by || "")) : null;
+    const entry = {
+      id: String(message.id),
+      cid: String(message.cid || ""),
+      by: String(message.by || ""),
+      nick: member?.nick || String(message.nick || message.username || "?"),
+      role: member?.role || String(message.role || "member"),
+      text: String(message.content ?? message.text ?? ""),
+      at: Date.parse(message.createdAt) || Date.now(),
+      replyTo: message.replyTo || null,
+      edited: false,
+      deleted: false,
+      pinned: false,
+      reactions: {}
+    };
+    if (this.isHost) {
+      if (!this.chat.some((m) => m.id === entry.id)) {
+        this.chat.push(entry);
+        if (this.chat.length > MAX_CHAT) this.chat.shift();
+      }
+    }
+    this.emit("chat", entry);
   }
 
   #initHostState() {
@@ -617,7 +684,17 @@ export class Net {
     switch (msg.k) {
       case "presence":
         if (!this.isHost) {
-          if (!this.hostId) this.hostId = msg.from;
+          const nextHost = String(msg.from || "");
+          if (!nextHost) return;
+          if (msg.host && this.hostId && nextHost !== this.hostId) {
+            try { this.hostConn?.dc?.close?.(); } catch {}
+            this.hostConn = null;
+            this.dc = null;
+            this.joined = false;
+            this.ready = false;
+            this.hostId = "";
+          }
+          if (!this.hostId) this.hostId = nextHost;
           if (this.relayMode) {
             this.#relayLinkToHost();
             if (!this.joined && this.dc?.readyState === "open") this.sendHello();
@@ -1066,17 +1143,20 @@ export class Net {
     const text = String(msg.text || "").slice(0, 500).trim();
     if (!text) return;
     const now = Date.now();
-    if (now - (member.lastChatAt || 0) < 350) return;
+    if (now - (member.lastChatAt || 0) < 250) {
+      this.#sendTo(member.id, { t: "throttle", kind: "chat", wait: 1 });
+      return;
+    }
     if (this.room.slow) {
       const wait = this.room.slow * 1000 - (now - (member.lastChatAt || 0));
       if (wait > 0) { this.#sendTo(member.id, { t: "slow", wait: Math.ceil(wait / 1000) }); return; }
     }
     member.lastChatAt = now;
-    const chatMax = Math.max(1, Number(this.limits.chatPerWindow) || 6);
-    const chatWindow = Math.max(300, Number(this.limits.chatWindowMs) || 3000);
+    const chatMax = Math.max(1, Number(this.limits.chatPerWindow) || 10);
+    const chatWindow = Math.max(300, Number(this.limits.chatWindowMs) || 5000);
     if (!this.#allow(member, "chat", chatMax, chatWindow)) return;
     const entry = {
-      id: uid(), by: member.id, nick: member.nick, role: member.role,
+      id: uid(), cid: String(msg.cid || ""), by: member.id, nick: member.nick, role: member.role,
       text, at: now, replyTo: msg.replyTo || null,
       edited: false, deleted: false, pinned: false, reactions: {}
     };
@@ -1098,23 +1178,36 @@ export class Net {
   }
 
   #hostChatDelete(member, msg) {
-    if (!this.#allow(member, "chatDelete", 10, 5000)) return;
+    const result = (ok, code = "") => {
+      const payload = { t: "chatDeleteResult", ok, id: String(msg?.id || ""), code };
+      if (member.id === this.selfId) this.emit("chatDeleteResult", payload);
+      else this.#sendTo(member.id, payload);
+    };
+    if (!this.#allow(member, "chatDelete", 10, 5000)) return result(false, "rate");
     const entry = this.chat.find((m) => m.id === msg.id);
-    if (!entry) return;
-    if (entry.by !== member.id && !this.can(member, "chat")) return;
+    if (!entry) return result(false, "missing");
+    if (entry.by !== member.id && !this.isMod(member)) return result(false, "denied");
     entry.deleted = true;
     entry.text = "";
     entry.pinned = false;
     this.#broadcast({ t: "chatUpdate", msg: entry });
     this.emit("chatUpdate", entry);
+    return result(true);
   }
 
   #hostChatClear(member) {
-    if (!this.can(member, "chat") || !this.chat.length) return;
-    if (!this.#allow(member, "chatClear", 4, 10000)) return;
+    const result = (ok, code = "") => {
+      const payload = { t: "chatClearResult", ok, code };
+      if (member.id === this.selfId) this.emit("chatClearResult", payload);
+      else this.#sendTo(member.id, payload);
+    };
+    if (!this.isMod(member)) return result(false, "denied");
+    if (!this.chat.length) return result(false, "empty");
+    if (!this.#allow(member, "chatClear", 4, 10000)) return result(false, "rate");
     this.chat = [];
     this.#broadcast({ t: "chatClear", by: member.nick });
     this.emit("chatClear", { by: member.nick });
+    return result(true);
   }
 
   #hostReact(member, msg) {
@@ -1364,6 +1457,10 @@ export class Net {
         this.emit("memberSelf", { role: this.role, perms: this.selfPerms || {} });
         break;
       case "chat": this.emit("chat", msg.msg); break;
+      case "chatAck": this.emit("chatAck", msg); break;
+      case "chatBlocked": this.emit("chatBlocked", msg); break;
+      case "chatClearResult": this.emit("chatClearResult", msg); break;
+      case "chatDeleteResult": this.emit("chatDeleteResult", msg); break;
       case "reaction": this.emit("reaction", msg); break;
       case "chatUpdate": this.emit("chatUpdate", msg.msg); break;
       case "chatClear": this.emit("chatClear", { by: msg.by }); break;
@@ -1473,6 +1570,15 @@ export class Net {
   }
 
   command(type, payload = {}) {
+    if (this.relayMode && type === "chat") {
+      const sent = this.relay?.command?.("chat", {
+        content: String(payload.content ?? payload.text ?? ""),
+        cid: payload.cid || "",
+        replyTo: payload.replyTo || null
+      });
+      if (!sent) this.#queueCommand(type, payload);
+      return Boolean(sent);
+    }
     if (this.isHost) {
       const me = this.members.get(this.selfId);
       if (me) { this.#applyLocal(me, type, payload); return true; }
