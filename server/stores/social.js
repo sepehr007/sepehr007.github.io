@@ -1056,11 +1056,16 @@ function makeInviteCode() {
 function canManageRoom(db, userId, role, roomRow) {
   if (isStaff(role)) return true;
   if (String(roomRow.host_id) === String(userId)) return true;
-  return Boolean(
-    db
-      .prepare("SELECT 1 AS hit FROM room_memberships WHERE room_id = ? AND user_id = ? AND left_at IS NULL AND role IN ('host','moderator')")
-      .get(roomRow.id, String(userId))
-  );
+  const member = db
+    .prepare("SELECT role, permissions_json FROM room_memberships WHERE room_id = ? AND user_id = ? AND left_at IS NULL")
+    .get(roomRow.id, String(userId));
+  if (!member || !["administrator", "moderator"].includes(member.role)) return false;
+  try {
+    const perms = JSON.parse(member.permissions_json || "{}");
+    return perms.invites !== false;
+  } catch {
+    return true;
+  }
 }
 
 export async function sqlCreateInvite(userId, role, { roomCode, serverId, expiresInHours, maxUses }) {

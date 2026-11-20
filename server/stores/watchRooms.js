@@ -5,7 +5,17 @@ import { getDatabase, transaction, recordModerationAction } from "../database/in
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const VISIBILITIES = ["public", "unlisted", "private"];
 const JOIN_MODES = ["open", "approval", "invite", "password"];
-const GUEST_ROLES = ["moderator", "guest", "member"];
+const GUEST_ROLES = ["administrator", "moderator", "member", "guest"];
+const ROLE_RANK = { guest: 0, member: 1, moderator: 2, administrator: 3, host: 4 };
+const PERM_KEYS = ["video", "queue", "chat", "settings", "invites", "moderation", "remove", "mute", "admin"];
+const ROLE_PERMS = {
+  host: { video: true, queue: true, chat: true, settings: true, invites: true, moderation: true, remove: true, mute: true, admin: true },
+  administrator: { video: true, queue: true, chat: true, settings: true, invites: true, moderation: true, remove: true, mute: true, admin: true },
+  moderator: { video: true, queue: true, chat: true, moderation: true, remove: true, mute: true },
+  member: {},
+  guest: {}
+};
+
 const STALE_MS = 24 * 60 * 60 * 1000;
 const STALE_MEMBER_MS = 2 * 60 * 60 * 1000;
 const STALE_ROOM_MAX_MS = 7 * 24 * 60 * 60 * 1000;
@@ -157,13 +167,62 @@ function roomRow(db, code) {
 
 function roleRow(db, roomId, userId) {
   return db
-    .prepare("SELECT role, left_at FROM room_memberships WHERE room_id = ? AND user_id = ?")
+    .prepare("SELECT role, permissions_json, left_at FROM room_memberships WHERE room_id = ? AND user_id = ?")
     .get(String(roomId), String(userId));
 }
 
 function isStaff(role) {
   return ["moderator", "administrator", "owner", "super_owner"].includes(String(role || ""));
 }
+
+function rankOf(role) {
+  return ROLE_RANK[String(role || "guest")] ?? 0;
+}
+
+function parsePermissions(raw) {
+  try {
+    const parsed = JSON.parse(raw || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function effectivePerms(role, custom = {}) {
+  const base = { ...(ROLE_PERMS[String(role || "guest")] || {}) };
+  for (const key of PERM_KEYS) {
+    if (typeof custom[key] === "boolean") base[key] = custom[key];
+  }
+  return base;
+}
+
+function memberAccess(db, row, userId, staffRole = "") {
+  const manager = String(row.host_id) === String(userId) || isStaff(staffRole);
+  const member = roleRow(db, row.id, userId);
+  const role = manager ? "host" : member && !member.left_at ? member.role : "";
+  const perms = effectivePerms(role, parsePermissions(member?.permissions_json));
+  return {
+    manager,
+    member: Boolean(member && !member.left_at),
+    role,
+    rank: manager ? ROLE_RANK.host : rankOf(role),
+    perms: manager ? ROLE_PERMS.host : perms
+  };
+}
+
+function requireRoomCap(access, cap, message) {
+  if (access.manager) return;
+  if (!access.perms?.[cap]) fail(403, "forbidden", message);
+}
+
+function normalizePermissions(patch = {}) {
+  const clean = {};
+  for (const key of PERM_KEYS) {
+    if (typeof patch[key] === "boolean") clean[key] = patch[key];
+  }
+  return clean;
+}
+
 
 function touchVisit(db, roomId, userId) {
   const now = nowMs();
@@ -325,7 +384,8 @@ export async function getRoom(code, viewerId = "", staffRole = "") {
   if (!row) fail(404, "room_not_found", "That room does not exist.");
   const member = viewerId ? roleRow(db, row.id, viewerId) : null;
   const viewerRole = member && !member.left_at ? member.role : "";
-  const canManage = Boolean(viewerId) && (String(row.host_id) === String(viewerId) || isStaff(staffRole));
+  const access = viewerId ? memberAccess(db, row, viewerId, staffRole) : null;
+  const canManage = Boolean(access?.manager);
   let viewerRequest = null;
   if (viewerId) {
     const request = db
@@ -343,11 +403,12 @@ export async function getRoom(code, viewerId = "", staffRole = "") {
   return {
     ...mapRoom(row),
     viewerRole,
+    viewerPermissions: access?.perms || {},
     isMember: Boolean(viewerRole),
     viewerRequest,
     pendingRequests,
     canManage,
-    canModerate: Boolean(viewerId) && (String(row.host_id) === String(viewerId) || isStaff(staffRole) || viewerRole === "moderator")
+    canModerate: Boolean(viewerId) && (canManage || Boolean(access?.perms?.moderation))
   };
 }
 
@@ -561,9 +622,8 @@ export async function listJoinRequests(userId, staffRole, code) {
   const db = await conn();
   const row = roomRow(db, code);
   if (!row) fail(404, "room_not_found", "That room does not exist.");
-  if (String(row.host_id) !== String(userId) && !isStaff(staffRole)) {
-    fail(403, "forbidden", "Only the Manager can review join requests.");
-  }
+  const access = memberAccess(db, row, userId, staffRole);
+  requireRoomCap(access, "moderation", "Only the Manager or an authorized moderator can review join requests.");
   const rows = db
     .prepare(
       `SELECT q.user_id, q.status, q.note, q.created_at, u.username, u.nick, u.avatar
@@ -587,9 +647,8 @@ export async function decideJoinRequest(userId, staffRole, code, targetId, decis
   const db = await conn();
   const row = roomRow(db, code);
   if (!row) fail(404, "room_not_found", "That room does not exist.");
-  if (String(row.host_id) !== String(userId) && !isStaff(staffRole)) {
-    fail(403, "forbidden", "Only the Manager can review join requests.");
-  }
+  const access = memberAccess(db, row, userId, staffRole);
+  requireRoomCap(access, "moderation", "Only the Manager or an authorized moderator can review join requests.");
   if (!["approve", "deny"].includes(decision)) fail(400, "invalid_decision", "Decision must be approve or deny.");
   const target = db
     .prepare("SELECT status FROM room_join_requests WHERE room_id = ? AND user_id = ?")
@@ -629,16 +688,17 @@ export async function listMembers(code) {
   if (!row) fail(404, "room_not_found", "That room does not exist.");
   const rows = db
     .prepare(
-      `SELECT m.user_id, m.role, m.joined_at, m.last_seen_at, u.username, u.nick, u.avatar
+      `SELECT m.user_id, m.role, m.permissions_json, m.joined_at, m.last_seen_at, u.username, u.nick, u.avatar
        FROM room_memberships m
        JOIN users u ON u.id = m.user_id
        WHERE m.room_id = ? AND m.left_at IS NULL AND u.deleted_at IS NULL
-       ORDER BY CASE m.role WHEN 'host' THEN 0 WHEN 'moderator' THEN 1 ELSE 2 END, m.joined_at ASC`
+       ORDER BY CASE m.role WHEN 'host' THEN 0 WHEN 'administrator' THEN 1 WHEN 'moderator' THEN 2 ELSE 3 END, m.joined_at ASC`
     )
     .all(row.id);
   return rows.map((member) => ({
     userId: member.user_id,
     role: member.role,
+    permissions: effectivePerms(member.role, parsePermissions(member.permissions_json)),
     username: member.username || "",
     nick: member.nick || "",
     avatar: member.avatar || "",
@@ -651,9 +711,8 @@ export async function updateRoom(userId, staffRole, code, patch = {}) {
   const db = await conn();
   const row = roomRow(db, code);
   if (!row) fail(404, "room_not_found", "That room does not exist.");
-  if (String(row.host_id) !== String(userId) && !isStaff(staffRole)) {
-    fail(403, "forbidden", "Only the Manager can change room settings.");
-  }
+  const access = memberAccess(db, row, userId, staffRole);
+  requireRoomCap(access, "settings", "Only the Manager or an authorized administrator can change room settings.");
   if (!row.is_active) fail(410, "room_closed", "This room has been closed.");
 
   const sets = [];
@@ -733,19 +792,33 @@ export async function updateRoom(userId, staffRole, code, patch = {}) {
   return getRoom(code, userId, staffRole);
 }
 
-export async function setMemberRole(userId, staffRole, code, targetId, role) {
+export async function setMemberRole(userId, staffRole, code, targetId, role, permissions) {
   const db = await conn();
   const row = roomRow(db, code);
   if (!row) fail(404, "room_not_found", "That room does not exist.");
-  if (String(row.host_id) !== String(userId) && !isStaff(staffRole)) {
-    fail(403, "forbidden", "Only the Manager can change member roles.");
-  }
-  if (!GUEST_ROLES.includes(role)) fail(400, "invalid_role", "Role must be moderator or guest.");
+  if (!GUEST_ROLES.includes(role)) fail(400, "invalid_role", "Role must be administrator, moderator, member or guest.");
   if (String(targetId) === String(row.host_id)) fail(409, "is_manager", "Use transfer instead of changing the Manager's role.");
   const member = roleRow(db, row.id, targetId);
   if (!member || member.left_at) fail(404, "not_member", "That user is not in this room.");
+  const access = memberAccess(db, row, userId, staffRole);
+  if (!access.manager) {
+    if (!access.perms.admin) fail(403, "forbidden", "Only the Manager or an administrator can change member roles.");
+    if (rankOf(member.role) >= access.rank || rankOf(role) >= access.rank) {
+      fail(403, "forbidden", "You can only change roles below your own level.");
+    }
+  }
   const now = nowMs();
-  db.prepare("UPDATE room_memberships SET role = ? WHERE room_id = ? AND user_id = ?").run(role, row.id, String(targetId));
+  const cleanPerms = permissions && typeof permissions === "object" ? normalizePermissions(permissions) : null;
+  if (cleanPerms) {
+    db.prepare("UPDATE room_memberships SET role = ?, permissions_json = ? WHERE room_id = ? AND user_id = ?").run(
+      role,
+      JSON.stringify(cleanPerms),
+      row.id,
+      String(targetId)
+    );
+  } else {
+    db.prepare("UPDATE room_memberships SET role = ? WHERE room_id = ? AND user_id = ?").run(role, row.id, String(targetId));
+  }
   db.prepare("UPDATE rooms SET last_activity_at = ? WHERE id = ?").run(now, row.id);
   addSystemMessage(db, row.id, `A member's role changed to ${role}.`, { event: "member.role", target: String(targetId), role });
   recordModerationAction({
@@ -755,28 +828,85 @@ export async function setMemberRole(userId, staffRole, code, targetId, role) {
     targetId,
     roomCode: row.room_code,
     reason: `role ${member.role} -> ${role}`,
-    meta: { from: member.role, to: role }
+    meta: { from: member.role, to: role, permissions: cleanPerms || undefined }
   });
-  return { ok: true, role };
+  return { ok: true, role, permissions: effectivePerms(role, cleanPerms || parsePermissions(member.permissions_json)) };
+}
+
+export async function setMemberPermissions(userId, staffRole, code, targetId, permissions) {
+  const db = await conn();
+  const row = roomRow(db, code);
+  if (!row) fail(404, "room_not_found", "That room does not exist.");
+  if (String(targetId) === String(row.host_id)) fail(409, "is_manager", "The Manager always keeps every permission.");
+  const member = roleRow(db, row.id, targetId);
+  if (!member || member.left_at) fail(404, "not_member", "That user is not in this room.");
+  const access = memberAccess(db, row, userId, staffRole);
+  if (!access.manager) {
+    if (!access.perms.admin) fail(403, "forbidden", "Only the Manager or an administrator can edit permissions.");
+    if (rankOf(member.role) >= access.rank) fail(403, "forbidden", "You can only edit members below your own level.");
+  }
+  const cleanPerms = normalizePermissions(permissions || {});
+  db.prepare("UPDATE room_memberships SET permissions_json = ? WHERE room_id = ? AND user_id = ?").run(
+    JSON.stringify(cleanPerms),
+    row.id,
+    String(targetId)
+  );
+  const now = nowMs();
+  db.prepare("UPDATE rooms SET last_activity_at = ? WHERE id = ?").run(now, row.id);
+  addSystemMessage(db, row.id, "A member's permissions were updated.", { event: "member.perms", target: String(targetId) });
+  recordModerationAction({
+    moderatorId: userId,
+    action: "permission_change",
+    targetType: "room_member",
+    targetId,
+    roomCode: row.room_code,
+    reason: "permissions updated",
+    meta: { permissions: cleanPerms }
+  });
+  return { ok: true, permissions: effectivePerms(member.role, cleanPerms) };
+}
+
+export async function muteMember(userId, staffRole, code, targetId, muted = true) {
+  const db = await conn();
+  const row = roomRow(db, code);
+  if (!row) fail(404, "room_not_found", "That room does not exist.");
+  if (String(targetId) === String(row.host_id)) fail(409, "is_manager", "The Manager can't be muted.");
+  const member = roleRow(db, row.id, targetId);
+  if (!member || member.left_at) fail(404, "not_member", "That user is not in this room.");
+  const access = memberAccess(db, row, userId, staffRole);
+  requireRoomCap(access, "mute", "You don't have permission to mute members.");
+  if (!access.manager && rankOf(member.role) >= access.rank) fail(403, "forbidden", "You can't mute someone at or above your level.");
+  const until = muted ? nowMs() + 24 * 60 * 60_000 : null;
+  db.prepare("UPDATE room_memberships SET muted_until = ? WHERE room_id = ? AND user_id = ?").run(until, row.id, String(targetId));
+  recordModerationAction({
+    moderatorId: userId,
+    action: muted ? "mute" : "unmute",
+    targetType: "room_member",
+    targetId,
+    roomCode: row.room_code,
+    reason: muted ? "muted in room" : "unmuted in room"
+  });
+  return { ok: true, muted };
 }
 
 export async function kickMember(userId, staffRole, code, targetId) {
   const db = await conn();
   const row = roomRow(db, code);
   if (!row) fail(404, "room_not_found", "That room does not exist.");
-  const viewerRole = roleRow(db, row.id, userId)?.role || "";
-  const manager = String(row.host_id) === String(userId) || isStaff(staffRole);
-  if (!manager && viewerRole !== "moderator") fail(403, "forbidden", "Only the Manager or a Moderator can remove members.");
   if (String(targetId) === String(row.host_id)) fail(409, "is_manager", "The Manager can't be removed. Transfer management first.");
   if (String(targetId) === String(userId)) fail(400, "self_kick", "You can't remove yourself.");
   const member = roleRow(db, row.id, targetId);
   if (!member || member.left_at) fail(404, "not_member", "That user is not in this room.");
-  if (!manager && member.role === "moderator") fail(403, "forbidden", "Only the Manager can remove a Moderator.");
+  const access = memberAccess(db, row, userId, staffRole);
+  requireRoomCap(access, "remove", "Only the Manager or an authorized moderator can remove members.");
+  if (!access.manager && rankOf(member.role) >= access.rank) {
+    fail(403, "forbidden", "You can't remove someone at or above your level.");
+  }
   const now = nowMs();
   db.prepare("UPDATE room_memberships SET left_at = ? WHERE room_id = ? AND user_id = ?").run(now, row.id, String(targetId));
   const count = setMemberCount(db, row.id);
   db.prepare("UPDATE rooms SET last_activity_at = ? WHERE id = ?").run(now, row.id);
-  addSystemMessage(db, row.id, "A member was removed from the room.", { event: "member.removed", target: String(targetId) });
+  addSystemMessage(db, row.id, "A member was removed from the room.", { event: "member.removed", target: String(targetId), by: String(userId) });
   recordModerationAction({
     moderatorId: userId,
     action: "kick",

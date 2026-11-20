@@ -1,10 +1,10 @@
 import { initI18n, t, applyI18n, getLang } from "./i18n.js";
 import {
-  $, $$, el, escapeHtml, colorFor, initials, fmtTime, fmtClock, toast,
+  $, $$, el, escapeHtml, colorFor, initials, fmtTime, fmtClock, toast, urgentToast,
   confirmDialog, copyText, store, validateMediaUrl, createLimiter, debounce,
   registerServiceWorker, applyUIPrefs, getPrefs, savePrefs, resetPrefs, ACCENTS, lightenHex, safeReload
 } from "./core.js";
-import { Net } from "./net.js";
+import { Net, ROLE_PERMS, ROOM_PERMS, ROLE_RANK, rankOf, effectivePerms } from "./net.js";
 import { LiveFeed } from "./livefeed.js";
 import { Player, parseSubtitles } from "./player.js";
 import { Voice } from "./voice.js";
@@ -61,7 +61,7 @@ function saveRoomPassword(pwd) {
 let roomPassword = readRoomPassword();
 
 let nick = (authUser?.nick || params.get("nick") || store.get("wt.nick") || "").trim();
-const me = { id: "", role: "member", nick: "", avatar: authUser?.avatar || "" };
+const me = { id: "", role: "member", nick: "", avatar: authUser?.avatar || "", perms: {} };
 let net = null;
 let player = null;
 let voice = null;
@@ -276,11 +276,7 @@ async function boot() {
     frame: $("#videoFrame"),
     canControl: () => {
       if (!me.id) return false;
-      if (me.role === "owner") return true;
-      const control = roomInfo?.control || (isHost ? "mods" : "mods");
-      if (control === "all") return true;
-      if (control === "mods" && me.role === "mod") return true;
-      return false;
+      return canControl();
     },
     onControl: ({ action, time, value, denied }) => {
       if (denied) { toast(t("toast.cantControl"), "error"); return; }
@@ -539,6 +535,7 @@ function wireNet() {
     me.role = data.self.role;
     me.nick = data.self.nick;
     me.avatar = data.self.avatar || me.avatar;
+    me.perms = data.self.perms || {};
     voice.selfId = me.id;
     roomInfo = data.room;
     members = data.members || [];
@@ -570,7 +567,7 @@ function wireNet() {
   net.on("members", (list) => {
     members = list;
     const mine = list.find((m) => m.id === me.id);
-    if (mine) { me.role = mine.role; me.nick = mine.nick; if (mine.avatar) me.avatar = mine.avatar; }
+    if (mine) { me.role = mine.role; me.nick = mine.nick; me.perms = mine.perms || {}; if (mine.avatar) me.avatar = mine.avatar; }
     const ids = new Set(list.map((m) => m.id));
     if (seenMemberIds) {
       for (const m of list) {
@@ -588,10 +585,26 @@ function wireNet() {
     syncAdminTools();
     paintManagerOptions(roomInfo);
     renderMembers();
+    if (sheetMemberId) {
+      const open = memberById(sheetMemberId);
+      if (open) renderPersonSheet(open);
+      else closePersonSheet();
+    }
     refreshChatAvatars();
     const voices = list.filter((m) => m.voice && m.id !== me.id).map((m) => m.id);
     if (selfVoice) voices.forEach((id) => voice.peerVoice(id, true));
     syncScreenSharePeers();
+  });
+
+  net.on("memberSelf", ({ role, perms } = {}) => {
+    if (role) me.role = role;
+    if (perms) me.perms = perms;
+    syncAdminTools();
+    renderMembers();
+  });
+
+  net.on("notice", ({ text } = {}) => {
+    if (text) toast(text, "info", 4200);
   });
 
   net.on("chat", (msg) => {
@@ -698,20 +711,30 @@ function wireNet() {
     }
     const map = {
       locked: t("toast.roomLocked"), full: t("toast.roomFull"),
-      not_found: t("toast.connLost"), unreachable: t("toast.signalUnreachable"), banned: t("toast.roomLocked"),
+      not_found: t("toast.connLost"), unreachable: t("toast.signalUnreachable"),
+      banned: t("toast.youWereBanned"), removed: t("toast.youWereRemoved"),
       rejected: getLang() === "fa" ? "میزبان ورود را تأیید نکرد" : "Host declined the request"
     };
-    toast(map[reason] || t("toast.connLost"), "error");
+    const removal = reason === "removed" || reason === "banned";
+    if (removal) urgentToast(map[reason], "error", 8000);
+    else toast(map[reason] || t("toast.connLost"), "error", 6000);
     $("#connLostBar")?.classList.add("hidden");
     const netLabel = $("#netLabel");
     if (netLabel) netLabel.textContent = t("net.offline");
-    setTimeout(() => location.replace("./"), 2200);
+    const grace = removal ? 4200 : 2200;
+    setTimeout(() => location.replace("./"), grace);
   });
 
-  net.on("kicked", () => {
+  net.on("kicked", ({ reason, by } = {}) => {
     $("#connLostBar")?.classList.add("hidden");
-    toast(t("toast.youWereKicked"), "error");
-    setTimeout(() => location.replace("./"), 1500);
+    try { net.destroy(); } catch {}
+    const text = by
+      ? t("toast.removedBy", { name: by })
+      : reason === "ban" ? t("toast.youWereBanned") : t("toast.youWereKicked");
+    urgentToast(text, "error", 8000);
+    const stage = $("#connLostBar");
+    if (stage) stage.classList.add("hidden");
+    setTimeout(() => location.replace("./"), 4200);
   });
 
   let retryTimer = 0;
@@ -2083,7 +2106,7 @@ function buildMessage(msg) {
   return node;
 }
 
-function isModSelf() { return me.role === "owner" || me.role === "mod"; }
+function isModSelf() { return rankOf(me.role) >= ROLE_RANK.mod; }
 
 function renderReactions(node, msg) {
   const wrap = node.querySelector(".reactions");
@@ -2266,8 +2289,45 @@ function isManagerSelf() {
   return me.role === "owner" || (!!roomInfo?.managerId && roomInfo.managerId === me.id);
 }
 
+function isAdminSelf() {
+  return isManagerSelf() || rankOf(me.role) >= ROLE_RANK.admin;
+}
+
+function selfPerms() {
+  if (isManagerSelf()) return { ...ROLE_PERMS.owner };
+  return effectivePerms(me.role, me.perms);
+}
+
+function canDo(cap) {
+  if (isManagerSelf()) return true;
+  if (cap === "video") {
+    if (typeof me.perms?.video === "boolean") return me.perms.video;
+    const policy = roomInfo?.control || "mods";
+    if (rankOf(me.role) >= ROLE_RANK.mod) return policy !== "host";
+    return policy === "all";
+  }
+  return Boolean(selfPerms()[cap]);
+}
+
+function memberPerms(m) {
+  if (!m) return {};
+  if (m.id === me.id && isManagerSelf()) return { ...ROLE_PERMS.owner };
+  if (m.role === "owner" || roomInfo?.managerId === m.id) return { ...ROLE_PERMS.owner };
+  return effectivePerms(m.role, m.perms);
+}
+
+function outranksMe(m) {
+  return rankOf(m?.role) >= (isManagerSelf() ? ROLE_RANK.owner : rankOf(me.role));
+}
+
 function memberById(id) {
   return members.find((m) => m.id === id) || null;
+}
+
+function roleLabel(m) {
+  if (!m) return "";
+  if (roomInfo?.managerId === m.id && m.role !== "owner") return t("people.successor");
+  return t(`role.${m.role || "member"}`);
 }
 
 function toggleLocalMute(id, name) {
@@ -2298,6 +2358,8 @@ function toggleLocalMute(id, name) {
 }
 
 async function runModAction(action, id) {
+  const m = memberById(id);
+  if (!m) return;
   if (action === "kick" || action === "ban") {
     const ok = await confirmDialog({
       title: t(action === "kick" ? "people.kick" : "people.ban"),
@@ -2305,8 +2367,29 @@ async function runModAction(action, id) {
       okLabel: t("common.ok")
     });
     if (!ok) return;
+    net.command("mod", { action, target: id });
+    return;
   }
-  net.command("mod", { action, target: id });
+  if (action === "mute") {
+    net.command("mod", { action: "mute", target: id });
+    return;
+  }
+  if (action === "info") {
+    openPersonSheet(id);
+    return;
+  }
+  if (action.startsWith("role:")) {
+    const role = action.slice(5);
+    net.command("mod", { action: "setrole", target: id, role });
+    toast(t("people.roleChanged", { name: m.nick }), "success", 3000);
+  }
+}
+
+function setMemberPerm(id, key, value) {
+  const m = memberById(id);
+  if (!m) return;
+  const next = { ...memberPerms(m), [key]: Boolean(value) };
+  net.command("mod", { action: "perms", target: id, perms: next });
 }
 
 function setVolumeFor(id, nick, value) {
@@ -2327,7 +2410,14 @@ function renderPersonSheet(m) {
   if (!actions || !m) return;
   actions.innerHTML = "";
   $("#psName").textContent = m.nick + (m.id === me.id ? (getLang() === "fa" ? " (تو)" : " (you)") : "");
-  $("#psSub").textContent = m.role === "owner" ? t("role.owner") : roomInfo?.managerId === m.id ? t("people.successor") : t(`role.${m.role}`);
+  $("#psSub").textContent = roleLabel(m);
+
+  const info = el("div", { class: "ps-info" });
+  const joined = m.joinedAt ? new Date(m.joinedAt) : null;
+  if (joined) info.append(el("span", { text: t("people.joinedAt", { time: fmtClock(m.joinedAt) }) }));
+  if (m.voice) info.append(el("span", { text: t("people.inVoice") }));
+  if (m.muted) info.append(el("span", { text: t("people.mutedByMod") }));
+  if (info.children.length) actions.append(info);
   if (m.id === me.id) return;
 
   if (flagOn(flagStates, "voice.volume")) {
@@ -2348,13 +2438,16 @@ function renderPersonSheet(m) {
     actions.append(volWrap);
   }
 
-  if (isModSelf() && m.role !== "owner") {
-    actions.append(el("button", { type: "button", class: "ps-btn", "data-sheet": "mod:mute", text: `🔇 ${m.muted ? t("people.unmute") : t("people.mute")}` }));
-    if (me.role === "owner") {
-      actions.append(el("button", { type: "button", class: "ps-btn", "data-sheet": `mod:${m.role === "mod" ? "demote" : "promote"}`, text: `${m.role === "mod" ? "↓" : "↑"} ${m.role === "mod" ? t("people.demote") : t("people.promote")}` }));
+  if (m.role !== "owner" && !outranksMe(m)) {
+    if (canDo("mute")) {
+      actions.append(el("button", { type: "button", class: "ps-btn", "data-sheet": "mod:mute", text: `🔇 ${m.muted ? t("people.unmute") : t("people.mute")}` }));
     }
-    actions.append(el("button", { type: "button", class: "ps-btn danger", "data-sheet": "mod:kick", text: `⤫ ${t("people.kick")}` }));
-    actions.append(el("button", { type: "button", class: "ps-btn danger", "data-sheet": "mod:ban", text: `🚫 ${t("people.ban")}` }));
+    if (canDo("remove")) {
+      actions.append(el("button", { type: "button", class: "ps-btn danger", "data-sheet": "mod:kick", text: `⤫ ${t("people.kick")}` }));
+      if (isManagerSelf()) {
+        actions.append(el("button", { type: "button", class: "ps-btn danger", "data-sheet": "mod:ban", text: `🚫 ${t("people.ban")}` }));
+      }
+    }
   }
 
   if (isManagerSelf() && m.role !== "owner") {
@@ -2363,6 +2456,32 @@ function renderPersonSheet(m) {
       type: "button", class: `ps-btn${isMgr ? " on" : ""}`, "data-sheet": "manager",
       text: `👑 ${isMgr ? t("people.clearManager") : t("people.makeManager")}`
     }));
+    const roleRow = el("div", { class: "ps-roles" });
+    roleRow.append(el("span", { class: "ps-section", text: t("people.changeRole") }));
+    for (const role of ["admin", "mod", "member", "guest"]) {
+      if (m.role === role || isMgr) continue;
+      roleRow.append(el("button", {
+        type: "button", class: `ps-chip${m.role === role ? " on" : ""}`,
+        "data-sheet": `role:${role}`, text: t(`role.${role}`),
+        "aria-pressed": String(m.role === role)
+      }));
+    }
+    actions.append(roleRow);
+  }
+
+  if (isManagerSelf() && m.role !== "owner") {
+    const grid = el("div", { class: "ps-perms" });
+    grid.append(el("span", { class: "ps-section", text: t("people.permissions") }));
+    const perms = memberPerms(m);
+    for (const key of ROOM_PERMS) {
+      const label = el("label", { class: "ps-perm" });
+      const input = el("input", { type: "checkbox" });
+      input.checked = perms[key] === true;
+      input.addEventListener("change", () => setMemberPerm(m.id, key, input.checked));
+      label.append(input, el("span", { text: t(`perm.${key}`) }));
+      grid.append(label);
+    }
+    actions.append(grid);
   }
 }
 
@@ -2401,6 +2520,11 @@ async function handleSheetAction(kind) {
     const action = kind.slice(4);
     closePersonSheet();
     await runModAction(action, m.id);
+    return;
+  }
+  if (kind.startsWith("role:")) {
+    await runModAction(kind, m.id);
+    renderPersonSheet(memberById(sheetMemberId) || m);
   }
 }
 
@@ -2526,8 +2650,7 @@ function refreshChatAvatars() {
 function renderMembers() {
   $("#peopleCount").textContent = String(members.length);
   peopleList.innerHTML = "";
-  const order = { owner: 0, mod: 1, member: 2 };
-  const sorted = [...members].sort((a, b) => (order[a.role] - order[b.role]) || a.nick.localeCompare(b.nick));
+  const sorted = [...members].sort((a, b) => (rankOf(b.role) - rankOf(a.role)) || a.nick.localeCompare(b.nick));
   for (const m of sorted) {
     const node = el("div", { class: "person", "data-id": m.id });
     node.dataset.nick = m.nick;
@@ -2566,12 +2689,20 @@ function renderMembers() {
     }
 
     const actions = el("div", { class: "person-actions" });
-    if (isModSelf() && m.id !== me.id && m.role !== "owner") {
-      actions.append(el("button", { type: "button", "data-pmod": "mute", title: t("people.mute"), text: m.muted ? "🔈" : "🔇" }));
-      actions.append(el("button", { type: "button", "data-pmod": "kick", title: t("people.kick"), class: "danger", text: "⤫" }));
-      actions.append(el("button", { type: "button", "data-pmod": "ban", title: t("people.ban"), class: "danger", text: "🚫" }));
-      if (me.role === "owner") {
-        actions.append(el("button", { type: "button", "data-pmod": m.role === "mod" ? "demote" : "promote", title: m.role === "mod" ? t("people.demote") : t("people.promote"), text: m.role === "mod" ? "↓" : "↑" }));
+    if (m.id !== me.id && m.role !== "owner" && !outranksMe(m)) {
+      if (canDo("mute")) {
+        actions.append(el("button", { type: "button", "data-pmod": "mute", title: t("people.mute"), text: m.muted ? "🔈" : "🔇" }));
+      }
+      if (canDo("remove")) {
+        actions.append(el("button", { type: "button", "data-pmod": "kick", title: t("people.kick"), class: "danger", text: "⤫" }));
+      }
+      if (isManagerSelf()) {
+        const quick = el("button", {
+          type: "button", "data-pmod": "info",
+          title: t("people.permissions"), text: "⚙",
+          "aria-label": t("people.permissions")
+        });
+        actions.append(quick);
       }
     }
     if (actions.children.length) tools.append(actions);
@@ -2675,9 +2806,7 @@ function renderQueue(items) {
 }
 
 function canControl() {
-  if (me.role === "owner") return true;
-  if (roomInfo?.managerId && roomInfo.managerId === me.id) return true;
-  return (roomInfo?.control || "mods") === "all";
+  return canDo("video");
 }
 
 /* ================= settings ================= */
@@ -2703,13 +2832,14 @@ function applyRoomSettings(room) {
   if (!room) return;
   roomInfo = room;
   const manager = isManagerSelf();
-  $("#optControl").value = room.control === "all" ? "all" : "host";
+  $("#optControl").value = ["host", "mods", "all"].includes(room.control) ? room.control : "mods";
   $("#optLock").checked = !!room.locked;
   $("#optApproval").checked = !!room.approval;
   $("#optSlow").value = String(room.slow || 0);
   paintManagerOptions(room);
-  const locked = !manager;
-  [$("#optControl"), $("#optLock"), $("#optApproval"), $("#optSlow"), $("#optManager")].forEach((n) => { if (n) n.disabled = locked; });
+  const canSettings = canDo("settings");
+  [$("#optControl"), $("#optLock"), $("#optApproval"), $("#optSlow")].forEach((n) => { if (n) n.disabled = !canSettings; });
+  if ($("#optManager")) $("#optManager").disabled = !manager;
   if (room.managerId && room.managerId === me.id && lastManagerSeen !== me.id) {
     toast(t("toast.youAreManager"), "success");
   }

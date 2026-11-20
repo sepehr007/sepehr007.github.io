@@ -18,6 +18,8 @@ import {
   listMembers,
   updateRoom,
   setMemberRole,
+  setMemberPermissions,
+  muteMember,
   kickMember,
   transferManager,
   closeRoom,
@@ -287,14 +289,40 @@ export default async function roomRoutes(app) {
   }));
 
   app.post("/:code/members/:userId/role", { preHandler: AUTH }, handle(async (req) => {
-    const result = await setMemberRole(req.auth.userId, req.auth.role, req.params.code, req.params.userId, body(req).role);
+    const payload = body(req);
+    const result = await setMemberRole(req.auth.userId, req.auth.role, req.params.code, req.params.userId, payload.role, payload.permissions);
     await audit("room.member_role", req, {
       targetType: "room",
       targetId: String(req.params.code || "").toUpperCase(),
-      meta: { member: req.params.userId, role: body(req).role }
+      meta: { member: req.params.userId, role: payload.role }
     });
-    notifyUser(req, req.params.userId, "role", { code: req.params.code, role: body(req).role });
+    notifyUser(req, req.params.userId, "role", { code: req.params.code, role: payload.role, permissions: result.permissions });
     notifyRoom(req, req.params.code, { type: "room-event", event: "member-role", code: req.params.code });
+    return { ok: true, ...result };
+  }));
+
+  app.post("/:code/members/:userId/permissions", { preHandler: AUTH }, handle(async (req) => {
+    const result = await setMemberPermissions(req.auth.userId, req.auth.role, req.params.code, req.params.userId, body(req).permissions);
+    await audit("room.member_permissions", req, {
+      targetType: "room",
+      targetId: String(req.params.code || "").toUpperCase(),
+      meta: { member: req.params.userId }
+    });
+    notifyUser(req, req.params.userId, "permissions", { code: req.params.code, permissions: result.permissions });
+    notifyRoom(req, req.params.code, { type: "room-event", event: "member-permissions", code: req.params.code });
+    return { ok: true, ...result };
+  }));
+
+  app.post("/:code/members/:userId/mute", { preHandler: AUTH }, handle(async (req) => {
+    const muted = body(req).muted !== false;
+    const result = await muteMember(req.auth.userId, req.auth.role, req.params.code, req.params.userId, muted);
+    await audit("room.member_mute", req, {
+      targetType: "room",
+      targetId: String(req.params.code || "").toUpperCase(),
+      meta: { member: req.params.userId, muted }
+    });
+    notifyUser(req, req.params.userId, "mute", { code: req.params.code, muted, by: req.auth.nick || req.auth.username || "" });
+    notifyRoom(req, req.params.code, { type: "room-event", event: "member-mute", code: req.params.code });
     return { ok: true, ...result };
   }));
 
@@ -305,9 +333,10 @@ export default async function roomRoutes(app) {
       targetId: String(req.params.code || "").toUpperCase(),
       meta: { member: req.params.userId }
     });
-    notifyUser(req, req.params.userId, "removed", { code: req.params.code });
+    const managerName = req.auth.nick || req.auth.username || "Manager";
+    notifyUser(req, req.params.userId, "removed", { code: req.params.code, by: managerName });
     notifyRoom(req, req.params.code, { type: "room-event", event: "member-removed", code: req.params.code });
-    return { ok: true, ...result };
+    return { ok: true, ...result, by: managerName };
   }));
 
   app.post("/:code/transfer", { preHandler: AUTH }, handle(async (req) => {

@@ -327,6 +327,133 @@ await step("rooms", "role permissions are enforced", async () => {
   await api("POST", `/api/rooms/${roomCode}/leave`, { token: owner.token });
 });
 
+await step("rooms", "administrators get granular permissions", async () => {
+  const eveJoin = await api("POST", `/api/rooms/${roomCode}/join`, { token: eve.token, body: {} });
+  assert.equal(eveJoin.status, 200, eveJoin.text);
+
+  const restricted = await api("POST", `/api/rooms/${roomCode}/members/${carol.user.id}/role`, {
+    token: alice.token,
+    body: { role: "administrator", permissions: { admin: false, settings: false, remove: false, video: false } }
+  });
+  assert.equal(restricted.status, 200, restricted.text);
+  assert.equal(restricted.json.role, "administrator");
+  assert.equal(restricted.json.permissions.admin, false);
+  assert.equal(restricted.json.permissions.settings, false);
+  assert.equal(restricted.json.permissions.chat, true, "role defaults must still apply");
+
+  const view = await api("GET", `/api/rooms/${roomCode}`, { token: carol.token });
+  assert.equal(view.status, 200, view.text);
+  assert.equal(view.json.room.viewerRole, "administrator");
+  assert.equal(view.json.room.viewerPermissions.admin, false);
+  assert.equal(view.json.room.canManage, false, "administrator is not the Manager");
+
+  const members = await api("GET", `/api/rooms/${roomCode}/members`, { token: alice.token });
+  assert.equal(members.status, 200, members.text);
+  const carolRow = members.json.members.find((m) => m.userId === carol.user.id);
+  assert.ok(carolRow, "administrator must be listed");
+  assert.equal(carolRow.role, "administrator");
+  assert.equal(carolRow.permissions.settings, false);
+
+  const deniedRole = await api("POST", `/api/rooms/${roomCode}/members/${eve.user.id}/role`, {
+    token: carol.token,
+    body: { role: "guest" }
+  });
+  assert.equal(deniedRole.status, 403, "administrator without the admin cap cannot change roles");
+
+  const deniedSettings = await api("PATCH", `/api/rooms/${roomCode}`, {
+    token: carol.token,
+    body: { name: "تغییر غیرمجاز" }
+  });
+  assert.equal(deniedSettings.status, 403, "administrator without the settings cap cannot edit the room");
+
+  const widened = await api("POST", `/api/rooms/${roomCode}/members/${carol.user.id}/permissions`, {
+    token: alice.token,
+    body: { permissions: { admin: true, settings: true, remove: true, video: true } }
+  });
+  assert.equal(widened.status, 200, widened.text);
+  assert.equal(widened.json.permissions.admin, true);
+
+  const tooHigh = await api("POST", `/api/rooms/${roomCode}/members/${bob.user.id}/role`, {
+    token: carol.token,
+    body: { role: "administrator" }
+  });
+  assert.equal(tooHigh.status, 403, "nobody can grant a role at or above their own rank");
+
+  const demote = await api("POST", `/api/rooms/${roomCode}/members/${eve.user.id}/role`, {
+    token: carol.token,
+    body: { role: "guest" }
+  });
+  assert.equal(demote.status, 200, demote.text);
+  assert.equal(demote.json.role, "guest");
+
+  const mute = await api("POST", `/api/rooms/${roomCode}/members/${eve.user.id}/mute`, {
+    token: carol.token,
+    body: { muted: true }
+  });
+  assert.equal(mute.status, 200, mute.text);
+  assert.equal(mute.json.muted, true);
+  const unmute = await api("POST", `/api/rooms/${roomCode}/members/${eve.user.id}/mute`, {
+    token: carol.token,
+    body: { muted: false }
+  });
+  assert.equal(unmute.status, 200, unmute.text);
+  assert.equal(unmute.json.muted, false);
+
+  const muteManager = await api("POST", `/api/rooms/${roomCode}/members/${alice.user.id}/mute`, {
+    token: carol.token,
+    body: { muted: true }
+  });
+  assert.equal(muteManager.status, 409, "the Manager can never be muted");
+
+  const restrictRemove = await api("POST", `/api/rooms/${roomCode}/members/${bob.user.id}/permissions`, {
+    token: alice.token,
+    body: { permissions: { remove: false } }
+  });
+  assert.equal(restrictRemove.status, 200, restrictRemove.text);
+  const blockedKick = await api("POST", `/api/rooms/${roomCode}/members/${eve.user.id}/kick`, {
+    token: bob.token
+  });
+  assert.equal(blockedKick.status, 403, "moderator without the remove cap cannot kick");
+  const restoreRemove = await api("POST", `/api/rooms/${roomCode}/members/${bob.user.id}/permissions`, {
+    token: alice.token,
+    body: { permissions: {} }
+  });
+  assert.equal(restoreRemove.status, 200, restoreRemove.text);
+  assert.equal(restoreRemove.json.permissions.remove, true, "role defaults return once overrides are cleared");
+
+  const rankKick = await api("POST", `/api/rooms/${roomCode}/members/${carol.user.id}/kick`, {
+    token: bob.token
+  });
+  assert.equal(rankKick.status, 403, "a moderator cannot remove an administrator");
+
+  const kicked = await api("POST", `/api/rooms/${roomCode}/members/${eve.user.id}/kick`, {
+    token: alice.token
+  });
+  assert.equal(kicked.status, 200, kicked.text);
+  assert.ok(kicked.json.by, "the Manager name must be returned for the removal notice");
+
+  const after = await api("GET", `/api/rooms/${roomCode}/members`, { token: alice.token });
+  assert.equal(after.status, 200, after.text);
+  assert.ok(!after.json.members.some((m) => m.userId === eve.user.id), "removed member must disappear immediately");
+
+  const eveView = await api("GET", `/api/rooms/${roomCode}`, { token: eve.token });
+  assert.equal(eveView.status, 200, eveView.text);
+  assert.equal(eveView.json.room.isMember, false, "stale membership must be cleared");
+  assert.equal(eveView.json.room.viewerRole, "");
+
+  const selfKick = await api("POST", `/api/rooms/${roomCode}/members/${alice.user.id}/kick`, {
+    token: alice.token
+  });
+  assert.equal(selfKick.status, 409, "the Manager cannot remove themselves");
+
+  const resetCarol = await api("POST", `/api/rooms/${roomCode}/members/${carol.user.id}/role`, {
+    token: alice.token,
+    body: { role: "member", permissions: {} }
+  });
+  assert.equal(resetCarol.status, 200, resetCarol.text);
+  assert.ok(!resetCarol.json.permissions.settings, "plain members carry no settings capability");
+});
+
 await step("rooms", "invite creation and acceptance", async () => {
   const invite = await api("POST", `/api/rooms/${roomCode}/invites`, {
     token: alice.token,

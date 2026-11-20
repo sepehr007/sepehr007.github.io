@@ -21,6 +21,33 @@ const SIGNAL_CHUNK_SIZE = 2600;
 const AVATAR_RE = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
 const LIVE_REACTIONS = ["❤️", "😂", "😮", "👏", "🔥", "🍿"];
 
+/* Room roles, highest first. "mod" is the wire value for Moderator,
+   "admin" for Administrator, "owner" is the room Manager. */
+export const ROLE_RANK = { guest: 0, member: 1, mod: 2, admin: 3, owner: 4 };
+export const ROOM_PERMS = ["video", "queue", "chat", "settings", "invites", "moderation", "remove", "mute", "admin"];
+export const ROLE_PERMS = {
+  owner: { video: true, queue: true, chat: true, settings: true, invites: true, moderation: true, remove: true, mute: true, admin: true },
+  admin: { video: true, queue: true, chat: true, settings: true, invites: true, moderation: true, remove: true, mute: true, admin: true },
+  mod: { video: true, queue: true, chat: true, moderation: true, remove: true, mute: true },
+  member: {},
+  guest: {}
+};
+
+export function rankOf(role) {
+  return ROLE_RANK[String(role || "guest")] ?? 0;
+}
+
+export function effectivePerms(role, custom = {}) {
+  const base = { ...(ROLE_PERMS[String(role || "guest")] || {}) };
+  if (custom && typeof custom === "object") {
+    for (const key of ROOM_PERMS) {
+      if (typeof custom[key] === "boolean") base[key] = custom[key];
+    }
+  }
+  return base;
+}
+
+
 function cleanAvatar(value) {
   const id = avatarId(value);
   if (id) return `preset:${id}`;
@@ -230,7 +257,7 @@ class WsSignal {
   #lost() {
     this.ws = null;
     this.ready = false;
-    if (this.closed) return;
+    if (this.closed || this.net?.removedSelf) return;
     this.net.emit("status", "connecting");
     clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => {
@@ -334,6 +361,7 @@ export class Net {
     this.joined = false;
     this.destroyed = false;
     this.role = isHost ? "owner" : "member";
+    this.selfPerms = {};
     this.joinTimer = null;
     this.joinTries = 0;
     this.presenceTimer = null;
@@ -347,6 +375,8 @@ export class Net {
     this.lastLink = "";
     this.relayMode = false;
     this.relay = null;
+    this.removedSelf = false;
+    this.removed = new Map();
 
     if (isHost) this.#initHostState();
   }
@@ -382,6 +412,37 @@ export class Net {
     this.localFile = null;
     this.fileRx = null;
     this.subs = null;
+    this.staff = this.#loadStaff();
+  }
+
+  #staffKey() {
+    return `wt.roomStaff.${this.code}`;
+  }
+
+  #loadStaff() {
+    try {
+      const raw = localStorage.getItem(this.#staffKey());
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  #persistStaff() {
+    if (!this.isHost) return;
+    try {
+      const data = {};
+      for (const m of this.members.values()) {
+        if (m.role === "owner" || m.role === "member") continue;
+        data[m.nick.toLowerCase()] = { role: m.role, perms: m.perms || {} };
+      }
+      localStorage.setItem(this.#staffKey(), JSON.stringify(data));
+    } catch {}
+  }
+
+  #storedRank(entry) {
+    return entry ? rankOf(entry.role) : 0;
   }
 
   async start() {
@@ -481,7 +542,7 @@ export class Net {
   }
 
   relayReconnected() {
-    if (this.destroyed) return;
+    if (this.destroyed || this.removedSelf) return;
     this.relayMode = true;
     this.signal = this.relay;
     this.selfId = this.relay?.selfId || this.selfId;
@@ -530,7 +591,7 @@ export class Net {
     clearTimeout(this.joinDeadline);
     this.joinDeadline = setTimeout(giveUp, 60000);
     const beat = async () => {
-      if (this.joined || this.destroyed) return;
+      if (this.joined || this.destroyed || this.removedSelf) return;
       if (this.joinTries++ > JOIN_MAX_TRIES) return giveUp();
       const ok = await this.#sig({
         k: "join", from: this.selfId, nick: this.nick,
@@ -573,6 +634,7 @@ export class Net {
         if (!this.isHost) {
           clearInterval(this.joinTimer);
           clearTimeout(this.joinDeadline);
+          if (msg.reason === "removed") this.removedSelf = true;
           this.emit("status", "offline");
           this.emit("deny", msg.reason);
         }
@@ -626,6 +688,7 @@ export class Net {
     const nick = String(msg.nick || "").trim().slice(0, 20) || "Guest";
     if (this.room.locked) return this.#denyGuest(msg.from, "locked");
     if (this.banned.has(nick.toLowerCase())) return this.#denyGuest(msg.from, "banned");
+    if (this.removed.has(nick.toLowerCase())) return this.#denyGuest(msg.from, "removed");
     const guestCount = [...this.members.keys()].filter((id) => id !== this.selfId).length;
     if (guestCount >= this.room.capacity) return this.#denyGuest(msg.from, "full");
     if (this.pwdHash && msg.pwdHash !== this.pwdHash) return this.#denyGuest(msg.from, "password");
@@ -843,7 +906,17 @@ export class Net {
       while (existing.includes(`${finalNick} ${i}`.toLowerCase())) i++;
       finalNick = `${finalNick} ${i}`;
     }
-    const member = { id: conn.peer, nick: finalNick, avatar: cleanAvatar(msg.avatar || conn.avatar), role: "member", muted: false, voice: false, joinedAt: Date.now() };
+    const stored = this.staff?.[finalNick.toLowerCase()] || this.staff?.[nick.toLowerCase()];
+    const member = {
+      id: conn.peer,
+      nick: finalNick,
+      avatar: cleanAvatar(msg.avatar || conn.avatar),
+      role: stored?.role && stored.role !== "owner" ? stored.role : "member",
+      perms: stored?.perms && typeof stored.perms === "object" ? { ...stored.perms } : {},
+      muted: false,
+      voice: false,
+      joinedAt: Date.now()
+    };
     this.members.set(conn.peer, member);
     this.#sendTo(conn.peer, { t: "welcome", ...this.#snapshot(member) });
     if (this.localFile && !this.relayMode) {
@@ -858,7 +931,7 @@ export class Net {
 
   #snapshot(member) {
     return {
-      self: { id: member.id, nick: member.nick, avatar: member.avatar || "", role: member.role },
+      self: { id: member.id, nick: member.nick, avatar: member.avatar || "", role: member.role, perms: member.perms || {} },
       room: { ...this.room },
       members: this.#membersPublic(),
       playback: this.#nowPlayback(),
@@ -877,7 +950,10 @@ export class Net {
   }
 
   #membersPublic() {
-    return [...this.members.values()].map((m) => ({ id: m.id, nick: m.nick, avatar: m.avatar || "", role: m.role, muted: m.muted, voice: m.voice }));
+    return [...this.members.values()].map((m) => ({
+      id: m.id, nick: m.nick, avatar: m.avatar || "", role: m.role,
+      perms: m.perms || {}, muted: m.muted, voice: m.voice
+    }));
   }
 
   #broadcastMembers() {
@@ -920,19 +996,38 @@ export class Net {
     this.emit("voice", { id: peerId, on: false, left: true });
   }
 
-  canControl(member) {
+  permsFor(member) {
+    if (!member) return {};
+    if (member.role === "owner" || this.isManager(member)) return { ...ROLE_PERMS.owner };
+    return effectivePerms(member.role, member.perms);
+  }
+  /**
+   * Authoritative capability check for host-side actions.
+   * Video control additionally follows the room policy:
+   * "host" = Manager only, "mods" = moderators/administrators, "all" = everyone.
+   * An explicit per-member override always wins.
+   */
+  can(member, cap) {
     if (!member) return false;
-    if (member.role === "owner") return true;
-    const room = this.room || this.roomState;
-    if (!room) return false;
-    if (room.managerId && member.id === room.managerId) return true;
-    return room.control === "all";
+    if (member.role === "owner" || this.isManager(member)) return true;
+    const custom = member.perms && typeof member.perms === "object" ? member.perms : {};
+    if (cap === "video") {
+      if (typeof custom.video === "boolean") return custom.video;
+      const policy = (this.room || this.roomState)?.control || "mods";
+      if (member.role === "admin" || member.role === "mod") return policy !== "host";
+      return policy === "all";
+    }
+    return Boolean(effectivePerms(member.role, custom)[cap]);
+  }
+  canControl(member) {
+    return this.can(member, "video");
   }
   isManager(member) {
-    return !!member && (member.role === "owner" || (!!this.room.managerId && member.id === this.room.managerId));
+    const room = this.room || this.roomState;
+    return !!member && (member.role === "owner" || (!!room?.managerId && member.id === room.managerId));
   }
   isMod(member) {
-    return this.isManager(member) || member?.role === "mod";
+    return !!member && (this.isManager(member) || rankOf(member.role) >= ROLE_RANK.mod);
   }
 
   #allow(member, kind, max, windowMs) {
@@ -1006,7 +1101,7 @@ export class Net {
     if (!this.#allow(member, "chatDelete", 10, 5000)) return;
     const entry = this.chat.find((m) => m.id === msg.id);
     if (!entry) return;
-    if (entry.by !== member.id && !this.isMod(member)) return;
+    if (entry.by !== member.id && !this.can(member, "chat")) return;
     entry.deleted = true;
     entry.text = "";
     entry.pinned = false;
@@ -1015,7 +1110,7 @@ export class Net {
   }
 
   #hostChatClear(member) {
-    if (!this.isMod(member) || !this.chat.length) return;
+    if (!this.can(member, "chat") || !this.chat.length) return;
     if (!this.#allow(member, "chatClear", 4, 10000)) return;
     this.chat = [];
     this.#broadcast({ t: "chatClear", by: member.nick });
@@ -1037,7 +1132,7 @@ export class Net {
   }
 
   #hostPin(member, msg) {
-    if (!this.isMod(member)) return;
+    if (!this.can(member, "chat")) return;
     if (!this.#allow(member, "pin", 10, 5000)) return;
     const entry = this.chat.find((m) => m.id === msg.id);
     if (!entry) return;
@@ -1101,7 +1196,7 @@ export class Net {
   }
 
   #hostQueuePlay(member, id) {
-    if (!this.canControl(member)) return this.#sendTo(member.id, { t: "denied", reason: "control" });
+    if (!this.can(member, "queue")) return this.#sendTo(member.id, { t: "denied", reason: "control" });
     if (!this.#allow(member, "control", 12, 3000)) return;
     const item = this.queue.find((q) => q.id === id);
     if (!item) return;
@@ -1114,11 +1209,13 @@ export class Net {
   }
 
   #hostSettings(member, patch) {
-    if (!this.isManager(member) || !patch) return;
+    if (!this.can(member, "settings") || !patch) return;
     if (!this.#allow(member, "settings", 10, 3000)) return;
+    const manager = this.isManager(member);
     const allowed = ["control", "locked", "approval", "capacity", "slow", "managerId"];
     for (const k of allowed) {
       if (!(k in patch)) continue;
+      if (k === "managerId") { if (!manager) continue; }
       if (k === "capacity") this.room.capacity = Math.min(24, Math.max(2, Number(patch[k]) || 6));
       else if (k === "control") this.room.control = ["host", "mods", "all"].includes(patch[k]) ? patch[k] : this.room.control;
       else if (k === "slow") this.room.slow = [0, 3, 5, 10, 30].includes(Number(patch[k])) ? Number(patch[k]) : this.room.slow;
@@ -1142,30 +1239,83 @@ export class Net {
   }
 
   #hostMod(member, msg) {
-    if (!this.isMod(member)) return;
-    if (!this.#allow(member, "mod", 15, 5000)) return;
+    if (!member || !msg) return;
+    if (!this.#allow(member, "mod", 20, 5000)) return;
     const target = this.members.get(msg.target);
     if (!target || target.role === "owner") return;
-    if (target.id === this.room.managerId && member.role !== "owner") return;
-    const action = msg.action;
-    if (action === "promote" || action === "demote") {
-      if (member.role !== "owner" && action === "promote") return;
-      target.role = action === "promote" ? "mod" : "member";
+    if (target.id === this.selfId) return;
+    const action = String(msg.action || "");
+    const manager = this.isManager(member);
+    const actorRank = manager ? ROLE_RANK.owner : rankOf(member.role);
+    const targetRank = rankOf(target.role);
+    const outranks = actorRank > targetRank;
+    const actorPerms = manager ? ROLE_PERMS.owner : effectivePerms(member.role, member.perms);
+    if (target.id === this.room.managerId && !manager) return;
+
+    if (action === "setrole") {
+      const role = String(msg.role || "");
+      if (!["admin", "mod", "member", "guest"].includes(role)) return;
+      if (!manager && (!actorPerms.admin || !outranks || rankOf(role) >= actorRank)) return;
+      target.role = role;
+      if (msg.perms && typeof msg.perms === "object") target.perms = { ...msg.perms };
       this.#broadcastMembers();
+      this.#persistStaff();
+      this.#notice(msg.text || "", member, target);
       return;
     }
-    if (target.role === "mod" && member.role !== "owner") return;
+
+    if (action === "perms") {
+      if (!manager && (!actorPerms.admin || !outranks)) return;
+      const next = {};
+      const patch = msg.perms && typeof msg.perms === "object" ? msg.perms : {};
+      for (const key of ROOM_PERMS) if (typeof patch[key] === "boolean") next[key] = patch[key];
+      target.perms = next;
+      this.#sendTo(target.id, { t: "memberSelf", perms: next, role: target.role });
+      this.#broadcastMembers();
+      this.#persistStaff();
+      return;
+    }
+
     if (action === "mute") {
+      if (!this.can(member, "mute") || !outranks) return;
       target.muted = !target.muted;
-      this.#sendTo(target.id, { t: "forceMute", muted: target.muted });
+      this.#sendTo(target.id, { t: "forceMute", muted: target.muted, by: member.nick });
       this.#broadcastMembers();
+      this.#notice("", member, target, target.muted ? "mute" : "unmute");
       return;
     }
+
     if (action === "kick" || action === "ban") {
-      if (action === "ban") this.banned.add(target.nick.toLowerCase());
+      if (!this.can(member, "remove") || !outranks) return;
+      if (action === "ban") {
+        this.banned.add(target.nick.toLowerCase());
+        this.#persistStaff();
+      }
+      if (action === "kick") this.removed.set(target.nick.toLowerCase(), { by: member.nick, at: Date.now() });
+      this.#notice(target.nick, member, target, "remove");
       this.#sendTo(target.id, { t: "kicked", reason: action, by: member.nick });
-      setTimeout(() => { this.#dropMember(target.id); }, 200);
+      this.#dropMember(target.id);
+      return;
     }
+  }
+
+  #notice(text, member, target, kind = "") {
+    if (text) {
+      this.#broadcast({ t: "notice", text });
+      this.emit("notice", { text });
+      return;
+    }
+    const fa = (() => { try { return document.documentElement.lang !== "en"; } catch { return true; } })();
+    const label = fa ? "اعضا" : "members";
+    const message = kind === "mute"
+      ? (fa ? `${target.nick} توسط ${member.nick} بی‌صدا شد.` : `${target.nick} was muted by ${member.nick}.`)
+      : kind === "unmute"
+        ? (fa ? `${target.nick} توسط ${member.nick} آزاد شد.` : `${target.nick} was unmuted by ${member.nick}.`)
+        : kind === "remove"
+          ? (fa ? `${target.nick} توسط ${member.nick} از اتاق حذف شد.` : `${target.nick} was removed from the room by ${member.nick}.`)
+          : `${target.nick} · ${label}`;
+    this.#broadcast({ t: "notice", text: message });
+    this.emit("notice", { text: message });
   }
 
   #hostVoice(member, on) {
@@ -1196,12 +1346,22 @@ export class Net {
       case "deny":
         clearInterval(this.joinTimer);
         clearTimeout(this.joinDeadline);
+        if (msg.reason === "removed") this.removedSelf = true;
         this.emit("status", "offline");
         this.emit("deny", msg.reason);
         break;
       case "members":
         this.members = msg.members;
+        {
+          const mine = (msg.members || []).find((m) => m.id === this.selfId);
+          if (mine) { this.role = mine.role || this.role; this.selfPerms = mine.perms || {}; }
+        }
         this.emit("members", msg.members);
+        break;
+      case "memberSelf":
+        if (msg.role) this.role = msg.role;
+        if (msg.perms) this.selfPerms = msg.perms;
+        this.emit("memberSelf", { role: this.role, perms: this.selfPerms || {} });
         break;
       case "chat": this.emit("chat", msg.msg); break;
       case "reaction": this.emit("reaction", msg); break;
@@ -1215,7 +1375,13 @@ export class Net {
       case "room": this.roomState = msg.room; this.emit("room", msg.room); break;
       case "queue": this.emit("queue", msg.items); break;
       case "closed": this.emit("closed"); break;
-      case "kicked": this.emit("kicked", msg.reason); break;
+      case "kicked":
+        this.removedSelf = true;
+        clearInterval(this.joinTimer);
+        clearTimeout(this.joinDeadline);
+        this.emit("kicked", { reason: msg.reason || "kick", by: msg.by || "" });
+        break;
+      case "notice": this.emit("notice", { text: msg.text || "" }); break;
       case "denied": this.emit("denied", msg.reason); break;
       case "forceMute": this.emit("forceMute", msg.muted); break;
       case "voice": this.emit("voice", { id: msg.id, on: msg.on, nick: msg.nick }); break;

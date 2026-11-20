@@ -73,6 +73,22 @@ export function toast(message, type = "info", ms = 3200) {
   if (toastQueue.length > 6) toastQueue.splice(0, toastQueue.length - 6);
   drainToasts();
 }
+export function urgentToast(message, type = "error", ms = 6000) {
+  const wrap = document.getElementById("toasts");
+  if (!wrap) return;
+  toastQueue.length = 0;
+  wrap.querySelectorAll(".toast").forEach((node) => node.remove());
+  toastBusy = true;
+  const node = el("div", { class: `toast ${type === "info" ? "" : type}`, text: message });
+  wrap.append(node);
+  setTimeout(() => {
+    node.style.opacity = "0";
+    node.style.transform = "translateY(-6px)";
+    setTimeout(() => node.remove(), 220);
+    toastBusy = false;
+  }, ms);
+}
+
 function drainToasts() {
   if (toastBusy || !toastQueue.length) return;
   const wrap = document.getElementById("toasts");

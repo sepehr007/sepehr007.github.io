@@ -4,10 +4,15 @@ import { apiFetch, apiGetToken, apiConnectSocket } from "./api.js";
 
 const ROLE_KEY = {
   host: "room.roleManager",
+  administrator: "room.roleAdmin",
   moderator: "room.roleModerator",
   guest: "room.roleGuest",
   member: "room.roleMember"
 };
+
+const ROLE_OPTIONS = ["administrator", "moderator", "member", "guest"];
+const PERM_KEYS = ["video", "queue", "chat", "settings", "invites", "moderation", "remove", "mute", "admin"];
+const STAFF_ROLES = ["administrator", "moderator"];
 
 const state = {
   code: "",
@@ -20,7 +25,8 @@ const state = {
   retry: 0,
   touch: 0,
   onEvent: null,
-  busy: false
+  busy: false,
+  permTarget: null
 };
 
 export function getRoomMgmt() {
@@ -259,19 +265,37 @@ function render() {
       const isSelf = state.me && String(member.userId) === String(state.me.id);
       if (canManage && !isHost) {
         const select = el("select", { class: "mgmt-role-select", "aria-label": t("room.memberList") });
-        for (const value of ["moderator", "member", "guest"]) {
+        for (const value of ROLE_OPTIONS) {
           const option = el("option", { value, text: roleLabel(value) });
           if (member.role === value) option.selected = true;
           select.append(option);
         }
-        if (!["moderator", "member", "guest"].includes(member.role)) select.value = "guest";
+        if (!ROLE_OPTIONS.includes(member.role)) {
+          const option = el("option", { value: member.role || "guest", text: roleLabel(member.role) });
+          option.selected = true;
+          option.disabled = true;
+          select.append(option);
+        }
         select.addEventListener("change", () => setRole(member, select.value, select));
         row.append(select);
       } else {
         row.append(el("span", { class: "mgmt-role-badge", text: roleLabel(member.role) }));
       }
 
-      const canKick = !isHost && !isSelf && (canManage || (canModerate && member.role !== "moderator"));
+      if (canManage && !isHost && STAFF_ROLES.includes(member.role)) {
+        row.append(el("button", {
+          type: "button",
+          class: "btn btn-ghost btn-sm",
+          text: t("people.permissions"),
+          "aria-pressed": String(state.permTarget === String(member.userId)),
+          onClick: () => {
+            state.permTarget = state.permTarget === String(member.userId) ? null : String(member.userId);
+            render();
+          }
+        }));
+      }
+
+      const canKick = !isHost && !isSelf && (canManage || (canModerate && !["moderator", "administrator"].includes(member.role)));
       if (canKick) {
         row.append(el("button", {
           type: "button",
@@ -283,6 +307,15 @@ function render() {
       list.append(row);
     }
     card.append(list);
+  }
+
+  const permMember = state.permTarget
+    ? state.members.find((m) => String(m.userId) === state.permTarget)
+    : null;
+  if (state.permTarget && (!permMember || !canManage || !STAFF_ROLES.includes(permMember.role))) {
+    state.permTarget = null;
+  } else if (permMember) {
+    card.append(buildPermissions(permMember));
   }
 
   if (canManage) {
@@ -563,12 +596,57 @@ function buildClose() {
   return box;
 }
 
+function buildPermissions(member) {
+  const box = el("div", { class: "mgmt-block" });
+  box.append(el("h3", { class: "mgmt-sub", text: `${t("people.permissions")} — ${memberName(member)}` }));
+
+  const grid = el("div", { class: "mgmt-grid" });
+  const checks = {};
+  for (const key of PERM_KEYS) {
+    const input = el("input", { type: "checkbox" });
+    input.checked = member.permissions?.[key] === true;
+    checks[key] = input;
+    grid.append(el("label", { class: "mgmt-check" }, [input, el("span", { text: t(`perm.${key}`) })]));
+  }
+  box.append(grid);
+
+  const save = el("button", { type: "button", class: "btn btn-primary btn-sm", text: t("people.savePerms") });
+  const cancel = el("button", { type: "button", class: "btn btn-ghost btn-sm", text: t("common.cancel") });
+  const row = el("div", { class: "mgmt-inline single" }, [save, cancel]);
+
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    const permissions = {};
+    for (const key of PERM_KEYS) permissions[key] = checks[key].checked === true;
+    try {
+      await apiFetch(`/rooms/${enc(state.code)}/members/${enc(member.userId)}/permissions`, {
+        method: "POST",
+        body: { permissions },
+        timeoutMs: 12000
+      });
+      toast(t("people.permsSaved", { name: member.nick || member.username || "" }), "success");
+      state.permTarget = null;
+      await refresh();
+    } catch (err) {
+      toast(errorText(err), "error");
+      save.disabled = false;
+    }
+  });
+  cancel.addEventListener("click", () => {
+    state.permTarget = null;
+    render();
+  });
+
+  box.append(row);
+  return box;
+}
+
 async function setRole(member, role, select) {
   select.disabled = true;
   try {
     await apiFetch(`/rooms/${enc(state.code)}/members/${enc(member.userId)}/role`, {
       method: "POST",
-      body: { role },
+      body: { role, permissions: {} },
       timeoutMs: 12000
     });
     toast(t("room.saved"), "success");

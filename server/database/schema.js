@@ -1176,5 +1176,33 @@ export const MIGRATIONS = [
            ELSE 'open' END`
       ).run();
     }
+  },
+  {
+    version: 20,
+    name: "room-member-roles-and-permissions",
+    up(db) {
+      db.exec(`
+        CREATE TABLE room_memberships_v20 (
+          id TEXT PRIMARY KEY,
+          room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('host','administrator','moderator','member','guest')),
+          permissions_json TEXT NOT NULL DEFAULT '{}',
+          joined_at INTEGER NOT NULL,
+          left_at INTEGER,
+          last_seen_at INTEGER,
+          muted_until INTEGER,
+          UNIQUE (room_id, user_id)
+        );
+        INSERT INTO room_memberships_v20
+          (id, room_id, user_id, role, permissions_json, joined_at, left_at, last_seen_at, muted_until)
+        SELECT id, room_id, user_id, role, '{}', joined_at, left_at, last_seen_at, muted_until
+        FROM room_memberships;
+        DROP TABLE room_memberships;
+        ALTER TABLE room_memberships_v20 RENAME TO room_memberships;
+        CREATE INDEX IF NOT EXISTS idx_room_members_user ON room_memberships(user_id, joined_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_room_members_room ON room_memberships(room_id, left_at);
+      `);
+    }
   }
 ];
