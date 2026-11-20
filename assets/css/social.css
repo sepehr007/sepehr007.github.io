@@ -171,3 +171,25 @@
   .ticket-staff-row{grid-template-columns:1fr 1fr}
   .ticket-staff-row .btn{grid-column:1 / -1}
 }
+
+/* help center, notification mutes and ticket attachments */
+.help-center{padding:16px;display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.help-center h3{margin:0}
+.help-center input[type="search"]{width:100%}
+.help-faq{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
+.help-faq-item{border:1px solid var(--border);border-radius:12px;background:var(--surface-2,var(--surface));padding:10px 12px}
+.help-faq-item summary{cursor:pointer;font-weight:600;font-size:13px;outline:none}
+.help-faq-item[open] summary{margin-bottom:6px}
+.help-faq-item p{margin:0;color:var(--muted);font-size:13px;line-height:1.8}
+.help-results{display:flex;flex-direction:column;gap:8px}
+.help-article{border:1px solid var(--border);border-radius:12px;padding:10px 12px}
+.help-article h4{margin:0 0 4px;font-size:13px}
+.help-article p{margin:0;color:var(--muted);font-size:13px;line-height:1.8}
+.notif-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mute-scope{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.mute-scope h4{margin:0;font-size:13px}
+.mute-list{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
+.mute-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:10px}
+.ticket-msg.system{background:transparent;border-style:dashed;color:var(--muted);font-size:12px}
+.attach-note.attach-image{display:flex;flex-direction:column;gap:6px}
+.attach-note.attach-image img{max-width:100%;max-height:220px;object-fit:contain;border-radius:10px;border:1px solid var(--border)}

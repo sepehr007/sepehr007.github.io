@@ -6,6 +6,7 @@ import { requireAuth } from "./auth.js";
 import { ensureStore } from "../userStore.js";
 import { sqlPlans, sqlSubscriptionState, sqlCreateOrder } from "../stores/billing.js";
 import { audit } from "../audit.js";
+import { deliverNotice } from "../notify.js";
 import { resolveFeatureState, isEnabled } from "../features.js";
 
 const DEFAULT_PLANS = [
@@ -97,6 +98,17 @@ export default async function billingRoutes(app) {
         targetId: plan.id,
         meta: { amount: plan.price, currency: plan.currency, duplicate: result.duplicate }
       });
+      if (!result.duplicate && result.order?.id) {
+        const money = `${Number(plan.price || 0).toLocaleString("fa-IR")} ${plan.currency === "IRT" ? "تومان" : plan.currency}`;
+        await deliverNotice(req.server, req.auth.userId, {
+          kind: "payment",
+          title: "سفارش اشتراک ثبت شد",
+          body: `پلن ${plan.name} · ${money} · برای تکمیل پرداخت با تو هماهنگ می‌کنیم.`,
+          link: "profile.html#planCard",
+          dedupeKey: `order:${result.order.id}`,
+          dedupeWindowMs: 60 * 60_000
+        });
+      }
       return { ok: true, duplicate: result.duplicate, order: result.order };
     }
     const plans = await ensurePlans();

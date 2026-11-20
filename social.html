@@ -202,9 +202,15 @@
         <div class="social-empty" id="notifEmpty" hidden>
           <span data-i18n="social.notifEmpty">اعلان تازه‌ای نیست.</span>
         </div>
+        <button class="btn btn-secondary btn-sm" id="notifLoadMore" type="button" hidden data-i18n="social.notifMore">اعلان‌های قدیمی‌تر</button>
         <form class="social-form card" id="notifPrefsForm" autocomplete="off">
           <h3 data-i18n="social.notifPrefs">تنظیمات اعلان</h3>
           <p class="hint" data-i18n="social.notifPrefsHint">هر مورد را خاموش کنی، اعلان آن نوع ساخته نمی‌شود. ساعت سکوت، اعلان‌ها را در آن بازه نگه می‌دارد.</p>
+          <p class="hint" id="notifQuietActive" hidden data-i18n="social.notifQuietActive">الان ساعت سکوت است؛ اعلان‌ها فقط در تاریخچه ذخیره می‌شوند.</p>
+          <div class="social-toolbar">
+            <button class="btn btn-secondary btn-sm" id="notifPushBtn" type="button" data-i18n="social.notifPushEnable">فعال‌سازی پوش مرورگر</button>
+            <span class="hint" id="notifPushState"></span>
+          </div>
           <div class="pref-grid" id="notifKindGrid">
             <label class="pref-check"><input type="checkbox" data-kind="all"> <span data-i18n="social.kind.all">همهٔ اعلان‌ها</span></label>
             <label class="pref-check"><input type="checkbox" data-kind="dm_message"> <span data-i18n="social.kind.dm_message">پیام خصوصی</span></label>
@@ -212,8 +218,13 @@
             <label class="pref-check"><input type="checkbox" data-kind="friend_accept"> <span data-i18n="social.kind.friend_accept">پذیرش دوستی</span></label>
             <label class="pref-check"><input type="checkbox" data-kind="mention"> <span data-i18n="social.kind.mention">منشن در چت</span></label>
             <label class="pref-check"><input type="checkbox" data-kind="room_invite"> <span data-i18n="social.kind.room_invite">دعوت به اتاق</span></label>
-            <label class="pref-check"><input type="checkbox" data-kind="support_reply"> <span data-i18n="social.kind.support_reply">پاسخ پشتیبانی</span></label>
-            <label class="pref-check"><input type="checkbox" data-kind="system"> <span data-i18n="social.kind.system">اطلاعیهٔ سایت</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="room_activity"> <span data-i18n="social.kind.room_activity">رویداد اتاق</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="poll"> <span data-i18n="social.kind.poll">نظرسنجی</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="moderation"> <span data-i18n="social.kind.moderation">مدیریت و گزارش</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="support_new"> <span data-i18n="social.kind.support_new">تیکت تازه (کارکنان)</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="support_update"> <span data-i18n="social.kind.support_update">به‌روزرسانی تیکت</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="payment"> <span data-i18n="social.kind.payment">پرداخت</span></label>
+            <label class="pref-check"><input type="checkbox" data-kind="security"> <span data-i18n="social.kind.security">امنیت حساب</span></label>
           </div>
           <div class="look-grid">
             <label class="look-field">
@@ -224,6 +235,15 @@
               <span data-i18n="social.quietTo">پایان سکوت</span>
               <input type="time" id="quietTo">
             </label>
+          </div>
+          <div class="mute-scope">
+            <h4 data-i18n="social.notifRoomMute">سکوت اتاق</h4>
+            <p class="hint" data-i18n="social.notifRoomMuteHint">کد اتاقی که نمی‌خواهی از آن اعلان بگیری را اضافه کن. رویداد اتاق و نظرسنجی آن اتاق دیگر اعلان نمی‌سازد.</p>
+            <div class="social-toolbar">
+              <input id="muteRoomInput" type="text" dir="ltr" maxlength="16" placeholder="کد اتاق" data-i18n-ph="social.pollsRoom">
+              <button class="btn btn-secondary btn-sm" id="muteRoomAdd" type="button" data-i18n="social.notifMuteAdd">افزودن</button>
+            </div>
+            <ul class="mute-list" id="muteRoomList"></ul>
           </div>
           <p class="form-msg" id="notifPrefsMsg" role="alert"></p>
           <button class="btn btn-primary btn-sm" type="submit" data-i18n="social.save">ذخیره</button>
@@ -338,6 +358,16 @@
           <h2 data-i18n="social.supportTitle">مرکز پشتیبانی</h2>
           <span class="badge" id="supportStaffBadge" hidden data-i18n="social.supportStaffAll">نمای کارکنان</span>
         </div>
+        <section class="help-center card" id="helpCenter">
+          <h3 data-i18n="social.helpTitle">راهنما و پرسش‌های پرتکرار</h3>
+          <p class="hint" data-i18n="social.helpHint">جواب را همین‌جا پیدا کن؛ اگر نبود، تیکت بزن.</p>
+          <input id="helpSearch" type="search" maxlength="80" placeholder="جست‌وجو در راهنما…" data-i18n-ph="social.helpSearch">
+          <div class="help-results" id="helpResults"></div>
+          <ul class="help-faq" id="helpFaq"></ul>
+          <div class="social-empty" id="helpEmpty" hidden>
+            <span data-i18n="social.helpEmpty">چیزی پیدا نشد؛ تیکت بزن تا جواب بگیریم.</span>
+          </div>
+        </section>
         <form class="social-form card" id="ticketForm" autocomplete="off">
           <h3 data-i18n="social.supportNew">تیکت تازه</h3>
           <label class="field">
@@ -369,6 +399,11 @@
             <span data-i18n="social.supportBody">توضیح</span>
             <textarea id="ticketBody" rows="4" maxlength="4000"></textarea>
           </label>
+          <label class="field">
+            <span data-i18n="social.supportAttachment">پیوست (اختیاری)</span>
+            <input id="ticketAttachment" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain">
+            <small class="hint" data-i18n="social.supportAttachmentHint">تصویر، PDF یا TXT تا ۴۰۰ کیلوبایت.</small>
+          </label>
           <p class="form-msg" id="ticketMsg" role="alert"></p>
           <button class="btn btn-primary btn-sm" type="submit" data-i18n="social.supportCreate">ثبت تیکت</button>
         </form>
@@ -390,6 +425,10 @@
               <span data-i18n="social.supportReply">ارسال پاسخ</span>
               <textarea id="ticketReplyBody" rows="3" maxlength="4000" placeholder="پاسخ یا توضیح تکمیلی…" data-i18n-ph="social.supportReplyPh"></textarea>
             </label>
+            <label class="field">
+              <span data-i18n="social.supportAttachment">پیوست (اختیاری)</span>
+              <input id="ticketReplyAttachment" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain">
+            </label>
             <div class="ticket-staff-row" id="ticketStaffRow" hidden>
               <label class="field">
                 <span data-i18n="social.supportStatus">وضعیت</span>
@@ -408,6 +447,16 @@
                   <option value="high" data-i18n="social.priority.high">زیاد</option>
                   <option value="urgent" data-i18n="social.priority.urgent">فوری</option>
                 </select>
+              </label>
+              <label class="field">
+                <span data-i18n="social.supportAssignee">ارجاع به</span>
+                <select id="ticketAssignee">
+                  <option value="" data-i18n="social.supportUnassigned">بدون ارجاع</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="social.supportResolution">راه‌حل / نتیجه</span>
+                <textarea id="ticketResolution" rows="2" maxlength="2000"></textarea>
               </label>
               <button class="btn btn-secondary btn-sm" id="ticketStatusSave" type="button" data-i18n="social.save">ذخیره</button>
             </div>

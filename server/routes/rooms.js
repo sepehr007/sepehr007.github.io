@@ -21,6 +21,7 @@ import {
 } from "../stores/watchRooms.js";
 import { sqlCreateInvite, sqlListInvites, sqlRevokeInvite } from "../stores/social.js";
 import { discoverRooms, suggestRooms, recommendRooms } from "../stores/discover.js";
+import { deliverNotice } from "../notify.js";
 
 const AUTH = [requireAuth];
 
@@ -166,6 +167,15 @@ export default async function roomRoutes(app) {
     notifyRoom(req, result.room.code, { type: "room-event", event: "joined", code: result.room.code });
     if (result.room.manager?.id && result.room.manager.id !== req.auth.userId) {
       notifyUser(req, result.room.manager.id, "guest-joined", { code: result.room.code, memberCount: result.memberCount });
+      await deliverNotice(req.server, result.room.manager.id, {
+        kind: "room_activity",
+        title: "عضو تازه در اتاق",
+        body: `${req.auth.username || "کاربر"} به «${result.room.name || result.room.code}» پیوست.`,
+        link: "room.html?code=" + encodeURIComponent(result.room.code),
+        dedupeKey: `room_join:${result.room.code}:${req.auth.userId}`,
+        dedupeWindowMs: 10 * 60_000,
+        room: result.room.code
+      });
     }
     return { ok: true, ...result };
   }));

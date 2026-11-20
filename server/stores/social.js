@@ -150,6 +150,12 @@ function friendshipRequest(db, fromUser, toUser) {
 
 /* ------------------------------------------------------------------ people */
 
+export async function sqlFindUserByUsername(username) {
+  const db = await conn();
+  const row = userRowByUsername(db, username);
+  return row ? mapUser(row) : null;
+}
+
 export async function sqlListPeople(userId, q = "", limit = 20) {
   const db = await conn();
   const size = pageLimit(limit, 20, 50);
@@ -260,7 +266,6 @@ export async function sqlSendFriendRequest(userId, username, message = "") {
     }
     throw err;
   }
-  createNotification(db, target.id, "friend_request", `${me.username} درخواست دوستی فرستاد`, body, "/friends");
   return {
     id,
     from: mapUser(me),
@@ -290,10 +295,6 @@ export async function sqlRespondFriendRequest(userId, requestId, accept) {
         .run(crypto.randomUUID(), a, b, now);
     }
   });
-  if (accept) {
-    const me = userRowById(db, userId);
-    createNotification(db, request.from_user, "friend_accept", `${me?.username || "کاربر"} درخواست دوستی را پذیرفت`, "", "/friends");
-  }
   return {
     id: request.id,
     from: mapUser(userRowById(db, request.from_user)),
@@ -559,8 +560,6 @@ export async function sqlSendDmMessage(userId, conversationId, body, attachment)
       .run(id, String(conversationId), String(userId), text, attachmentJson, now);
     connection.prepare("UPDATE dm_conversations SET updated_at = ? WHERE id = ?").run(now, String(conversationId));
   });
-  const sender = userRowById(db, userId);
-  createNotification(db, peerId, "dm_message", `پیام تازه از ${sender?.username || "کاربر"}`, text.slice(0, 120), `/dm/${conversationId}`);
   return mapDmMessage(db.prepare("SELECT * FROM dm_messages WHERE id = ?").get(id), userId, []);
 }
 
@@ -1112,6 +1111,8 @@ export async function sqlAcceptInvite(userId, rawCode) {
   const codeHash = crypto.createHash("sha256").update(code).digest("hex");
   const now = nowMs();
   let roomCode = null;
+  let roomName = "";
+  let inviterId = "";
   let inviteId = "";
   transaction((connection) => {
     const row = connection
@@ -1135,7 +1136,7 @@ export async function sqlAcceptInvite(userId, rawCode) {
     if (!Number(info.changes || 0)) fail(409, "invite_exhausted", "This invite has no uses left.");
     if (row.room_id) {
       const room = connection
-        .prepare("SELECT id, room_code, is_active, deleted_at FROM rooms WHERE id = ?")
+        .prepare("SELECT id, room_code, name, is_active, deleted_at FROM rooms WHERE id = ?")
         .get(row.room_id);
       if (!room || room.deleted_at || !room.is_active) fail(410, "invite_expired", "This room is no longer available.");
       connection
@@ -1153,10 +1154,12 @@ export async function sqlAcceptInvite(userId, rawCode) {
         )
         .run(room.id, room.id);
       roomCode = room.room_code;
+      roomName = room.name || room.room_code;
     }
+    inviterId = String(row.created_by || "");
     inviteId = row.id;
   });
-  return { invite: mapInvite(inviteRow(db, inviteId)), roomCode };
+  return { invite: mapInvite(inviteRow(db, inviteId)), roomCode, roomName, inviterId };
 }
 
 /* --------------------------------------------------------------- history */
@@ -1320,6 +1323,20 @@ export async function sqlListPolls(userId, role, roomCode) {
     .map((row) => mapPoll(db, row, userId));
 }
 
+/* Everyone who should hear about poll changes: host plus current members. */
+export async function sqlPollAudience(roomCode) {
+  const db = await conn();
+  const room = roomByCode(db, roomCode);
+  const ids = new Set();
+  if (room.host_id) ids.add(String(room.host_id));
+  for (const row of db
+    .prepare("SELECT user_id FROM room_memberships WHERE room_id = ? AND left_at IS NULL")
+    .all(room.id)) {
+    ids.add(String(row.user_id));
+  }
+  return { ids: [...ids], roomCode: room.room_code, name: room.name || room.room_code };
+}
+
 export async function sqlCreatePoll(userId, role, { roomCode, question, options, multi = false, anonymous = true, closesInMinutes }) {
   const db = await conn();
   const room = roomByCode(db, roomCode);
@@ -1407,7 +1424,7 @@ export async function sqlDeletePoll(userId, role, pollId) {
   const { poll, room } = pollWithRoom(db, pollId);
   if (!canManagePoll(db, userId, role, poll, room)) fail(403, "forbidden", "Only the creator, room host or staff can delete this poll.");
   db.prepare("DELETE FROM room_polls WHERE id = ?").run(poll.id);
-  return { ok: true, id: poll.id };
+  return { ok: true, id: poll.id, poll: { id: poll.id, roomCode: poll.room_code, question: poll.question } };
 }
 
 /* ----------------------------------------------------------------- library */
@@ -1471,6 +1488,13 @@ export async function sqlDeleteLibraryItem(userId, itemId) {
 
 /* ----------------------------------------------------------------- support */
 
+const TICKET_STATUS_LABELS = {
+  open: "باز",
+  pending: "در انتظار",
+  resolved: "حل‌شده",
+  closed: "بسته"
+};
+
 function mapTicket(row, messages = null) {
   if (!row) return null;
   return {
@@ -1480,10 +1504,26 @@ function mapTicket(row, messages = null) {
     category: row.category,
     priority: row.priority,
     status: row.status,
+    assignedTo: row.assigned_to || null,
+    assignee: row.assignee_username
+      ? { id: row.assigned_to, username: row.assignee_username, nick: row.assignee_nick || row.assignee_username }
+      : null,
+    resolvedAt: row.resolved_at ? Number(row.resolved_at) : null,
+    resolution: row.resolution || "",
     createdAt: Number(row.created_at || 0),
     updatedAt: Number(row.updated_at || 0),
     ...(messages ? { messages } : {})
   };
+}
+
+function ticketWithAssignee(db, ticketId) {
+  return db
+    .prepare(
+      `SELECT t.*, u.username AS assignee_username, u.nick AS assignee_nick
+       FROM support_tickets t LEFT JOIN users u ON u.id = t.assigned_to
+       WHERE t.id = ?`
+    )
+    .get(String(ticketId));
 }
 
 function ticketMessages(db, ticketId) {
@@ -1494,18 +1534,49 @@ function ticketMessages(db, ticketId) {
       id: row.id,
       author: mapUser(userRowById(db, row.author_id)),
       body: row.body,
+      kind: row.kind || "message",
       attachment: safeJson(row.attachment_json, null),
       createdAt: Number(row.created_at || 0)
     }));
 }
 
-export async function sqlCreateTicket(userId, { subject, category = "general", priority = "normal", body = "" }) {
+function cleanAttachment(raw) {
+  if (raw === undefined || raw === null || raw === "") return "";
+  if (typeof raw !== "object" || Array.isArray(raw)) fail(400, "invalid_attachment", "Attachment must be an object.");
+  const name = cleanText(raw.name, 80) || "file";
+  const type = cleanText(raw.type, 60).toLowerCase();
+  const data = String(raw.data || "");
+  const allowed =
+    /^image\/(png|jpeg|webp|gif)$/.test(type) || type === "application/pdf" || type === "text/plain";
+  if (!allowed) fail(400, "invalid_attachment", "Only PNG, JPEG, WebP, GIF, PDF or TXT attachments are allowed.");
+  if (!data.startsWith(`data:${type};base64,`)) fail(400, "invalid_attachment", "Attachment data is invalid.");
+  if (data.length > 560_000) fail(400, "attachment_too_large", "Attachments must be smaller than 400 KB.");
+  return JSON.stringify({
+    name,
+    type,
+    size: Number.isFinite(Number(raw.size)) ? Math.max(0, Math.round(Number(raw.size))) : Math.round((data.length * 3) / 4),
+    url: data
+  });
+}
+
+function saveSupportMessage(connection, ticketId, authorId, body, attachmentJson, kind = "message", at = nowMs()) {
+  connection
+    .prepare(
+      `INSERT INTO support_messages (id, ticket_id, author_id, body, attachment_json, kind, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(crypto.randomUUID(), String(ticketId), authorId ? String(authorId) : null, body, attachmentJson, kind, at);
+}
+
+export async function sqlCreateTicket(userId, { subject, category = "general", priority = "normal", body = "", attachment = null }) {
   const db = await conn();
   const title = cleanText(subject, 160);
   if (title.length < 3) fail(400, "invalid_subject", "Subject must be at least 3 characters.");
   const cat = cleanText(category, 40) || "general";
   const level = TICKET_PRIORITIES.includes(String(priority)) ? String(priority) : "normal";
   const text = cleanText(body, 4000);
+  const attachmentJson = cleanAttachment(attachment);
+  if (!text && !attachmentJson) fail(400, "empty_message", "Describe the issue in the ticket.");
   const id = crypto.randomUUID();
   const now = nowMs();
   transaction((connection) => {
@@ -1515,31 +1586,30 @@ export async function sqlCreateTicket(userId, { subject, category = "general", p
          VALUES (?, ?, ?, ?, ?, 'open', ?, ?)`
       )
       .run(id, String(userId), title, cat, level, now, now);
-    if (text) {
-      connection
-        .prepare(
-          `INSERT INTO support_messages (id, ticket_id, author_id, body, attachment_json, created_at)
-           VALUES (?, ?, ?, ?, '', ?)`
-        )
-        .run(crypto.randomUUID(), id, String(userId), text, now);
-    }
+    saveSupportMessage(connection, id, userId, text, attachmentJson, "message", now);
   });
-  return mapTicket(db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(id), ticketMessages(db, id));
+  return mapTicket(ticketWithAssignee(db, id), ticketMessages(db, id));
 }
 
 export async function sqlListTickets(userId, role, { status = "", limit = 25, offset = 0 } = {}) {
   const db = await conn();
   const size = pageLimit(limit, 25, 50);
   const skip = Math.max(0, Math.floor(toNumber(offset, 0)));
-  const statusFilter = TICKET_STATUSES.includes(String(status)) ? "AND status = ?" : "";
+  const statusFilter = TICKET_STATUSES.includes(String(status)) ? "AND t.status = ?" : "";
   const statusParams = statusFilter ? [String(status)] : [];
   const rows = isStaff(role)
     ? db
-        .prepare(`SELECT * FROM support_tickets WHERE 1 = 1 ${statusFilter} ORDER BY updated_at DESC LIMIT ? OFFSET ?`)
+        .prepare(
+          `SELECT t.*, u.username AS assignee_username, u.nick AS assignee_nick
+           FROM support_tickets t LEFT JOIN users u ON u.id = t.assigned_to
+           WHERE 1 = 1 ${statusFilter} ORDER BY t.updated_at DESC LIMIT ? OFFSET ?`
+        )
         .all(...statusParams, size, skip)
     : db
         .prepare(
-          `SELECT * FROM support_tickets WHERE user_id = ? ${statusFilter} ORDER BY updated_at DESC LIMIT ? OFFSET ?`
+          `SELECT t.*, u.username AS assignee_username, u.nick AS assignee_nick
+           FROM support_tickets t LEFT JOIN users u ON u.id = t.assigned_to
+           WHERE t.user_id = ? ${statusFilter} ORDER BY t.updated_at DESC LIMIT ? OFFSET ?`
         )
         .all(String(userId), ...statusParams, size, skip);
   const owners = new Map();
@@ -1551,38 +1621,56 @@ export async function sqlListTickets(userId, role, { status = "", limit = 25, of
 
 export async function sqlGetTicket(userId, role, ticketId) {
   const db = await conn();
-  const row = db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(String(ticketId));
+  const row = ticketWithAssignee(db, ticketId);
   if (!row) fail(404, "ticket_not_found", "That support ticket does not exist.");
   if (String(row.user_id) !== String(userId) && !isStaff(role)) fail(403, "forbidden", "You cannot view this ticket.");
   return { ...mapTicket(row, ticketMessages(db, ticketId)), user: mapUser(userRowById(db, row.user_id)) };
 }
 
-export async function sqlAddTicketMessage(userId, role, ticketId, body) {
+export async function sqlAddTicketMessage(userId, role, ticketId, body, attachment = null) {
   const db = await conn();
   const row = db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(String(ticketId));
   if (!row) fail(404, "ticket_not_found", "That support ticket does not exist.");
   if (String(row.user_id) !== String(userId) && !isStaff(role)) fail(403, "forbidden", "You cannot reply to this ticket.");
+  if (row.status === "closed" && !isStaff(role)) fail(409, "ticket_closed", "This ticket is closed. Open a new one or ask staff to reopen it.");
   const text = cleanText(body, 4000);
-  if (!text) fail(400, "empty_message", "Message body cannot be empty.");
+  const attachmentJson = cleanAttachment(attachment);
+  if (!text && !attachmentJson) fail(400, "empty_message", "Message body cannot be empty.");
   const now = nowMs();
   transaction((connection) => {
+    saveSupportMessage(connection, row.id, userId, text, attachmentJson, "message", now);
     connection
       .prepare(
-        `INSERT INTO support_messages (id, ticket_id, author_id, body, attachment_json, created_at)
-         VALUES (?, ?, ?, ?, '', ?)`
+        "UPDATE support_tickets SET updated_at = ?, status = CASE WHEN status = 'closed' THEN 'pending' ELSE status END WHERE id = ?"
       )
-      .run(crypto.randomUUID(), row.id, String(userId), text, now);
-    connection
-      .prepare("UPDATE support_tickets SET updated_at = ?, status = CASE WHEN status = 'closed' THEN 'pending' ELSE status END WHERE id = ?")
       .run(now, row.id);
   });
-  if (isStaff(role) && String(row.user_id) !== String(userId)) {
-    createNotification(db, row.user_id, "support_reply", "پاسخ تازه به تیکت پشتیبانی", text.slice(0, 120), `/support/${row.id}`);
-  }
   return sqlGetTicket(userId, role, row.id);
 }
 
-export async function sqlPatchTicket(userId, role, ticketId, { status, priority } = {}) {
+export async function sqlListSupportAgents() {
+  const db = await conn();
+  const placeholders = STAFF_ROLES.map(() => "?").join(",");
+  return db
+    .prepare(
+      `SELECT * FROM users WHERE role IN (${placeholders}) AND deleted_at IS NULL ORDER BY role DESC, username ASC LIMIT 50`
+    )
+    .all(...STAFF_ROLES)
+    .map(mapUser);
+}
+
+export async function sqlListStaffIds() {
+  const db = await conn();
+  const placeholders = STAFF_ROLES.map(() => "?").join(",");
+  return db
+    .prepare(`SELECT id FROM users WHERE role IN (${placeholders}) AND deleted_at IS NULL LIMIT 100`)
+    .all(...STAFF_ROLES)
+    .map((row) => String(row.id));
+}
+
+/* Staff-only: priority / status / assignment / resolution. Returns the fresh
+   ticket plus an `events` block so the route can notify the right people. */
+export async function sqlPatchTicket(userId, role, ticketId, { status, priority, assignedTo, resolution } = {}) {
   const db = await conn();
   if (!isStaff(role)) fail(403, "forbidden", "Only staff can change ticket status.");
   const row = db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(String(ticketId));
@@ -1591,13 +1679,52 @@ export async function sqlPatchTicket(userId, role, ticketId, { status, priority 
   if (!TICKET_STATUSES.includes(nextStatus)) fail(400, "invalid_status", "Ticket status is not valid.");
   const nextPriority = priority === undefined ? row.priority : cleanText(priority, 20);
   if (!TICKET_PRIORITIES.includes(nextPriority)) fail(400, "invalid_priority", "Ticket priority is not valid.");
-  db.prepare("UPDATE support_tickets SET status = ?, priority = ?, updated_at = ? WHERE id = ?").run(
-    nextStatus,
-    nextPriority,
-    nowMs(),
-    row.id
-  );
-  return sqlGetTicket(userId, role, row.id);
+  let nextAssignee = row.assigned_to || null;
+  if (assignedTo !== undefined) {
+    const raw = String(assignedTo || "").trim();
+    if (!raw) {
+      nextAssignee = null;
+    } else {
+      const agent = db.prepare("SELECT id, role FROM users WHERE id = ? AND deleted_at IS NULL").get(raw);
+      if (!agent || !isStaff(agent.role)) fail(400, "invalid_assignee", "Assign tickets to support staff only.");
+      nextAssignee = String(agent.id);
+    }
+  }
+  const nextResolution = resolution === undefined ? row.resolution || "" : cleanText(resolution, 2000);
+  const now = nowMs();
+  let resolvedAt = row.resolved_at ? Number(row.resolved_at) : null;
+  if (nextStatus === "resolved" && row.status !== "resolved") resolvedAt = now;
+  if (nextStatus !== "resolved") resolvedAt = null;
+
+  const statusChanged = nextStatus !== row.status;
+  const assigneeChanged = (nextAssignee || "") !== (row.assigned_to || "");
+  const changes = [];
+  if (statusChanged) changes.push(`وضعیت به «${TICKET_STATUS_LABELS[nextStatus]}» تغییر کرد.`);
+  if (assigneeChanged) changes.push(nextAssignee ? "تیکت به یکی از کارکنان پشتیبانی ارجاع شد." : "ارجاع تیکت برداشته شد.");
+  if (nextPriority !== row.priority) changes.push("اولویت تیکت به‌روزرسانی شد.");
+
+  transaction((connection) => {
+    connection
+      .prepare(
+        `UPDATE support_tickets
+         SET status = ?, priority = ?, assigned_to = ?, resolved_at = ?, resolution = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(nextStatus, nextPriority, nextAssignee, resolvedAt, nextResolution, now, row.id);
+    if (changes.length) saveSupportMessage(connection, row.id, userId, changes.join(" "), "", "system", now);
+  });
+
+  const ticket = await sqlGetTicket(userId, role, row.id);
+  return {
+    ...ticket,
+    events: {
+      statusChanged,
+      previousStatus: row.status,
+      assigneeChanged,
+      assignedTo: nextAssignee,
+      resolution: nextResolution
+    }
+  };
 }
 
 /* ----------------------------------------------------------- notifications */
@@ -1611,6 +1738,7 @@ export function mapNotification(row) {
     body: row.body || "",
     link: row.link || "",
     read: Boolean(row.read_at),
+    delivered: Boolean(row.delivered_at),
     createdAt: Number(row.created_at || 0)
   };
 }
@@ -1634,35 +1762,90 @@ function notificationPrefsRow(db, userId) {
   return db.prepare("SELECT * FROM notification_prefs WHERE user_id = ?").get(String(userId));
 }
 
-function notificationAllowed(db, userId, kind) {
-  const row = notificationPrefsRow(db, userId);
-  if (!row) return true;
-  const prefs = safeJson(row.prefs_json, {});
-  if (prefs.all === false || prefs[kind] === false) return false;
+function quietWindowActive(row) {
+  if (!row) return false;
   const from = row.quiet_from === null || row.quiet_from === undefined ? null : Number(row.quiet_from);
   const to = row.quiet_to === null || row.quiet_to === undefined ? null : Number(row.quiet_to);
-  if (from === null || to === null || from === to) return true;
+  if (from === null || to === null || from === to) return false;
   const now = new Date();
   const minute = now.getHours() * 60 + now.getMinutes();
-  const inQuiet = from < to ? minute >= from && minute < to : minute >= from || minute < to;
-  return !inQuiet;
+  return from < to ? minute >= from && minute < to : minute >= from || minute < to;
 }
 
-export function createNotification(db, userId, kind, title, body = "", link = "") {
+function scopeMuted(prefs, room, server) {
+  if (room) {
+    const rooms = prefs.rooms && typeof prefs.rooms === "object" ? prefs.rooms : {};
+    const code = String(room).toUpperCase();
+    if (rooms[code] === false) return true;
+  }
+  if (server) {
+    const servers = prefs.servers && typeof prefs.servers === "object" ? prefs.servers : {};
+    if (servers[String(server)] === false) return true;
+  }
+  return false;
+}
+
+/* Creates one notification unless the user muted the category (or the room /
+   server), and dedupes identical events inside a time window. Quiet hours keep
+   the item in history but stop the realtime push. Returns
+   { id, push, ... } or null when nothing was stored. */
+export function createNotification(db, userId, kind, title, body = "", link = "", options = {}) {
   try {
-    if (!notificationAllowed(db, String(userId), String(kind))) return false;
+    const key = String(userId || "");
+    if (!key) return null;
+    const type = String(kind || "system").slice(0, 40);
+    const prefsRow = notificationPrefsRow(db, key);
+    const prefs = prefsRow ? safeJson(prefsRow.prefs_json, {}) : {};
+    if (prefs.all === false || prefs[type] === false) return null;
+    if (scopeMuted(prefs, options.room, options.server)) return null;
+    const dedupeKey = String(options.dedupeKey || "").slice(0, 120);
+    const windowMs = Math.max(30_000, Number(options.dedupeWindowMs) || 5 * 60_000);
+    const now = nowMs();
+    if (dedupeKey) {
+      const dup = db
+        .prepare(
+          "SELECT 1 AS hit FROM notifications WHERE user_id = ? AND dedupe_key = ? AND created_at > ? LIMIT 1"
+        )
+        .get(key, dedupeKey, now - windowMs);
+      if (dup) return null;
+    }
+    const id = crypto.randomUUID();
+    const createdAt = now;
+    const expiresAt = options.expiresAt ? Number(options.expiresAt) : now + 90 * 24 * 3600_000;
     db.prepare(
-      `INSERT INTO notifications (id, user_id, kind, title, body, link, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO notifications (id, user_id, kind, title, body, link, dedupe_key, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      crypto.randomUUID(),
-      String(userId),
-      String(kind).slice(0, 40),
+      id,
+      key,
+      type,
       String(title || "").slice(0, 160),
       String(body || "").slice(0, 600),
       String(link || "").slice(0, 300),
+      dedupeKey,
+      createdAt,
+      expiresAt
+    );
+    return {
+      id,
+      kind: type,
+      title: String(title || "").slice(0, 160),
+      body: String(body || "").slice(0, 600),
+      link: String(link || "").slice(0, 300),
+      createdAt,
+      push: !quietWindowActive(prefsRow)
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function markNotificationDelivered(db, userId, notificationId) {
+  try {
+    db.prepare("UPDATE notifications SET delivered_at = ? WHERE id = ? AND user_id = ?").run(
       nowMs(),
-      nowMs() + 90 * 24 * 3600_000
+      String(notificationId),
+      String(userId)
     );
     return true;
   } catch {
@@ -1670,23 +1853,33 @@ export function createNotification(db, userId, kind, title, body = "", link = ""
   }
 }
 
-export async function sqlCreateNotification(userId, kind, title, body = "", link = "") {
+export async function sqlCreateNotification(userId, kind, title, body = "", link = "", options = {}) {
   const db = await conn();
-  return createNotification(db, userId, kind, title, body, link);
+  return createNotification(db, userId, kind, title, body, link, options);
 }
 
-export async function sqlListNotifications(userId, { unread = false, limit = 30 } = {}) {
+export async function sqlListNotifications(userId, { unread = false, limit = 30, before = 0 } = {}) {
   const db = await conn();
   const size = pageLimit(limit, 30, 50);
-  const rows = unread
+  const cursor = Math.max(0, Number(before) || 0);
+  const where = unread ? "AND read_at IS NULL" : "";
+  const rows = cursor
     ? db
-        .prepare("SELECT * FROM notifications WHERE user_id = ? AND read_at IS NULL ORDER BY created_at DESC LIMIT ?")
-        .all(String(userId), size)
-    : db.prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?").all(String(userId), size);
+        .prepare(
+          `SELECT * FROM notifications WHERE user_id = ? ${where} AND created_at < ? ORDER BY created_at DESC, id DESC LIMIT ?`
+        )
+        .all(String(userId), cursor, size)
+    : db
+        .prepare(`SELECT * FROM notifications WHERE user_id = ? ${where} ORDER BY created_at DESC, id DESC LIMIT ?`)
+        .all(String(userId), size);
   const unreadCount = Number(
     db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL").get(String(userId))?.n || 0
   );
-  return { unread: unreadCount, notifications: rows.map(mapNotification) };
+  return {
+    unread: unreadCount,
+    notifications: rows.map(mapNotification),
+    nextBefore: rows.length === size ? Number(rows[rows.length - 1].created_at || 0) : null
+  };
 }
 
 export async function sqlMarkNotificationsRead(userId, ids) {
@@ -1715,10 +1908,14 @@ export async function sqlMarkAllNotificationsRead(userId) {
 export async function sqlGetNotificationPrefs(userId) {
   const db = await conn();
   const row = notificationPrefsRow(db, userId);
+  const prefs = row ? safeJson(row.prefs_json, {}) : {};
   return {
-    prefs: row ? safeJson(row.prefs_json, {}) : {},
+    prefs,
+    rooms: prefs.rooms && typeof prefs.rooms === "object" ? prefs.rooms : {},
+    servers: prefs.servers && typeof prefs.servers === "object" ? prefs.servers : {},
     quietFrom: row?.quiet_from === null || row?.quiet_from === undefined ? null : Number(row.quiet_from),
     quietTo: row?.quiet_to === null || row?.quiet_to === undefined ? null : Number(row.quiet_to),
+    quietActive: quietWindowActive(row),
     updatedAt: row ? Number(row.updated_at || 0) : null
   };
 }
@@ -1730,6 +1927,17 @@ export async function sqlPutNotificationPrefs(userId, { prefs = {}, quietFrom = 
     for (const [key, value] of Object.entries(prefs).slice(0, 40)) {
       const name = cleanText(key, 40);
       if (!name) continue;
+      if (name === "rooms" || name === "servers") {
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          const map = {};
+          for (const [raw, muted] of Object.entries(value).slice(0, 100)) {
+            const scope = cleanText(raw, 64);
+            if (scope) map[name === "rooms" ? scope.toUpperCase() : scope] = Boolean(muted);
+          }
+          clean[name] = map;
+        }
+        continue;
+      }
       clean[name] = Boolean(value);
     }
   }

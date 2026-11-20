@@ -6,6 +6,7 @@ import {
 import { apiFetch, apiGetToken, apiConnectSocket } from "./api.js";
 import { avatarSrc } from "./avatars.js";
 import { loadSiteConfig, applySiteConfig, listenLiveConfig } from "./site-config.js";
+import { notifPermission, requestNotifPermission } from "./notifications.js";
 
 const STAFF_ROLES = ["moderator", "administrator", "owner", "super_owner"];
 const PANES = ["people", "messages", "search", "notifications", "history", "library", "invites", "support", "polls", "reports"];
@@ -27,6 +28,10 @@ const state = {
   notifs: [],
   notifPrefs: {},
   notifUnread: 0,
+  notifBefore: "",
+  help: null,
+  helpLoaded: false,
+  agents: [],
   history: [],
   library: [],
   invites: [],
@@ -300,7 +305,12 @@ async function loadPane(pane) {
     } else if (pane === "history") await loadHistory();
     else if (pane === "library") await loadLibrary();
     else if (pane === "invites") await loadInvites();
-    else if (pane === "support") await loadTickets();
+    else if (pane === "support") {
+      await loadTickets();
+      await loadHelp();
+      if (state.staff) await loadAgents();
+      renderHelp();
+    }
     else if (pane === "polls") {
       if (state.pollsRoom) await loadPolls(true);
       else renderPolls();
@@ -924,11 +934,52 @@ $("#notifReadAll")?.addEventListener("click", async () => {
   } catch {}
 });
 $("#notifPrefsForm")?.addEventListener("submit", saveNotifPrefs);
+$("#notifLoadMore")?.addEventListener("click", () => loadNotifications(false, true));
+$("#muteRoomAdd")?.addEventListener("click", addMutedRoom);
+$("#muteRoomInput")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    addMutedRoom();
+  }
+});
+$("#notifPushBtn")?.addEventListener("click", async () => {
+  const stateNode = $("#notifPushState");
+  const result = await requestNotifPermission();
+  if (stateNode) {
+    stateNode.textContent = result === "granted"
+      ? t("social.notifPushOn")
+      : result === "unsupported"
+        ? t("social.notifPushUnsupported")
+        : t("social.notifPushBlocked");
+  }
+});
 
-async function loadNotifications(quiet = false) {
-  const data = await api("/social/notifications?limit=40", { quiet });
-  state.notifs = data.notifications || [];
+function paintPushState() {
+  const btn = $("#notifPushBtn");
+  const stateNode = $("#notifPushState");
+  if (!btn || !stateNode) return;
+  const permission = notifPermission();
+  const supported = permission !== "unsupported";
+  btn.hidden = permission === "granted" || !supported;
+  stateNode.textContent = permission === "granted"
+    ? t("social.notifPushOn")
+    : permission === "denied"
+      ? t("social.notifPushBlocked")
+      : supported
+        ? t("social.notifPushOff")
+        : t("social.notifPushUnsupported");
+}
+
+async function loadNotifications(quiet = false, more = false) {
+  const before = more ? state.notifBefore : "";
+  const path = `/social/notifications?limit=40${before ? `&before=${enc(before)}` : ""}`;
+  const data = await api(path, { quiet });
+  const items = data.notifications || [];
+  state.notifs = more ? state.notifs.concat(items) : items;
   state.notifUnread = Number(data.unread || 0);
+  state.notifBefore = data.nextBefore || "";
+  const moreBtn = $("#notifLoadMore");
+  if (moreBtn) moreBtn.hidden = !state.notifBefore;
   renderNotifs();
   paintCount("countNotifs", state.notifUnread);
 }
@@ -940,15 +991,24 @@ function renderNotifs() {
     const li = el("li", { class: `request-row${notif.read ? "" : " unread"}` });
     li.append(el("span", { class: "notif-unread", style: notif.read ? "background:var(--border-strong)" : "" }));
     const main = el("div", { class: "person-main" });
-    main.append(el("strong", { text: notif.title || notif.kind }));
+    main.append(el("strong", { text: notif.title || t(`social.kind.${notif.kind}`) }));
     if (notif.body) main.append(el("small", { text: notif.body, dir: "auto" }));
-    main.append(el("small", { text: ago(notif.createdAt) }));
+    const meta = el("small", { class: "notif-meta" });
+    meta.append(el("span", { text: ago(notif.createdAt) }));
+    meta.append(el("span", {
+      class: `badge ${notif.delivered ? "ok" : "off"}`,
+      text: notif.delivered ? t("social.notifDelivered") : t("social.notifInApp")
+    }));
+    main.append(meta);
     li.append(main);
-    if (!notif.read) {
-      li.append(el("div", { class: "person-actions" }, [
-        smallBtn(t("social.markRead"), "ghost", () => markNotifRead(notif))
-      ]));
+    const actions = el("div", { class: "person-actions" });
+    if (notif.link) {
+      actions.append(smallBtn(t("social.libraryOpen"), "ghost", () => {
+        location.href = notif.link;
+      }));
     }
+    if (!notif.read) actions.append(smallBtn(t("social.markRead"), "ghost", () => markNotifRead(notif)));
+    li.append(actions);
     return li;
   }));
   emptyState("notifEmpty", state.notifs.length > 0);
@@ -974,7 +1034,42 @@ async function loadNotifPrefs() {
     const to = $("#quietTo");
     if (from) from.value = minutesToTime(data.quietFrom);
     if (to) to.value = minutesToTime(data.quietTo);
+    const quiet = $("#notifQuietActive");
+    if (quiet) quiet.hidden = !data.quietActive;
+    paintPushState();
+    renderMutedRooms();
   } catch {}
+}
+
+function mutedRooms() {
+  const rooms = state.notifPrefs.rooms;
+  return rooms && typeof rooms === "object" ? rooms : {};
+}
+
+function renderMutedRooms() {
+  const list = $("#muteRoomList");
+  if (!list) return;
+  const entries = Object.entries(mutedRooms()).filter(([, muted]) => muted === false);
+  list.replaceChildren(...entries.map(([code]) => {
+    const li = el("li", { class: "mute-row" });
+    li.append(el("code", { text: code }));
+    li.append(smallBtn(t("social.notifUnmute"), "ghost", () => {
+      state.notifPrefs.rooms = { ...mutedRooms() };
+      delete state.notifPrefs.rooms[code];
+      renderMutedRooms();
+    }));
+    return li;
+  }));
+  if (!entries.length) list.append(el("li", { class: "hint", text: t("social.notifNoMutedRooms") }));
+}
+
+function addMutedRoom() {
+  const input = $("#muteRoomInput");
+  const code = (input?.value || "").trim().toUpperCase();
+  if (!code) return;
+  state.notifPrefs.rooms = { ...mutedRooms(), [code]: false };
+  if (input) input.value = "";
+  renderMutedRooms();
 }
 
 function minutesToTime(value) {
@@ -989,6 +1084,7 @@ async function saveNotifPrefs(event) {
   const msg = $("#notifPrefsMsg");
   const prefs = { ...state.notifPrefs };
   $$("#notifKindGrid input").forEach((input) => { prefs[input.dataset.kind] = input.checked; });
+  prefs.rooms = { ...mutedRooms() };
   try {
     const data = await api("/social/notification-prefs", {
       method: "PUT",
@@ -1000,6 +1096,28 @@ async function saveNotifPrefs(event) {
     });
     state.notifPrefs = data.prefs || prefs;
     if (msg) { msg.textContent = t("social.notifSaved"); msg.classList.add("ok"); setTimeout(() => { msg.textContent = ""; }, 2500); }
+  } catch {}
+}
+
+function browserPush(title, body, link = "") {
+  try {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    if (!document.hidden) return;
+    const options = {
+      body: String(body || ""),
+      icon: "assets/icon.svg",
+      badge: "assets/icon.svg",
+      tag: "wt-social",
+      lang: getLang(),
+      data: { url: link || "./" }
+    };
+    if (navigator.serviceWorker?.ready) {
+      navigator.serviceWorker.ready
+        .then((reg) => reg.showNotification(String(title || "هم‌تماشا"), options))
+        .catch(() => {});
+    } else {
+      new Notification(String(title || "هم‌تماشا"), options);
+    }
   } catch {}
 }
 
@@ -1222,6 +1340,56 @@ async function revokeInvite(invite) {
 
 /* ----------------------------------------------------------------- support */
 
+const ATTACH_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf", "text/plain"]);
+const ATTACH_MAX = 400 * 1024;
+
+async function readAttachment(input) {
+  const file = input?.files?.[0];
+  if (!file) return undefined;
+  if (!ATTACH_TYPES.has(file.type)) {
+    toast(t("social.attachType"), "warn");
+    input.value = "";
+    return null;
+  }
+  if (file.size > ATTACH_MAX) {
+    toast(t("social.attachSize"), "warn");
+    input.value = "";
+    return null;
+  }
+  try {
+    const data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("read_failed"));
+      reader.readAsDataURL(file);
+    });
+    if (!data) return null;
+    input.value = "";
+    return { name: file.name.slice(0, 80), type: file.type, size: file.size, data };
+  } catch {
+    input.value = "";
+    return null;
+  }
+}
+
+function attachNode(attachment) {
+  const url = attachment?.url;
+  if (!url) return null;
+  const isImage = /^image\//.test(String(attachment.type || ""));
+  const node = el("a", {
+    class: `attach-note${isImage ? " attach-image" : ""}`,
+    href: url,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    dir: "ltr"
+  });
+  if (isImage) {
+    node.append(el("img", { src: url, alt: attachment.name || "attachment", loading: "lazy" }));
+  }
+  node.append(el("span", { text: attachment.name || "attachment" }));
+  return node;
+}
+
 $("#ticketForm")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const msg = $("#ticketMsg");
@@ -1230,6 +1398,8 @@ $("#ticketForm")?.addEventListener("submit", async (event) => {
     if (msg) msg.textContent = t("social.supportSubject");
     return;
   }
+  const attachment = await readAttachment($("#ticketAttachment"));
+  if (attachment === null) return;
   try {
     const data = await api("/social/support/tickets", {
       method: "POST",
@@ -1237,7 +1407,8 @@ $("#ticketForm")?.addEventListener("submit", async (event) => {
         subject,
         category: $("#ticketCategory")?.value || "general",
         priority: $("#ticketPriority")?.value || "normal",
-        body: $("#ticketBody")?.value.trim() || ""
+        body: $("#ticketBody")?.value.trim() || "",
+        attachment
       }
     });
     if (msg) msg.textContent = "";
@@ -1256,9 +1427,14 @@ $("#ticketReplyForm")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const ticket = state.activeTicket;
   const body = ($("#ticketReplyBody")?.value || "").trim();
-  if (!ticket || !body) return;
+  const attachment = await readAttachment($("#ticketReplyAttachment"));
+  if (attachment === null) return;
+  if (!ticket || (!body && !attachment)) return;
   try {
-    await api(`/social/support/tickets/${enc(ticket.id)}/messages`, { method: "POST", body: { body } });
+    await api(`/social/support/tickets/${enc(ticket.id)}/messages`, {
+      method: "POST",
+      body: { body, attachment }
+    });
     $("#ticketReplyBody").value = "";
     toast(t("social.ticketReplySent"), "success");
     await openTicket(ticket.id);
@@ -1271,7 +1447,12 @@ $("#ticketStatusSave")?.addEventListener("click", async () => {
   try {
     const data = await api(`/social/support/tickets/${enc(ticket.id)}`, {
       method: "PATCH",
-      body: { status: $("#ticketStatus")?.value, priority: $("#ticketStatusPriority")?.value }
+      body: {
+        status: $("#ticketStatus")?.value,
+        priority: $("#ticketStatusPriority")?.value,
+        assignedTo: $("#ticketAssignee")?.value || "",
+        resolution: $("#ticketResolution")?.value || ""
+      }
     });
     toast(t("social.statusUpdated"), "success");
     state.activeTicket = data.ticket;
@@ -1303,6 +1484,9 @@ function renderTickets() {
     if (state.staff && ticket.user && String(ticket.user.id) !== String(state.me?.id)) {
       badges.append(el("span", { class: "badge", text: t("social.ticketFrom", { name: displayName(ticket.user) }) }));
     }
+    if (ticket.assignee) {
+      badges.append(el("span", { class: "badge", text: t("social.ticketAssigned", { name: displayName(ticket.assignee) }) }));
+    }
     badges.append(el("span", { class: "hint", text: ago(ticket.updatedAt) }));
     main.append(badges);
     li.append(main);
@@ -1326,25 +1510,120 @@ function renderTicketDetail() {
   if (!ticket || !wrap) return;
   wrap.hidden = false;
   $("#ticketDetailTitle").textContent = ticket.subject;
-  $("#ticketDetailMeta").textContent = `${t(`social.status.${ticket.status}`)} · ${t(`social.priority.${ticket.priority}`)} · ${ago(ticket.createdAt)}`;
+  const meta = [`${t(`social.status.${ticket.status}`)} · ${t(`social.priority.${ticket.priority}`)} · ${ago(ticket.createdAt)}`];
+  if (ticket.assignee) meta.push(t("social.ticketAssigned", { name: displayName(ticket.assignee) }));
+  if (ticket.resolvedAt) meta.push(t("social.ticketResolvedAt", { when: ago(ticket.resolvedAt) }));
+  $("#ticketDetailMeta").textContent = meta.join(" · ");
   const msgs = $("#ticketMsgs");
   msgs.replaceChildren(...(ticket.messages || []).map((message) => {
-    const mineStaff = String(message.author?.id) !== String(ticket.userId);
-    const node = el("div", { class: `ticket-msg${mineStaff ? " staff" : ""}` });
-    const meta = el("div", { class: "dm-meta" });
-    meta.append(el("strong", { text: displayName(message.author) }));
-    if (mineStaff) meta.append(el("span", { class: "badge", text: t("social.staffBadge") }));
-    meta.append(el("span", { text: fmtTime(message.createdAt) }));
-    node.append(meta);
-    node.append(el("div", { text: message.body, dir: "auto" }));
+    const system = message.kind === "system";
+    const mineStaff = !system && String(message.author?.id) !== String(ticket.userId);
+    const node = el("div", { class: `ticket-msg${system ? " system" : mineStaff ? " staff" : ""}` });
+    const head = el("div", { class: "dm-meta" });
+    head.append(el("strong", { text: system ? t("social.ticketSystem") : displayName(message.author) }));
+    if (mineStaff) head.append(el("span", { class: "badge", text: t("social.staffBadge") }));
+    head.append(el("span", { text: fmtTime(message.createdAt) }));
+    node.append(head);
+    if (message.body) node.append(el("div", { text: message.body, dir: "auto" }));
+    const attach = attachNode(message.attachment);
+    if (attach) node.append(attach);
     return node;
   }));
   $("#ticketStaffRow").hidden = !state.staff;
   if (state.staff) {
     $("#ticketStatus").value = ticket.status;
     $("#ticketStatusPriority").value = ticket.priority;
+    paintAgentOptions(ticket);
+    const resolution = $("#ticketResolution");
+    if (resolution) resolution.value = ticket.resolution || "";
   }
   wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+/* ------------------------------------------------------------------- help */
+
+async function loadHelp() {
+  if (state.helpLoaded) return;
+  state.helpLoaded = true;
+  try {
+    const res = await fetch("assets/data/help.json", { cache: "no-cache" });
+    if (!res.ok) throw new Error("help_unavailable");
+    state.help = await res.json();
+  } catch {
+    state.help = null;
+  }
+}
+
+function helpLocale() {
+  const data = state.help;
+  if (!data) return null;
+  return data[getLang()] || data.fa || data.en || null;
+}
+
+function renderHelp() {
+  const faq = $("#helpFaq");
+  const results = $("#helpResults");
+  const empty = $("#helpEmpty");
+  if (!faq || !results) return;
+  const data = helpLocale();
+  if (!data) {
+    faq.replaceChildren();
+    results.replaceChildren();
+    if (empty) {
+      empty.hidden = false;
+      empty.firstElementChild.textContent = t("social.helpOffline");
+    }
+    return;
+  }
+  const query = ($("#helpSearch")?.value || "").trim().toLowerCase();
+  if (query) {
+    const hits = (data.articles || []).filter((article) =>
+      [article.title, article.body, ...(article.tags || [])].join(" ").toLowerCase().includes(query)
+    );
+    results.replaceChildren(...hits.map((article) => {
+      const node = el("article", { class: "help-article" });
+      node.append(el("h4", { text: article.title, dir: "auto" }));
+      node.append(el("p", { text: article.body, dir: "auto" }));
+      return node;
+    }));
+    faq.replaceChildren();
+    faq.hidden = true;
+    if (empty) empty.hidden = hits.length > 0;
+    return;
+  }
+  results.replaceChildren();
+  faq.hidden = false;
+  faq.replaceChildren(...(data.faq || []).map((item) => {
+    const details = el("details", { class: "help-faq-item" });
+    details.append(el("summary", { text: item.q, dir: "auto" }));
+    details.append(el("p", { text: item.a, dir: "auto" }));
+    return details;
+  }));
+  if (empty) empty.hidden = true;
+}
+
+$("#helpSearch")?.addEventListener("input", renderHelp);
+
+async function loadAgents() {
+  if (state.agents.length) return;
+  try {
+    const data = await api("/social/support/agents", { quiet: true });
+    state.agents = data.agents || [];
+  } catch {
+    state.agents = [];
+  }
+}
+
+function paintAgentOptions(ticket = null) {
+  const select = $("#ticketAssignee");
+  if (!select) return;
+  const current = ticket?.assignedTo || "";
+  select.replaceChildren(el("option", { value: "", text: t("social.supportUnassigned") }));
+  for (const agent of state.agents) {
+    select.append(el("option", { value: agent.id, text: displayName(agent) }));
+  }
+  select.value = current;
+  if (select.value !== current) select.value = "";
 }
 
 /* ------------------------------------------------------------------- polls */
@@ -1981,13 +2260,50 @@ function handleSocialEvent(payload) {
     return;
   }
   if (event === "poll_update") {
-    if (state.pollsLoaded && data?.roomCode && data.roomCode === state.pollsRoom) {
-      loadPolls(true).catch(() => {});
+    applyPollUpdate(data);
+    return;
+  }
+  if (event === "poll_removed") {
+    if (data?.id) {
+      state.polls = state.polls.filter((poll) => poll.id !== data.id);
+      if (state.pane === "polls") renderPolls();
+    }
+    return;
+  }
+  if (event === "support_reply") {
+    if (state.activeTicket && String(state.activeTicket.id) === String(data?.ticketId)) {
+      openTicket(state.activeTicket.id).catch(() => {});
     }
     return;
   }
   if (event === "notification") {
+    const notif = data && typeof data === "object" ? data : {};
+    if (notif.title) toast(notif.title, "info");
+    browserPush(notif.title, notif.body, notif.link);
     if (state.pane === "notifications") loadNotifications(true).catch(() => {});
-    else refreshBadges();
+    refreshBadges();
+    if (notif.kind === "support_update" || notif.kind === "support_reply" || notif.kind === "support_new") {
+      loadTickets(true).catch(() => {});
+      if (state.activeTicket) openTicket(state.activeTicket.id).catch(() => {});
+    }
   }
+}
+
+function applyPollUpdate(data) {
+  if (!data?.id) return;
+  const poll = state.polls.find((item) => item.id === data.id);
+  if (!poll) {
+    if (state.pollsLoaded && state.pollsRoom && data.roomCode === state.pollsRoom) {
+      loadPolls(true).catch(() => {});
+    }
+    return;
+  }
+  poll.closed = Boolean(data.closed);
+  if (data.closesAt) poll.closesAt = data.closesAt;
+  poll.totalVotes = Number(data.totalVotes || 0);
+  const counts = new Map((data.options || []).map((option) => [option.id, Number(option.votes || 0)]));
+  for (const option of poll.options || []) {
+    if (counts.has(option.id)) option.votes = counts.get(option.id);
+  }
+  if (state.pane === "polls") renderPolls();
 }

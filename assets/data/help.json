@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "updated": "2026-11-20",
+  "fa": {
+    "faq": [
+      {
+        "q": "چطور یک اتاق تماشا بسازم؟",
+        "a": "از صفحهٔ اصلی دکمهٔ «ساخت اتاق» را بزن، لینک فیلم را بگذار و اسم اتاق را انتخاب کن. بعد لینک اتاق را برای دوستت بفرست."
+      },
+      {
+        "q": "تماشای هم‌زمان چطور کار می‌کند؟",
+        "a": "اتاق‌های هم‌تماشا مستقیم بین مرورگرها وصل می‌شوند. پخش، توقف و جلو/عقب بردن برای همه هماهنگ می‌شود. برای تعداد زیاد تماشاگر هم‌زمان زیرساخت اختصاصی نداریم."
+      },
+      {
+        "q": "چرا پیام یا اعلانم دیر می‌رسد؟",
+        "a": "اگر ساعت سکوت روشن باشد اعلان‌ها فقط در تاریخچه ذخیره می‌شوند و پوش نمی‌شوند. همچنین می‌توانی اعلان یک اتاق خاص را ساکت کنی."
+      },
+      {
+        "q": "چطور اعلان مرورگر را روشن کنم؟",
+        "a": "اولین بار که مرورگر اجازه بخواهد «اجازه» را بزن. اگر رد کرده باشی، از تنظیمات سایت در مرورگر مجوز اعلان را دوباره فعال کن."
+      },
+      {
+        "q": "رمز یا کد بازیابی‌ام را گم کرده‌ام.",
+        "a": "از صفحهٔ ورود «فراموشی رمز» را بزن و با ایمیل یا شمارهٔ موبایل کد بگیر. اگر کد بازیابی داری از مسیر بازیابی حساب استفاده کن."
+      },
+      {
+        "q": "چطور اشتراک بخرم؟",
+        "a": "از صفحهٔ اصلی یکی از پلن‌های ماهانه یا سالانه را انتخاب کن. درخواست ثبت می‌شود و برای تکمیل پرداخت با تو هماهنگ می‌کنیم."
+      }
+    ],
+    "articles": [
+      {
+        "id": "create-room",
+        "title": "ساخت و ورود به اتاق",
+        "tags": ["اتاق", "ساخت", "ورود", "لینک"],
+        "body": "از صفحهٔ اصلی «ساخت اتاق» را بزن، لینک فیلم را وارد کن و اتاق بساز. لینک اتاق را با دوستت به اشتراک بگذار. میهمان‌ها با همان لینک وارد می‌شوند و میزبان می‌تواند نقش‌ها را مدیریت کند."
+      },
+      {
+        "id": "sync-playback",
+        "title": "همگام‌سازی پخش",
+        "tags": ["پخش", "همگام", "کنترل", "میزبان"],
+        "body": "میزبان پخش، توقف، جابه‌جایی زمان و تغییر سرعت را کنترل می‌کند و بقیه همان لحظه هماهنگ می‌شوند. اگر پخش کسی عقب افتاد، دکمهٔ همگام‌سازی در نوار پخش را بزن."
+      },
+      {
+        "id": "chat-and-reactions",
+        "title": "چت و واکنش‌ها",
+        "tags": ["چت", "واکنش", "ایموجی", "پیام"],
+        "body": "در اتاق می‌توانی پیام بفرستی و روی پیام‌ها با ایموجی واکنش بدهی. واکنش‌ها همان لحظه برای همه به‌روز می‌شوند. پیام‌های خصوصی از صفحهٔ اجتماعی در دسترس‌اند و در API عمومی نمایش داده نمی‌شوند."
+      },
+      {
+        "id": "polls",
+        "title": "نظرسنجی اتاق",
+        "tags": ["نظرسنجی", "رأی", "poll"],
+        "body": "در صفحهٔ اجتماعی، تب نظرسنجی، کد اتاق را بزن و نظرسنجی بساز. گزینه‌ها بین ۲ تا ۱۰ موردند و می‌توانی چند انتخابی، ناشناس و زمان انقضا بگذاری. هر کاربر فقط یک بار رأی می‌دهد و نتایج زنده برای اعضای اتاق به‌روز می‌شود. ساخت و بستن نظرسنجی فقط برای سازنده، میزبان یا کارکنان است."
+      },
+      {
+        "id": "notifications",
+        "title": "اعلان‌ها و ساعت سکوت",
+        "tags": ["اعلان", "نوتیفیکیشن", "سکوت", "پوش"],
+        "body": "اعلان‌ها در صفحهٔ اجتماعی، تب اعلان‌ها جمع می‌شوند. وضعیت خوانده/نخوانده را می‌بینی، «همه خوانده شد» را می‌زنی و برای هر دسته جدا خاموش/روشن می‌کنی. ساعت سکوت پوش را متوقف می‌کند ولی تاریخچه می‌ماند. سکوت اتاق را هم با کد اتاق اضافه کن."
+      },
+      {
+        "id": "support-tickets",
+        "title": "تیکت پشتیبانی و پیوست",
+        "tags": ["پشتیبانی", "تیکت", "پیوست", "راهنما"],
+        "body": "اگر جواب در راهنما نبود تیکت بزن: موضوع، دسته، اولویت و توضیح را پر کن. می‌توانی تصویر، PDF یا TXT تا ۴۰۰ کیلوبایت پیوست کنی. پاسخ کارکنان و تغییر وضعیت/ارجاع در همان تیکت و در اعلان‌هایت دیده می‌شود."
+      },
+      {
+        "id": "account-security",
+        "title": "امنیت حساب",
+        "tags": ["امنیت", "رمز", "بازیابی", "نشست"],
+        "body": "بعد از تغییر رمز، همهٔ نشست‌های قبلی بسته می‌شوند. هر تغییر رمز، بازیابی یا ساخت کد بازیابی یک اعلان امنیتی می‌سازد. کد بازیابی را جای امن نگه دار؛ با آن می‌توانی بدون ایمیل حساب را برگردانی."
+      },
+      {
+        "id": "subscription-payment",
+        "title": "اشتراک و پرداخت",
+        "tags": ["اشتراک", "پرداخت", "پلن", "فاکتور"],
+        "body": "پلن ماهانه یا سالانه را انتخاب کن؛ درخواست ثبت می‌شود و وضعیت آن در پروفایل («اشتراک من») دیده می‌شود. بعد از ثبت سفارش یک اعلان پرداخت می‌گیری. درگاه پرداخت آنلاین فعلاً وصل نیست و هماهنگی دستی است."
+      },
+      {
+        "id": "reports-moderation",
+        "title": "گزارش تخلف و پیگیری",
+        "tags": ["گزارش", "تخلف", "مدیریت", "بلاک"],
+        "body": "از منوی پیام یا پروفایل، «گزارش» را بزن و دلیل را بنویس. وضعیت گزارش تو (باز، در بررسی، حل‌شده، رد‌شده) در صفحهٔ اجتماعی و اعلان‌ها به‌روز می‌شود. می‌توانی کاربر مزاحم را بلاک کنی."
+      }
+    ]
+  },
+  "en": {
+    "faq": [
+      {
+        "q": "How do I create a watch room?",
+        "a": "Tap Create room on the home page, paste the media link, pick a name, then share the room link with your friend."
+      },
+      {
+        "q": "How does synchronized playback work?",
+        "a": "Rooms connect browsers directly. Play, pause and seeking stay in sync for everyone. We do not claim dedicated infrastructure for very large simultaneous audiences."
+      },
+      {
+        "q": "Why are notifications delayed?",
+        "a": "During quiet hours notifications are saved to history but not pushed. You can also mute notifications for a specific room."
+      },
+      {
+        "q": "How do I enable browser notifications?",
+        "a": "Allow the browser prompt the first time it appears. If you dismissed it, re-enable notifications for this site in your browser settings."
+      },
+      {
+        "q": "I lost my password or recovery code.",
+        "a": "Use Forgot password on the sign-in page to get a code by email or SMS. If you still have a recovery code, use account recovery."
+      },
+      {
+        "q": "How do I subscribe?",
+        "a": "Pick a monthly or yearly plan on the home page. Your request is registered and we coordinate payment with you."
+      }
+    ],
+    "articles": [
+      {
+        "id": "create-room",
+        "title": "Create and join a room",
+        "tags": ["room", "create", "join", "link"],
+        "body": "Use Create room on the home page, paste a media link and create the room. Share the room link. Guests join with the same link and the host can manage roles."
+      },
+      {
+        "id": "sync-playback",
+        "title": "Synchronized playback",
+        "tags": ["playback", "sync", "host"],
+        "body": "The host controls play, pause, seeking and speed, and everyone follows. Use the sync button in the player bar if someone falls behind."
+      },
+      {
+        "id": "chat-and-reactions",
+        "title": "Chat and reactions",
+        "tags": ["chat", "reaction", "emoji"],
+        "body": "Send messages in the room and react to messages with emoji. Reactions update live for everyone. Private messages live on the social page and are never exposed through public APIs."
+      },
+      {
+        "id": "polls",
+        "title": "Room polls",
+        "tags": ["poll", "vote", "results"],
+        "body": "On the social page open Polls, enter the room code and create a poll. Polls allow 2–10 options, can be multi-choice or anonymous, and can expire. Each user votes once; results update live for room members. Only the creator, host or staff can close or delete a poll."
+      },
+      {
+        "id": "notifications",
+        "title": "Notifications and quiet hours",
+        "tags": ["notifications", "push", "mute", "quiet"],
+        "body": "Notifications collect on the social page. See read/unread state, mark all as read, and toggle each category. Quiet hours stop pushes but keep history. Add a room code to mute that room."
+      },
+      {
+        "id": "support-tickets",
+        "title": "Support tickets and attachments",
+        "tags": ["support", "ticket", "attachment", "help"],
+        "body": "If the help center does not answer it, open a ticket with subject, category, priority and details. Attach an image, PDF or TXT up to 400 KB. Staff replies and status/assignment changes appear in the ticket and your notifications."
+      },
+      {
+        "id": "account-security",
+        "title": "Account security",
+        "tags": ["security", "password", "recovery", "sessions"],
+        "body": "Changing your password signs out all other sessions. Password changes, recovery and recovery-code rotation each create a security notification. Keep your recovery code somewhere safe."
+      },
+      {
+        "id": "subscription-payment",
+        "title": "Subscription and payment",
+        "tags": ["subscription", "payment", "plan"],
+        "body": "Pick a monthly or yearly plan; the request is registered and its status shows in your profile. Creating an order sends a payment notification. Online payment gateway is not connected yet; payment is coordinated manually."
+      },
+      {
+        "id": "reports-moderation",
+        "title": "Reporting and moderation",
+        "tags": ["report", "moderation", "block"],
+        "body": "Use Report from a message or profile and describe the issue. Your report status (open, reviewing, resolved, dismissed) appears on the social page and in notifications. You can block abusive users."
+      }
+    ]
+  }
+}

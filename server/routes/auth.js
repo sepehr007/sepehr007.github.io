@@ -31,6 +31,7 @@ import {
   revokeDbOtherSessions
 } from "../sessionStore.js";
 import { getPrivacy, setPrivacy } from "../stores/privacy.js";
+import { deliverNotice } from "../notify.js";
 import { dbReady } from "../db.js";
 import { audit } from "../audit.js";
 import { resolveFeatureState, isEnabled } from "../features.js";
@@ -354,6 +355,7 @@ export async function requireAuth(req, reply) {
   req.auth = {
     userId: String(payload.sub),
     role: session.role || payload.role || "user",
+    username: String(payload.username || ""),
     jti: payload.jti
   };
   return undefined;
@@ -735,6 +737,14 @@ export default async function authRoutes(app) {
     const issued = await issueToken(user, req);
     await cacheDel(`user:${user.id}`);
     await audit("auth.password_change", req, { targetType: "user", targetId: user.id });
+    await deliverNotice(req.server, user.id, {
+      kind: "security",
+      title: "رمز عبورت تغییر کرد",
+      body: "اگر خودت این تغییر را انجام دادی همه‌چیز مرتب است؛ در غیر این صورت همین حالا رمز را عوض کن.",
+      link: "profile.html",
+      dedupeKey: `security:password:${user.id}`,
+      dedupeWindowMs: 60_000
+    });
     return { ok: true, token: issued.token, expiresIn: issued.expiresIn };
   });
 
@@ -778,6 +788,14 @@ export default async function authRoutes(app) {
       actorId: user.id,
       actorRole: user.role || "user"
     });
+    await deliverNotice(req.server, user.id, {
+      kind: "security",
+      title: "بازیابی حساب انجام شد",
+      body: "رمز با کد بازیابی عوض شد و کد بازیابی تازه ساختی. اگر این کار را نکردی فوراً با پشتیبانی تماس بگیر.",
+      link: "profile.html",
+      dedupeKey: `security:recover:${user.id}`,
+      dedupeWindowMs: 60_000
+    });
     return {
       ok: true,
       token: issued.token,
@@ -798,6 +816,14 @@ export default async function authRoutes(app) {
     const recoveryCode = newRecoveryCode();
     await updateUser(user.id, { recoveryHash: await bcrypt.hash(normalizeCode(recoveryCode), RECOVERY_ROUNDS) });
     await audit("auth.recovery_code_rotate", req, { targetType: "user", targetId: user.id });
+    await deliverNotice(req.server, user.id, {
+      kind: "security",
+      title: "کد بازیابی تازه ساخته شد",
+      body: "کد بازیابی قبلی دیگر کار نمی‌کند. کد تازه را در جای امن نگه دار.",
+      link: "profile.html",
+      dedupeKey: `security:recovery:${user.id}`,
+      dedupeWindowMs: 60_000
+    });
     return { ok: true, recoveryCode };
   });
 
@@ -1035,6 +1061,14 @@ export default async function authRoutes(app) {
       actorId: user.id,
       actorRole: user.role || "user",
       meta: { via: linkToken ? "link" : "code" }
+    });
+    await deliverNotice(req.server, user.id, {
+      kind: "security",
+      title: "رمز عبورت بازنشانی شد",
+      body: "رمز با لینک یا کد تأیید عوض شد و همهٔ نشست‌های قبلی خارج شدند. اگر این کار را نکردی فوراً با پشتیبانی تماس بگیر.",
+      link: "profile.html",
+      dedupeKey: `security:reset:${user.id}`,
+      dedupeWindowMs: 60_000
     });
     return {
       ok: true,

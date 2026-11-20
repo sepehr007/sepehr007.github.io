@@ -4,8 +4,10 @@ import { requireAuth } from "./auth.js";
 import { audit } from "../audit.js";
 import {
   SocialError,
+  isStaff,
   sqlTouchUser,
   sqlListPeople,
+  sqlFindUserByUsername,
   sqlListFriends,
   sqlListFriendRequests,
   sqlSendFriendRequest,
@@ -47,6 +49,7 @@ import {
   sqlVotePoll,
   sqlClosePoll,
   sqlDeletePoll,
+  sqlPollAudience,
   sqlListLibrary,
   sqlAddLibraryItem,
   sqlDeleteLibraryItem,
@@ -55,12 +58,15 @@ import {
   sqlGetTicket,
   sqlAddTicketMessage,
   sqlPatchTicket,
+  sqlListSupportAgents,
+  sqlListStaffIds,
   sqlListNotifications,
   sqlMarkNotificationsRead,
   sqlMarkAllNotificationsRead,
   sqlGetNotificationPrefs,
   sqlPutNotificationPrefs
 } from "../stores/social.js";
+import { deliverNotice, deliverNoticeMany } from "../notify.js";
 
 function fail(reply, status, error, message) {
   return reply.code(status).send({ error, message });
@@ -117,6 +123,40 @@ function notify(req, userId, event, data) {
   } catch {}
 }
 
+async function broadcastPoll(req, poll, { event = "poll_update", skipUserId = null, notifyCreate = false } = {}) {
+  let audience = { ids: [], roomCode: poll.roomCode, name: poll.roomCode };
+  try {
+    audience = await sqlPollAudience(poll.roomCode);
+  } catch {}
+  const data = event === "poll_removed"
+    ? { id: String(poll.id), roomCode: poll.roomCode }
+    : {
+        id: poll.id,
+        roomCode: poll.roomCode,
+        question: poll.question,
+        closed: Boolean(poll.closed),
+        closesAt: poll.closesAt || null,
+        totalVotes: Number(poll.totalVotes || 0),
+        options: (poll.options || []).map((option) => ({ id: option.id, label: option.label, votes: Number(option.votes || 0) }))
+      };
+  for (const id of audience.ids) {
+    if (skipUserId && String(id) === String(skipUserId)) continue;
+    notify(req, id, event, data);
+  }
+  if (notifyCreate) {
+    await deliverNoticeMany(req.server, audience.ids.filter((id) => String(id) !== String(poll.createdBy)), () => ({
+      kind: "poll",
+      title: `نظرسنجی تازه در «${audience.name || poll.roomCode}»`,
+      body: poll.question,
+      link: "social.html#rooms",
+      dedupeKey: `poll:${poll.id}`,
+      dedupeWindowMs: 15 * 60_000,
+      room: poll.roomCode
+    }));
+  }
+  return audience;
+}
+
 export default async function socialRoutes(app) {
   /* ------------------------------------------------------------------ people */
   app.get("/people", { preHandler: AUTH }, handle(async (req) => {
@@ -143,6 +183,14 @@ export default async function socialRoutes(app) {
     if (!username) return fail(reply, 400, "invalid_username", "Username is required.");
     const request = await sqlSendFriendRequest(req.auth.userId, username, payload.message);
     notify(req, request.to.id, "friend_request", request);
+    await deliverNotice(req.server, request.to.id, {
+      kind: "friend_request",
+      title: `${request.from.username} درخواست دوستی فرستاد`,
+      body: request.message || "",
+      link: "social.html#people",
+      dedupeKey: `friend_request:${request.id}`,
+      dedupeWindowMs: 60 * 60_000
+    });
     await audit("friend.request", req, { targetType: "user", targetId: request.to.id, meta: { username } });
     return reply.code(201).send({ ok: true, request });
   }));
@@ -153,7 +201,17 @@ export default async function socialRoutes(app) {
     if (!requestId) throw new SocialError(400, "invalid_request", "requestId is required.");
     const accept = payload.accept === true || payload.accept === "true" || payload.accept === 1;
     const request = await sqlRespondFriendRequest(req.auth.userId, requestId, accept);
-    if (accept) notify(req, request.from.id, "friend_accept", request);
+    if (accept) {
+      notify(req, request.from.id, "friend_accept", request);
+      await deliverNotice(req.server, request.from.id, {
+        kind: "friend_accept",
+        title: `${request.to.username} درخواست دوستی را پذیرفت`,
+        body: "",
+        link: "social.html#people",
+        dedupeKey: `friend_accept:${request.id}`,
+        dedupeWindowMs: 60 * 60_000
+      });
+    }
     await audit("friend.respond", req, {
       targetType: "friend_request",
       targetId: requestId,
@@ -217,7 +275,24 @@ export default async function socialRoutes(app) {
     const payload = body(req);
     const message = await sqlSendDmMessage(req.auth.userId, req.params.id, payload.body, payload.attachment);
     const peerId = await sqlConversationPeerId(req.auth.userId, req.params.id);
+    const text = String(message.body || "");
+    const handles = [...new Set([...text.matchAll(/@([\p{L}\p{N}_-]{3,24})/gu)].map((m) => m[1].toLowerCase()))].slice(0, 5);
+    let mentionedPeer = false;
+    for (const handle of handles) {
+      const user = await sqlFindUserByUsername(handle);
+      if (user && String(user.id) === String(peerId)) mentionedPeer = true;
+    }
     notify(req, peerId, "dm_message", message);
+    await deliverNotice(req.server, peerId, {
+      kind: mentionedPeer ? "mention" : "dm_message",
+      title: mentionedPeer
+        ? `${req.auth.username || "کاربر"} در پیام خصوصی به تو منشن داد`
+        : `پیام تازه از ${req.auth.username || "کاربر"}`,
+      body: text.slice(0, 120),
+      link: "social.html#messages",
+      dedupeKey: `dm:${message.id}`,
+      dedupeWindowMs: 10 * 60_000
+    });
     return reply.code(201).send({ ok: true, message });
   }));
 
@@ -343,6 +418,28 @@ export default async function socialRoutes(app) {
       targetId: req.params.id,
       meta: { status: report.status, note: Boolean(cleanText(payload.note, 2000)) }
     });
+    const reporterId = report.reporter?.id || report.reporterId;
+    if (reporterId && String(reporterId) !== String(req.auth.userId)) {
+      const labels = { open: "باز", reviewing: "در حال بررسی", resolved: "حل شد", dismissed: "رد شد" };
+      await deliverNotice(req.server, reporterId, {
+        kind: "moderation",
+        title: "گزارش تو به‌روزرسانی شد",
+        body: `وضعیت گزارش: ${labels[report.status] || report.status}${report.resolution ? ` — ${report.resolution}` : ""}`,
+        link: "social.html#reports",
+        dedupeKey: `moderation:${report.id}:${report.status}`,
+        dedupeWindowMs: 60 * 60_000
+      });
+      if (report.assignedTo) {
+        await deliverNotice(req.server, report.assignedTo, {
+          kind: "moderation",
+          title: "گزارش به تو ارجاع شد",
+          body: `گزارش ${report.targetType} · وضعیت ${labels[report.status] || report.status}`,
+          link: "social.html#reports",
+          dedupeKey: `moderation_assign:${report.id}:${report.assignedTo}`,
+          dedupeWindowMs: 60 * 60_000
+        });
+      }
+    }
     return { ok: true, report };
   }));
 
@@ -380,6 +477,17 @@ export default async function socialRoutes(app) {
       targetId: result.invite.id,
       meta: { roomCode: result.roomCode }
     });
+    if (result.inviterId && String(result.inviterId) !== String(req.auth.userId)) {
+      await deliverNotice(req.server, result.inviterId, {
+        kind: "room_invite",
+        title: "دعوتت قبول شد",
+        body: `${req.auth.username || "کاربر"} با لینک دعوت به «${result.roomName || result.roomCode}» پیوست.`,
+        link: "social.html#rooms",
+        dedupeKey: `invite_accept:${result.invite.id}`,
+        dedupeWindowMs: 60 * 60_000,
+        room: result.roomCode
+      });
+    }
     return { ok: true, ...result };
   }));
 
@@ -425,25 +533,28 @@ export default async function socialRoutes(app) {
       closesInMinutes: payload.closesInMinutes
     });
     notify(req, poll.createdBy, "poll_update", poll);
+    await broadcastPoll(req, poll, { notifyCreate: true });
     await audit("poll.create", req, { targetType: "poll", targetId: poll.id, meta: { roomCode: poll.roomCode } });
     return reply.code(201).send({ ok: true, poll });
   }));
 
   app.post("/polls/:id/vote", { preHandler: AUTH }, handle(async (req) => {
     const poll = await sqlVotePoll(req.auth.userId, req.auth.role, req.params.id, body(req).optionIds);
-    notify(req, poll.createdBy, "poll_update", poll);
+    await broadcastPoll(req, poll);
     return { ok: true, poll };
   }));
 
   app.post("/polls/:id/close", { preHandler: AUTH }, handle(async (req) => {
     const poll = await sqlClosePoll(req.auth.userId, req.auth.role, req.params.id);
-    notify(req, poll.createdBy, "poll_update", poll);
+    await broadcastPoll(req, poll);
     await audit("poll.close", req, { targetType: "poll", targetId: poll.id });
     return { ok: true, poll };
   }));
 
   app.delete("/polls/:id", { preHandler: AUTH }, handle(async (req) => {
     const result = await sqlDeletePoll(req.auth.userId, req.auth.role, req.params.id);
+    const poll = result?.poll;
+    if (poll) await broadcastPoll(req, poll, { event: "poll_removed" });
     await audit("poll.delete", req, { targetType: "poll", targetId: req.params.id });
     return result;
   }));
@@ -469,6 +580,14 @@ export default async function socialRoutes(app) {
   }));
 
   /* ----------------------------------------------------------------- support */
+  const TICKET_STATUS_FA = { open: "باز", pending: "در انتظار پاسخ", resolved: "حل شد", closed: "بسته" };
+  const TICKET_PRIORITY_FA = { low: "کم", normal: "معمولی", high: "زیاد", urgent: "فوری" };
+
+  app.get("/support/agents", { preHandler: AUTH }, handle(async (req, reply) => {
+    if (!isStaff(req.auth.role)) return fail(reply, 403, "forbidden", "Only support staff can list agents.");
+    return { ok: true, agents: await sqlListSupportAgents() };
+  }));
+
   app.get("/support/tickets", { preHandler: AUTH }, handle(async (req) => {
     const tickets = await sqlListTickets(req.auth.userId, req.auth.role, {
       status: req.query?.status,
@@ -484,8 +603,19 @@ export default async function socialRoutes(app) {
       subject: payload.subject,
       category: payload.category,
       priority: payload.priority,
-      body: payload.body
+      body: payload.body,
+      attachment: payload.attachment
     });
+    const staffIds = (await sqlListStaffIds()).filter((id) => String(id) !== String(req.auth.userId));
+    await deliverNoticeMany(req.server, staffIds, () => ({
+      kind: "support_new",
+      title: "تیکت تازه در پشتیبانی",
+      body: `${req.auth.username || "کاربر"}: ${ticket.subject}`,
+      link: "social.html#support",
+      dedupeKey: `support_new:${ticket.id}`,
+      dedupeWindowMs: 60 * 60_000
+    }));
+    await audit("support.create", req, { targetType: "support_ticket", targetId: ticket.id, meta: { category: ticket.category } });
     return reply.code(201).send({ ok: true, ticket });
   }));
 
@@ -495,21 +625,73 @@ export default async function socialRoutes(app) {
   }));
 
   app.post("/support/tickets/:id/messages", { preHandler: AUTH }, handle(async (req, reply) => {
-    const ticket = await sqlAddTicketMessage(req.auth.userId, req.auth.role, req.params.id, body(req).body);
-    if (String(ticket.userId) !== String(req.auth.userId)) {
-      notify(req, ticket.userId, "notification", { kind: "support_reply", ticketId: ticket.id });
+    const payload = body(req);
+    const ticket = await sqlAddTicketMessage(req.auth.userId, req.auth.role, req.params.id, payload.body, payload.attachment);
+    const ownerId = ticket.user?.id;
+    const staffReply = isStaff(req.auth.role) && String(ownerId) !== String(req.auth.userId);
+    if (staffReply) {
+      await deliverNotice(req.server, ownerId, {
+        kind: "support_update",
+        title: "پاسخ تازه در تیکت پشتیبانی",
+        body: `${ticket.subject}: ${String(payload.body || "پیوست تازه").slice(0, 120)}`,
+        link: "social.html#support",
+        dedupeKey: `support_msg:${ticket.id}:${ticket.messages?.length || 0}`,
+        dedupeWindowMs: 10 * 60_000
+      });
+      notify(req, ownerId, "support_reply", { ticketId: ticket.id });
+    } else {
+      const targets = ticket.assignedTo
+        ? [ticket.assignedTo]
+        : (await sqlListStaffIds());
+      await deliverNoticeMany(req.server, targets.filter((id) => String(id) !== String(req.auth.userId)), () => ({
+        kind: "support_update",
+        title: "پیام تازه از کاربر در پشتیبانی",
+        body: `${ticket.subject}: ${String(payload.body || "پیوست تازه").slice(0, 120)}`,
+        link: "social.html#support",
+        dedupeKey: `support_user_msg:${ticket.id}`,
+        dedupeWindowMs: 10 * 60_000
+      }));
+      if (ticket.assignedTo) notify(req, ticket.assignedTo, "support_reply", { ticketId: ticket.id });
     }
     return reply.code(201).send({ ok: true, ticket });
   }));
 
   app.patch("/support/tickets/:id", { preHandler: AUTH }, handle(async (req) => {
     const payload = body(req);
-    const ticket = await sqlPatchTicket(req.auth.userId, req.auth.role, req.params.id, {
+    const result = await sqlPatchTicket(req.auth.userId, req.auth.role, req.params.id, {
       status: payload.status,
-      priority: payload.priority
+      priority: payload.priority,
+      assignedTo: payload.assignedTo,
+      resolution: payload.resolution
     });
-    await audit("support.status", req, { targetType: "support_ticket", targetId: ticket.id, meta: { status: ticket.status } });
-    return { ok: true, ticket };
+    const { events, ...ticket } = result;
+    const ownerId = ticket.user?.id;
+    if (events.statusChanged && ownerId && String(ownerId) !== String(req.auth.userId)) {
+      await deliverNotice(req.server, ownerId, {
+        kind: "support_update",
+        title: "وضعیت تیکت پشتیبانی تغییر کرد",
+        body: `${ticket.subject}: ${TICKET_STATUS_FA[ticket.status] || ticket.status}`,
+        link: "social.html#support",
+        dedupeKey: `support_status:${ticket.id}:${ticket.status}`,
+        dedupeWindowMs: 15 * 60_000
+      });
+    }
+    if (events.assigneeChanged && events.assignedTo && String(events.assignedTo) !== String(req.auth.userId)) {
+      await deliverNotice(req.server, events.assignedTo, {
+        kind: "support_update",
+        title: "تیکت پشتیبانی به تو ارجاع شد",
+        body: `${ticket.subject} · اولویت ${TICKET_PRIORITY_FA[ticket.priority] || ticket.priority}`,
+        link: "social.html#support",
+        dedupeKey: `support_assign:${ticket.id}:${events.assignedTo}`,
+        dedupeWindowMs: 60 * 60_000
+      });
+    }
+    await audit("support.update", req, {
+      targetType: "support_ticket",
+      targetId: ticket.id,
+      meta: { status: ticket.status, priority: ticket.priority, assignedTo: ticket.assignedTo }
+    });
+    return { ok: true, ticket, events };
   }));
 
   /* ----------------------------------------------------------- notifications */
@@ -529,7 +711,11 @@ export default async function socialRoutes(app) {
 
   app.get("/notifications", { preHandler: AUTH }, handle(async (req) => {
     const unreadFlag = String(req.query?.unread || "") === "1" || String(req.query?.unread || "") === "true";
-    const result = await sqlListNotifications(req.auth.userId, { unread: unreadFlag, limit: req.query?.limit });
+    const result = await sqlListNotifications(req.auth.userId, {
+      unread: unreadFlag,
+      limit: req.query?.limit,
+      before: req.query?.before
+    });
     return { ok: true, ...result };
   }));
 

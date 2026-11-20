@@ -903,5 +903,23 @@ export const MIGRATIONS = [
       `);
       db.prepare("UPDATE rooms SET updated_at = created_at WHERE updated_at IS NULL").run();
     }
+  },
+  {
+    version: 12,
+    name: "notification-delivery-and-support-ops",
+    up(db) {
+      addColumn(db, "notifications", "delivered_at", "INTEGER");
+      addColumn(db, "notifications", "dedupe_key", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "support_tickets", "assigned_to", "TEXT");
+      addColumn(db, "support_tickets", "resolved_at", "INTEGER");
+      addColumn(db, "support_tickets", "resolution", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "support_messages", "kind", "TEXT NOT NULL DEFAULT 'message'");
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, read_at, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_notifications_dedupe ON notifications(user_id, dedupe_key, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_support_tickets_assignee ON support_tickets(assigned_to, status, updated_at DESC);
+      `);
+    }
   }
 ];
