@@ -18,7 +18,8 @@ export async function ownerOnly(req, reply) {
   return true;
 }
 
-function grantedByDb(role, userId, permission) {
+export function permissionGranted(role, userId, permission) {
+  if (["owner", "super_owner"].includes(role)) return true;
   if (!databaseReady()) return false;
   try {
     const byRole = get("SELECT 1 AS ok FROM role_permissions WHERE role_id = ? AND permission_id = ?", role, permission);
@@ -44,7 +45,7 @@ export async function permissionOnly(req, reply, permission) {
     return false;
   }
   if (["owner", "super_owner"].includes(req.auth.role)) return true;
-  if (grantedByDb(req.auth.role, req.auth.userId, permission)) return true;
+  if (permissionGranted(req.auth.role, req.auth.userId, permission)) return true;
   reply.code(403).send({ error: "forbidden", message: `The ${permission} permission is required for this action.` });
   return false;
 }

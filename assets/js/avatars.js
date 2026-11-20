@@ -32,6 +32,7 @@ export function isAvatarId(value) {
 export function avatarSrc(value) {
   if (!value) return "";
   if (/^data:image\/(?:png|jpe?g|webp);base64,/i.test(value)) return value;
+  if (/^https?:\/\/[^\s"'<>]+$/i.test(value)) return value;
   const p = MAP.get(avatarId(value));
   return p ? p.src : "";
 }

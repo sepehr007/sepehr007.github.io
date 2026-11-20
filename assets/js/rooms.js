@@ -245,6 +245,12 @@ function roomCard(room, { compact = false, reason = "" } = {}) {
   setColor(card, room.color);
   if (!room.isActive) card.classList.add("is-closed");
 
+  if (room.coverUrl) {
+    card.append(el("div", { class: "room-card-cover" }, [
+      el("img", { src: room.coverUrl, alt: "", loading: "lazy" })
+    ]));
+  }
+
   const head = el("div", { class: "room-card-head" });
   const mark = el("span", { class: "room-card-mark" });
   if (room.iconUrl) {

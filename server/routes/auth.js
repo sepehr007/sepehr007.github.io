@@ -32,6 +32,7 @@ import {
 } from "../sessionStore.js";
 import { getPrivacy, setPrivacy } from "../stores/privacy.js";
 import { deliverNotice } from "../notify.js";
+import { emitEvent } from "../automation.js";
 import { dbReady } from "../db.js";
 import { audit } from "../audit.js";
 import { resolveFeatureState, isEnabled } from "../features.js";
@@ -269,6 +270,7 @@ function cleanAvatar(raw) {
   if (!s) return "";
   if (/^preset:[a-z0-9-]{2,20}$/i.test(s)) return s;
   if (/^data:image\/(?:png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(s) && s.length <= 400000) return s;
+  if (s.length <= 500 && /^https?:\/\/[^\s"'<>]{3,400}\/api\/files\/[a-f0-9-]{8,64}$/i.test(s)) return s;
   return null;
 }
 
@@ -435,6 +437,7 @@ export default async function authRoutes(app) {
         actorRole: user.role || "user",
         meta: { emailVerified: Boolean(user.emailVerified), hasPhone: Boolean(user.phone) }
       });
+      void emitEvent(req.server, "user.registered", { userId: user.id, username: user.username, email: user.email });
       return reply.code(201).send({
         token: issued.token,
         tokenType: "Bearer",

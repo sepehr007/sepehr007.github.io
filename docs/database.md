@@ -18,7 +18,7 @@
 | پیام و پخش | `messages`، `message_reactions`، `message_reports`، `dm_conversations`، `dm_messages`، `dm_reads`، `dm_prefs`، `dm_reactions`، `friendships`، `friend_requests`، `blocks`، `reports`، `moderation_notes`، `room_polls`، `poll_options`، `poll_votes`، `playback_states`، `playback_history`، `subtitle_preferences` |
 | ظاهر و اطلاع‌رسانی | `user_themes`، `notifications`، `notification_prefs`، `announcements`، `support_tickets`، `support_messages`، `media_library` |
 | مالی | `subscription_plans`، `orders`، `subscriptions`، `subscription_events`، `coupons`، `coupon_redemptions`، `entitlements`، `payments`، `payment_events`، `transactions` |
-| عملیات | `feature_flags`، `feature_overrides`، `feature_schedule`، `feature_history`، `audit_logs`، `website_pages`، `analytics_events`، `automation_workflows`، `media_objects`، `backup_runs` |
+| عملیات | `feature_flags`، `feature_overrides`، `feature_schedule`، `feature_history`، `audit_logs`، `website_pages`، `page_versions`، `page_form_submissions`، `page_events`، `analytics_events`، `automation_workflows`، `automation_runs`، `media_objects`، `backup_runs` |
 
 قاعدهٔ مالکیت: هر جدول فقط از ماژول خودش نوشته و خوانده می‌شود؛ ماژول‌های دیگر با شناسه و کوئری محدود سراغش می‌روند. رسانهٔ سنگین هرگز داخل جدول نیست و فقط در `media_objects` ثبت می‌شود.
 
@@ -77,8 +77,10 @@
 - `GET/POST /api/admin/billing/coupons` — کوپن درصدی/ثابتی، محدود به پلن یا آزاد، سقف استفاده و پنجرهٔ اعتبار.
 - `GET /api/admin/billing/payments|subscriptions`، `POST .../payments/:id/verify|refund` و `POST .../subscriptions/:id/adjust` — تایید دستی، برگشت وجه، تمدید/لغو/تغییر پلن با ثبت در `subscription_events`.
 - `GET /api/admin/support` و `GET/PATCH /api/admin/support/:id` — صف پشتیبانی با وضعیت، اولویت، مسئول و نتیجه.
-- `GET/POST/PATCH/DELETE /api/admin/pages` — مدیریت صفحه‌های سایت با وضعیت‌های پیش‌نویس/منتشر/آرشیو.
-- `GET/POST/PATCH/DELETE /api/admin/automation` — ساخت و فعال/غیرفعال‌سازی گردش‌کار (اجرای خودکار فعلاً فعال نیست).
+- `GET/POST/PATCH/DELETE /api/admin/pages` — مدیریت صفحه‌های سایت؛ هر ذخیره یک نسخه در `page_versions` می‌سازد و `GET .../versions`/`POST .../rollback` بازیابی می‌کند. `GET .../submissions` فرم‌های ارسالی را برمی‌گرداند. صفحه‌های عمومی از `/api/pages/:slug` (+ `/nav` و `POST .../submit`) سرو می‌شوند.
+- `GET/POST/PATCH/DELETE /api/admin/automation` و `GET .../runs`، `POST .../runs/:id/retry`، `POST .../:id/simulate` — گردش‌کارهای واقعی؛ هر اجرا در `automation_runs` با وضعیت، تلاش و خطا ثبت می‌شود.
+- `GET /api/admin/analytics/report` و `GET /api/admin/analytics/export?dataset=...` — گزارش بازه‌ای از جدول‌های واقعی با فلگ «در دسترس نیست» برای دادهٔ ناموجود؛ CSV با BOM.
+- `GET /api/admin/storage/usage`، `GET /api/admin/storage/files`، `POST /api/admin/storage/cleanup` — مصرف دیسک، فهرست فایل‌ها و پاک‌سازی فایل‌های رهاشده؛ آپلود کاربران از `/api/uploads` و تحویل از `/api/files/:id`.
 - `POST /api/admin/notifications/broadcast` — اعلان همگانی/نقش‌محور با `confirm: true` و شمارش تحویل.
 - `GET /api/admin/roles` و `PUT /api/admin/roles/:role/permissions` — فهرست نقش‌ها و مجوزها و ذخیرهٔ مجوزهای نقش (نقش‌های سیستمی مالک قفل‌اند).
 - `GET /api/admin/restrictions`، `DELETE /api/admin/restrictions/blocks/:id` و `GET/PATCH /api/admin/reports/social` — مسدودی‌ها و صف گزارش‌های اجتماعی.
@@ -88,8 +90,9 @@
 
 ## شکاف‌های صادقانه
 
-- آداپتور PostgreSQL و S3/فضای ابری برای فایل‌ها هنوز نوشته نشده؛ `media_objects` فعلاً دفتر ثبت است.
-- `automation_workflows` رابط ساخت/فعال‌سازی دارد اما موتور اجرای گردش‌کار نوشته نشده؛ اعلان‌ها فقط دستی/سیستمی هستند.
+- آداپتور PostgreSQL و S3/فضای ابری برای فایل‌ها هنوز نوشته نشده؛ فایل‌ها روی دیسک `DATA_DIR/uploads` ذخیره و فقط در `media_objects` ثبت می‌شوند.
+- موتور خودکارسازی درون همان فرآیند API اجرا می‌شود؛ صف/کارگر جدا و اجرای توزیع‌شده ندارد.
+- زمان تماشا و تأخیر سرور فقط وقتی عدد دارند که داده‌شان ثبت شده باشد؛ در غیر این صورت گزارش صریحاً «در دسترس نیست» می‌گوید، نه صفر.
 - درگاه پرداخت واقعی وصل نیست: مرزِ اتصال (`manual` و `hmac` با وب‌هوک امضاشده) آماده است اما تا وقتی `PAYMENT_PROVIDER=hmac` و اعتبارنامه‌های درگاه ست نشوند، پرداخت دستی است.
 - مسیر MongoDB مهاجرت داده‌ای به SQLite ندارد؛ نصب فعلی که Mongo ندارد مستقیم روی SQLite است.
 - کنترل دامنه‌ای قابلیت‌ها روی HTTP و مسیرهای اتاق کاملاً اعمال می‌شود؛ جریان‌های WebRTC که مستقیم بین مرورگرها باز شده‌اند از سمت سرور قابل قطع نیستند و فقط از لایهٔ رابط و توکن‌های اتصال بسته می‌شوند.

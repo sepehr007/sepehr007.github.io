@@ -205,7 +205,18 @@ function expireDue(conn) {
     conn.prepare("UPDATE subscriptions SET status = 'expired', renewal_status = 'expired', updated_at = ? WHERE id = ?").run(now, row.id);
     addEvent(conn, row, "expired", { expiresAt: row.expires_at });
   }
-  return due.length;
+  return due;
+}
+
+export async function sqlSweepExpired() {
+  const db = await getDatabase();
+  if (!db) return [];
+  return expireDue(db).map((row) => ({
+    subscriptionId: row.id,
+    userId: row.user_id,
+    planId: row.plan_id,
+    expiresAt: row.expires_at ? Number(row.expires_at) : null
+  }));
 }
 
 export async function sqlPlans() {

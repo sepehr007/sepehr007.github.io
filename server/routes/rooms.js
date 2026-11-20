@@ -23,6 +23,7 @@ import {
 import { sqlCreateInvite, sqlListInvites, sqlRevokeInvite } from "../stores/social.js";
 import { discoverRooms, suggestRooms, recommendRooms } from "../stores/discover.js";
 import { deliverNotice } from "../notify.js";
+import { emitEvent } from "../automation.js";
 
 const AUTH = [requireAuth];
 
@@ -138,6 +139,7 @@ export default async function roomRoutes(app) {
       meta: { visibility: room.visibility, capacity: room.capacity, hasPassword: room.hasPassword }
     });
     notifyRoom(req, room.code, { type: "room-event", event: "created", code: room.code });
+    void emitEvent(req.server, "room.created", { roomId: room.id, roomCode: room.code, name: room.name, ownerId: req.auth.userId, capacity: room.capacity });
     return reply.code(201).send({ ok: true, room });
   }));
 
@@ -185,12 +187,20 @@ export default async function roomRoutes(app) {
         room: result.room.code
       });
     }
+    void emitEvent(req.server, "room.member_joined", {
+      roomId: result.room.id,
+      roomCode: result.room.code,
+      userId: req.auth.userId,
+      managerId: result.room.manager?.id || "",
+      memberCount: result.memberCount
+    });
     return { ok: true, ...result };
   }));
 
   app.post("/:code/leave", { preHandler: AUTH }, handle(async (req) => {
     const result = await leaveRoom(req.auth.userId, req.params.code);
     notifyRoom(req, req.params.code, { type: "room-event", event: "left", code: req.params.code });
+    void emitEvent(req.server, "room.member_left", { roomId: result.roomId, roomCode: req.params.code, userId: req.auth.userId, memberCount: result.memberCount });
     return { ok: true, ...result };
   }));
 

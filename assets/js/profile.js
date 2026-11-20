@@ -12,6 +12,7 @@ import {
   isLocallyBanned, syncRemoteSession, rotateRecoveryCode
 } from "./auth.js";
 import { AVATAR_PRESETS, avatarId, avatarSrc, presetValue } from "./avatars.js";
+import { uploadFile, absoluteFileUrl, uploadProgressRow } from "./uploader.js";
 import { dbGetByIndex } from "./db.js";
 import { subscriptionStatus } from "./plans.js";
 import { loadSiteConfig, applySiteConfig, applyGlobalTheme, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
@@ -615,6 +616,46 @@ function wireAvatar() {
       toast(t("profile.saved"), "success");
     } catch { toast(t("profile.saveFailed"), "error"); }
   });
+
+  const uploadBox = $("#avatarUpload");
+  if (uploadBox) {
+    const fileInput = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp", class: "hidden" });
+    const uploadBtn = el("button", { class: "link-btn", type: "button", text: "آپلود عکس (PNG/JPG/WebP تا ۲ مگابایت)" });
+    const progress = uploadProgressRow("بارگذاری عکس");
+    progress.classList.add("hidden");
+    uploadBtn.addEventListener("click", () => {
+      if (!allow("account.avatarUploads") || !allowAvatar()) return;
+      fileInput.click();
+    });
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) {
+        toast("حجم عکس بیشتر از ۲ مگابایت است.", "error");
+        fileInput.value = "";
+        return;
+      }
+      uploadBtn.disabled = true;
+      progress.classList.remove("hidden");
+      try {
+        const data = await uploadFile(file, { kind: "avatar", onProgress: (p) => progress.setProgress(p) });
+        const res = setAvatar(absoluteFileUrl(data.url));
+        if (!res.ok) throw new Error("این فایل به‌عنوان آواتار پذیرفته نشد.");
+        profile.avatar = res.avatar;
+        recordFeatureUse("account.avatarUploads", { plan: flagContext.plan, role: flagContext.role });
+        paintAvatar();
+        renderAvatarGallery();
+        toast("عکس پروفایل به‌روز شد.", "success");
+      } catch (err) {
+        toast(err.message || "بارگذاری عکس انجام نشد.", "error");
+      } finally {
+        uploadBtn.disabled = false;
+        fileInput.value = "";
+        setTimeout(() => progress.classList.add("hidden"), 1200);
+      }
+    });
+    uploadBox.append(uploadBtn, fileInput, progress);
+  }
 }
 
 /* ---------- friends ---------- */

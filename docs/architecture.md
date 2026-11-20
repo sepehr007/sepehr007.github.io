@@ -11,17 +11,19 @@
 
 | بخش | محل |
 | --- | --- |
-| صفحات | `index.html` (لندینگ)، `auth.html` (ورود/ثبت‌نام/بازیابی)، `profile.html`، `owner.html` (+ مسیرهای مخفی)، `room.html` |
-| طراحی | `assets/css/design-system.css` (توکن‌های واحد) سپس `style.css` و اسکین‌های `-v8` و `owner.css` |
-| منطق | `assets/js/` — `core.js`، `i18n.js`، `auth.js`، `api.js`، `site-config.js`، `feature-flags.js`، `lobbies.js`، `room.js`، `player.js`، `net.js`، `voice.js`، `owner*.js` (`owner-center`، `owner-god`، `owner-registry`، `owner-audit`) |
+| صفحات | `index.html` (لندینگ)، `auth.html` (ورود/ثبت‌نام/بازیابی)، `profile.html`، `owner.html` (+ مسیرهای مخفی)، `room.html`، `rooms.html` (کشف اتاق)، `page.html` (نمایش صفحه‌های سازندهٔ سایت) |
+| طراحی | `assets/css/design-system.css` (توکن‌های واحد) سپس `style.css`، اسکین‌های `-v8`، `owner.css` و `pages.css` (صفحهٔ عمومی و پیش‌نمایش بلوک‌ها) |
+| منطق | `assets/js/` — `core.js`، `i18n.js`، `auth.js`، `api.js`، `site-config.js`، `feature-flags.js`، `lobbies.js`، `room.js`، `player.js`، `net.js`، `voice.js`، `owner*.js` (`owner-center`، `owner-god`، `owner-registry`، `owner-audit`)، `page-view.js` (نمایش صفحه)، `page-blocks.js` (رندر امن بلوک‌ها)، `uploader.js` (آپلود XHR با نوار پیشرفت) |
 | ذخیرهٔ محلی | `localStorage` (نشست سبک، تنظیمات ظاهر) و IndexedDB (`db.js`: حساب‌ها، لابی‌ها، پیام‌ها، فعالیت، پلن/سفارش) |
 | دو زبان | `i18n.js` با کلیدهای fa/en و سوییچ RTL/LTR |
 | آفلاین | `sw.js` — کش نسخه‌دار؛ HTML/JS/CSS با `no-cache` از شبکه و fallback کش |
 
+> قانون سرریز متن: همهٔ `.btn`/chip/tag/badgeها متن بلند را می‌شکنند (`white-space: normal` + `overflow-wrap: anywhere` در انتهای `style.css`) تا برچسب بلند از دکمه بیرون نزند.
+
 ## بک‌اند
 
 - **سرور:** `server/index.js` — CORS، محدودیت نرخ، WebSocket (`/ws`)، مسیرهای REST.
-- **مسیرها:** `/api/auth/*` (ثبت‌نام، ورود، تأیید ایمیل، بازیابی، پروفایل، اتصال ایمیل/پیامک مالک)، `/api/lobbies/*`، `/api/billing/*`، `/api/admin/*` (دیتابیس، حسابرسی، نمای پلتفرم، کاربران، اتاق‌ها، پیام‌ها، گزارش‌ها، مالی، آمار، ذخیره‌سازی، تنظیمات و کنترل قابلیت‌ها؛ فقط مالک)، `/api/features`، `/api/settings/public`، `/api/health`.
+- **مسیرها:** `/api/auth/*` (ثبت‌نام، ورود، تأیید ایمیل، بازیابی، پروفایل، اتصال ایمیل/پیامک مالک)، `/api/lobbies/*`، `/api/billing/*`، `/api/rooms/*`، `/api/pages/*` (صفحه‌های منتشرشده، ناوبری، ثبت فرم)، `/api/uploads` و `/api/files/:id` (آپلود و تحویل فایل)، `/api/admin/*` (دیتابیس، حسابرسی، نمای پلتفرم، کاربران، اتاق‌ها، پیام‌ها، گزارش‌ها، مالی، آمار، ذخیره‌سازی، فایل‌ها، صفحه‌ها، خودکارسازی، تنظیمات و کنترل قابلیت‌ها؛ فقط مالک)، `/api/features`، `/api/settings/public`، `/api/health`.
 - **کنترل قابلیت:** `server/features.js` کاتالوگ، وابستگی‌ها، دامنه‌ها (سراسری/کاربر/اتاق/سرور/نقش/پلن)، زمان‌بندی و تاریخچه را نگه می‌دارد؛ `server/platformSettings.js` رجیستری تنظیمات را اعتبارسنجی می‌کند؛ `server/adminGuard.js` نقش مالک و نرخ درخواست را برای همه‌ی مسیرهای پنل اعمال می‌کند. رابط کاربری در `assets/js/owner-god.js` به همین APIها وصل است.
 - **حافظهٔ نشست:** Redis در صورت وجود، وگرنه حافظهٔ فرآیند (`server/redis.js`)؛ در حالت SQLite نشست در جدول `sessions` هم ذخیره می‌شود تا ری‌استارت سرور کاربر را بیرون نیندازد. JWT با `jti` که با خروج یا تغییر رمز باطل می‌شود.
 - **تنظیمات:** `server/settings.js` — DB-first، متغیرهای env فقط وقتی دیتابیس غیرفعال است؛ رازها هرگز به مرورگر برنمی‌گردند و فقط فلگ `passSet/apiKeySet/twilioTokenSet` برمی‌گردد.
@@ -131,10 +133,19 @@
 - چرخهٔ اشتراک: تست (فقط یک‌بار برای هر پلن)، سفارش، پرداخت در انتظار، فعال، منقضی/لغو؛ `cancel_at_period_end` و `renewal_status` وضعیت تمدید را نشان می‌دهند و هر تغییر در `subscription_events` می‌نشیند. اعمال سهمیه در خود مسیرهای اتاق انجام می‌شود، نه فقط در UI.
 - پرداخت از `server/payments.js` عبور می‌کند و مستقل از درگاه است: `manual` (واریز + تایید مالک) یا `hmac` (ریدایرکت به `PAYMENT_CHECKOUT_URL` و وب‌هوک امضاشده). فعال‌سازی فقط بعد از تایید وب‌هوک/تایید مالک انجام می‌شود؛ پیام موفقیت فرانت هیچ اثری ندارد. `payment_events` با `UNIQUE(provider, event_id)` و `payments.idempotency_key` ارسال تکراری را خنثی می‌کند و اختلاف مبلغ با 409 رد می‌شود. هیچ دادهٔ کارت ذخیره نمی‌شود.
 
+## سازندهٔ سایت، خودکارسازی، آمار و فایل‌ها (بخش ۳۲–۳۵)
+
+- **سازندهٔ سایت:** فقط بلوک‌های ازپیش‌تعریف‌شده (`heading, text, image, button, link, banner, form, nav, spacer`) مجازند؛ `server/pageBlocks.js` متن‌ها، لینک‌ها (`/`, `#`, `https://`, `mailto:`) و تصویرها (`/` یا `https://`) را پاک‌سازی می‌کند و هرگز کد دلخواه اجرا نمی‌شود. نسخه‌ها در `page_versions` با `snapshotPage` ثبت می‌شوند و بازگردانی نسخه، خودش نسخهٔ تازه می‌سازد. صفحهٔ منتشرشده از `/api/pages/:slug` سرو می‌شود؛ `visibility` = public/unlisted/members و انتشار زمان‌دار = `status=published` با `scheduled_at` آینده که تا آن زمان `visibleNow=false` است. فرم‌ها در `page_form_submissions` و شمارش بازدید در `page_events` می‌نشیند. رابط: `page.html` + `page-view.js`، و ویرایشگر بصری در تب «صفحه‌ها»ی کنسول مالک.
+- **خودکارسازی:** موتور واقعی در `server/automation.js` — تریگرهای مجاز (`user.registered`، `subscription.*`، `room.created`، `room.member_joined|left`، `moderation.report_created`، `support.ticket_created|updated`، `notification.broadcast`، `page.form_submitted`، `payment.failed`) با `emitEvent` فراخوانی می‌شوند؛ شرط‌ها (`match: all|any` + قاعده‌های eq/neq/contains/starts_with/ends_with/gt/gte/lt/lte/exists) و اکشن‌ها (`notify_user`، `notify_owner`، `notify_role`، `email_user`، `close_room`) در فهرست سفیدند. هر اجرا در `automation_runs` با وضعیت/تلاش/خطا ثبت می‌شود، خطا یک‌بار دیگر خودکار تلاش و از پنل هم قابل `retry` است. `simulate` اجرای خشک است و چیزی نمی‌فرستد؛ هیچ کد دلخواهی اجرا نمی‌شود.
+- **آمار:** `GET /api/admin/analytics/report` فقط از جدول‌های واقعی می‌خواند و دادهٔ ناموجود را با فلگ `available:false` و `reason` علامت می‌زند (مثلاً `watchTime.reason=no_watch_history`، `latency` اندازه‌گیری نمی‌شود). CSVهای `registrations|revenue|tickets|reports` با BOM UTF-8 از `/api/admin/analytics/export` فقط با هدر Bearer برمی‌گردند.
+- **فایل‌ها:** `server/storage.js` + `server/routes/uploads.js` — سبدها (`avatar`، `room-cover`، `server-image`، `page-image`، `subtitle`، `attachment`، `media`) با سقف حجم و نوع مجاز، تشخیص magic-byte، کوتهٔ کاربری (`UPLOAD_USER_QUOTA_MB=60`) و جهانی (`UPLOAD_GLOBAL_QUOTA_MB=2048`)، ذخیره در `DATA_DIR/uploads/<bucket>/...`، ردیف `media_objects` و مسیر امن با `path.resolve` (بدون path traversal). فایل‌های خصوصی فقط با توکن صاحب/کارکنان از `/api/files/:id` (پشتیبانی Range) خوانده می‌شوند؛ حذف نرم است و `cleanupUploads` فایل‌های رهاشده را جمع می‌کند.
+
 ## شکاف‌های شناخته‌شده
 
 - GitHub Pages سرور اجرا نمی‌کند؛ کدهای ایمیل/پیامک روی سایت زنده فقط با سرور میزبانی‌شده ارسال می‌شوند.
 - درگاه پرداخت واقعی هنوز وصل نشده؛ مرز اتصال (manual/hmac) آماده است اما تا قرارداد پذیرندگی و اعتبارنامه‌های درگاه نباشد، تسویهٔ بانکی خودکار نیست.
-- موتور اجرای گردش‌کار خودکارسازی نوشته نشده؛ ساخت/فعال‌سازی workflow و ثبت آن هست، اما رویدادها به‌صورت خودکار اجرا نمی‌شوند.
+- ذخیره‌سازی فایل‌ها روی دیسک خود سرور است (`DATA_DIR/uploads`) و آداپتور S3/فضای ابری نوشته نشده؛ برای چند نود باید فضای مشترک یا آداپتور ابری اضافه شود.
+- زمان تماشا فقط وقتی نمودار دارد که تاریخچهٔ تماشا ثبت شده باشد؛ روی نصب تازه با «در دسترس نیست» نشان داده می‌شود، نه صفر. تأخیر (latency) هنوز اندازه‌گیری نمی‌شود.
+- بازدید صفحه‌ها فقط بعد از اتصال فرانت به سرور و ثبت `page_events` واقعی می‌شود؛ قبل از آن آمار بازدید «در دسترس نیست» است.
 - مفهوم «سرور/Server» هنوز وجود ندارد؛ دستهٔ «فعالیت سرور» با «فعالیت اتاق» پوشش داده شده است.
-- Pub/Sub و کارگر پس‌زمینه برای مقیاس افقی وجود ندارد.
+- Pub/Sub و کارگر پس‌زمینه برای مقیاس افقی وجود ندارد؛ اجرای گردش‌کارها درون همان درخواست/فرآیند API انجام می‌شود.

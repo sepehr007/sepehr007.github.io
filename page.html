@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#0c0b1d">
+<script src="assets/js/theme-boot.js"></script>
+<style>html{background:#0c0b1d}html[data-theme="light"]{background:#f4f2ff}</style>
+<title>هم‌تماشا</title>
+<meta name="description" content="صفحهٔ سایت هم‌تماشا">
+<link rel="preload" as="font" href="assets/fonts/vazirmatn-var.woff2" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/css/design-system.css">
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="stylesheet" href="assets/css/nebula.css">
+<link rel="stylesheet" href="assets/css/pages.css">
+<link rel="stylesheet" href="assets/css/device-compat.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%236c5cff'/%3E%3Cpath d='M38 30l30 20-30 20z' fill='white'/%3E%3C/svg%3E">
+</head>
+<body class="page-public">
+
+<div class="bg-aurora" aria-hidden="true">
+  <span class="aurora a1"></span>
+  <span class="aurora a2"></span>
+  <span class="aurora a3"></span>
+  <div class="grid-overlay"></div>
+</div>
+
+<header class="site-header pub-header">
+  <a class="brand" href="./">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor"/></svg>
+    </span>
+    <span class="brand-text">هم‌تماشا</span>
+  </a>
+  <nav class="v8-nav pub-nav" id="pageNav" aria-label="ناوبری صفحه"></nav>
+  <div class="header-actions">
+    <a class="btn btn-ghost btn-sm" href="rooms.html">اتاق‌ها</a>
+    <a class="btn btn-ghost btn-sm" id="pubProfileLink" href="auth.html?mode=login&amp;next=index.html">ورود</a>
+  </div>
+</header>
+
+<main class="pub-main" id="pubMain">
+  <div class="pub-state" id="pubState">
+    <span class="pub-spinner" aria-hidden="true"></span>
+    <p>در حال بارگذاری صفحه…</p>
+  </div>
+  <article class="pub-page hidden" id="pubPage">
+    <header class="pub-head">
+      <h1 id="pubTitle"></h1>
+      <p class="pub-desc" id="pubDesc"></p>
+      <span class="pub-meta" id="pubMeta"></span>
+    </header>
+    <div class="pub-blocks" id="pubBlocks"></div>
+  </article>
+</main>
+
+<footer class="site-footer pub-footer">
+  <span>صفحه‌های سایت با سازندهٔ امن هم‌تماشا ساخته می‌شوند؛ هیچ کد دلخواهی اجرا نمی‌شود.</span>
+  <a href="./">بازگشت به خانه</a>
+</footer>
+
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
+<script type="module" src="assets/js/page-view.js"></script>
+</body>
+</html>

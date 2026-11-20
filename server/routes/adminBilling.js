@@ -4,6 +4,7 @@ import { ensureStore } from "../userStore.js";
 import { all, get, pageLimit } from "../database/index.js";
 import { audit } from "../audit.js";
 import { adminLimit, permissionOnly } from "../adminGuard.js";
+import { emitEvent } from "../automation.js";
 import {
   sqlPlansAdmin,
   sqlPlanById,
@@ -381,6 +382,13 @@ export default async function adminBillingRoutes(app) {
     });
     if (!result.duplicate && result.order?.user) {
       await notice(req, result.order.user, "پرداختت تأیید شد", `اشتراک ${result.plan?.name || ""} فعال شد.`, `paid_admin:${result.order.id}`);
+      emitEvent(req.server, "subscription.activated", {
+        userId: result.order.user,
+        orderId: result.order.id,
+        planId: result.plan?.id || "",
+        amount: result.order.amount,
+        source: "manual_verify"
+      });
     }
     return { ok: true, ...result };
   });

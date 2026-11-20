@@ -198,3 +198,18 @@ export async function sendTestMail({ to }) {
     })
   });
 }
+
+export async function sendSystemMail({ to, subject, text }) {
+  const safeSubject = String(subject || "").slice(0, 160) || "پیام از هم‌تماشا";
+  const safeText = String(text || "").slice(0, 4000);
+  return deliver({
+    to,
+    subject: safeSubject,
+    text: safeText,
+    html: layout({
+      title: safeSubject,
+      intro: escapeHtml(safeText).replace(/\n/g, "<br>"),
+      note: "این پیام به‌صورت خودکار توسط یکی از گردش‌کارهای سایت ارسال شده است."
+    })
+  });
+}

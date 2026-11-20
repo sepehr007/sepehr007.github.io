@@ -67,6 +67,7 @@ import {
   sqlPutNotificationPrefs
 } from "../stores/social.js";
 import { deliverNotice, deliverNoticeMany } from "../notify.js";
+import { emitEvent } from "../automation.js";
 
 function fail(reply, status, error, message) {
   return reply.code(status).send({ error, message });
@@ -384,6 +385,13 @@ export default async function socialRoutes(app) {
       targetId: report.id,
       meta: { targetType: report.targetType, targetId: report.targetId, category: report.category }
     });
+    void emitEvent(req.server, "moderation.report_created", {
+      reportId: report.id,
+      reporterId: req.auth.userId,
+      targetType: report.targetType,
+      targetId: report.targetId,
+      category: report.category
+    });
     return reply.code(201).send({ ok: true, report });
   }));
 
@@ -616,6 +624,14 @@ export default async function socialRoutes(app) {
       dedupeWindowMs: 60 * 60_000
     }));
     await audit("support.create", req, { targetType: "support_ticket", targetId: ticket.id, meta: { category: ticket.category } });
+    void emitEvent(req.server, "support.ticket_created", {
+      ticketId: ticket.id,
+      userId: req.auth.userId,
+      subject: ticket.subject,
+      category: ticket.category,
+      priority: ticket.priority,
+      status: ticket.status
+    });
     return reply.code(201).send({ ok: true, ticket });
   }));
 

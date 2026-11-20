@@ -1,6 +1,8 @@
 import { el, toast } from "./core.js";
-import { apiFetch, ApiError } from "./api.js";
+import { apiFetch, ApiError, apiUrl } from "./api.js";
 import { barChart } from "./charts.js";
+import { renderBlocks } from "./page-blocks.js";
+import { uploadFile, absoluteFileUrl, uploadProgressRow } from "./uploader.js";
 
 const OWNER_JWT_KEY = "wt.ownerJwt";
 const GOD_GROUP = "god";
@@ -93,6 +95,125 @@ function fmtMoney(amount, currency = "IRT") {
   const n = Number(amount) || 0;
   const text = n.toLocaleString("fa-IR");
   return currency === "USD" ? `$${text}` : `${text} تومان`;
+}
+
+function fmtSpan(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  if (d) return `${d.toLocaleString("fa-IR")} روز و ${h.toLocaleString("fa-IR")} ساعت`;
+  if (h) return `${h.toLocaleString("fa-IR")} ساعت و ${m.toLocaleString("fa-IR")} دقیقه`;
+  return `${m.toLocaleString("fa-IR")} دقیقه`;
+}
+
+async function downloadCsv(path) {
+  const res = await fetch(apiUrl(path), { headers: { Authorization: `Bearer ${ownerToken()}` }, cache: "no-store" });
+  if (!res.ok) {
+    let data = null;
+    try { data = await res.json(); } catch {}
+    throw new ApiError(data?.message || "خروجی ساخته نشد.", { status: res.status, code: data?.error || `http_${res.status}` });
+  }
+  const blob = await res.blob();
+  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") || "")?.[1] || "export.csv";
+  const link = el("a", { href: URL.createObjectURL(blob), download: name });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+}
+
+const BLOCK_LABELS = {
+  heading: "عنوان",
+  text: "متن",
+  image: "تصویر",
+  button: "دکمه",
+  link: "لینک",
+  banner: "بنر",
+  form: "فرم",
+  nav: "ناوبری",
+  spacer: "فضای خالی"
+};
+const VISIBILITY_LABELS = { public: "عمومی", unlisted: "بدون فهرست", members: "فقط اعضا" };
+const PAGE_STATUS_LABELS = { draft: "پیش‌نویس", published: "منتشرشده", archived: "آرشیو" };
+const OP_LABELS = {
+  eq: "برابر باشد",
+  neq: "برابر نباشد",
+  contains: "شامل باشد",
+  starts_with: "با … شروع شود",
+  ends_with: "با … تمام شود",
+  gt: "بزرگ‌تر از",
+  gte: "بزرگ‌تر یا مساوی",
+  lt: "کوچک‌تر از",
+  lte: "کوچک‌تر یا مساوی",
+  exists: "خالی نباشد"
+};
+const RUN_STATUS_LABELS = { ok: "موفق", failed: "ناموفق", running: "در حال اجرا" };
+const ACTION_STATUS_LABELS = { ok: "انجام شد", skipped: "رد شد", failed: "خطا" };
+const NOTICE_KIND_LABELS = {
+  announcement: "اطلاعیه",
+  payment: "پرداخت",
+  support_update: "به‌روزرسانی پشتیبانی",
+  security: "امنیت",
+  system: "سیستم"
+};
+const PARAM_LABELS = { title: "عنوان", body: "متن", kind: "نوع اعلان", link: "لینک", role: "نقش", subject: "موضوع", text: "متن ایمیل" };
+
+function newBlock(type) {
+  const layout = { width: "narrow", tone: "none", align: "start" };
+  switch (type) {
+    case "heading":
+      return { type, layout, text: "عنوان تازه", level: 2 };
+    case "text":
+      return { type, layout, text: "متن تازه…" };
+    case "image":
+      return { type, layout, src: "", alt: "", caption: "" };
+    case "button":
+      return { type, layout, label: "دکمهٔ تازه", href: "/", style: "primary" };
+    case "link":
+      return { type, layout, label: "لینک تازه", href: "/" };
+    case "banner":
+      return { type, layout, tone: "primary", title: "بنر تازه", text: "", image: "", ctaLabel: "", ctaHref: "" };
+    case "form":
+      return { type, layout, title: "فرم تماس", text: "", fields: ["name", "email", "message"], submitLabel: "ارسال", successText: "پیام شما ثبت شد." };
+    case "nav":
+      return { type, layout, items: [{ label: "خانه", href: "/" }] };
+    case "spacer":
+      return { type, layout, size: "md" };
+    default:
+      return { type: "text", layout, text: "" };
+  }
+}
+
+function draftFromPage(page) {
+  return {
+    id: page?.id || "",
+    slug: page?.slug || "",
+    title: page?.title || "",
+    description: page?.description || "",
+    locale: page?.locale || "fa",
+    visibility: page?.visibility || "public",
+    showInNav: page ? Boolean(page.showInNav) : true,
+    navOrder: page?.navOrder || 0,
+    scheduledAt: page?.scheduledAt || null,
+    status: page?.status || "draft",
+    version: page?.version || 1,
+    submissionCount: page?.submissionCount || 0,
+    blocks: JSON.parse(JSON.stringify(page?.blocks || []))
+  };
+}
+
+function toDateTimeInput(ms) {
+  if (!ms) return "";
+  const d = new Date(Number(ms));
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromDateTimeInput(value) {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
 }
 
 function mkBtn(label, onClick, cls = "mini-btn") {
@@ -676,33 +797,155 @@ function renderServerFinance(section) {
 }
 
 function renderServerAnalytics(section) {
+  const state = { days: 30, from: "", to: "" };
+  const reasonText = {
+    no_watch_history: "تاریخچهٔ تماشا هنوز ثبت نشده است.",
+    no_page_events_collected: "رویداد بازدید صفحه هنوز از مرورگرها جمع نشده است.",
+    request_latency_not_instrumented: "زمان پاسخ درخواست‌ها اندازه‌گیری نمی‌شود.",
+    storage_unavailable: "شمارش فایل‌ها در دسترس نیست."
+  };
+  const missing = (reason) => reasonText[reason] || "این داده در دسترس نیست.";
+
+  const rangeQuery = () => {
+    const qs = new URLSearchParams();
+    if (state.from && state.to) {
+      qs.set("from", String(new Date(`${state.from}T00:00:00`).getTime()));
+      qs.set("to", String(new Date(`${state.to}T23:59:59.999`).getTime()));
+    } else {
+      qs.set("days", String(state.days));
+    }
+    return qs;
+  };
+
   const reload = async () => {
-    section.replaceChildren(loading());
+    section.replaceChildren(loading("در حال محاسبهٔ گزارش از پایگاه داده…"));
     try {
-      const data = await api("/admin/analytics");
+      const qs = rangeQuery();
+      const data = await api(`/admin/analytics/report?${qs.toString()}`);
+      const s = data.summary || {};
+      const avail = data.availability || {};
+      const series = data.series || { labels: [] };
       const view = el("div", { class: "og-page" });
-      const grid = el("div", { class: "stat-grid" });
-      grid.append(
-        statCard("کاربران کل", data.totals?.users ?? 0, "بدون حساب‌های حذف‌شده"),
-        statCard("ورودهای امروز", data.totals?.sessionsToday ?? 0, "نشست تازه"),
-        statCard("پیام‌های امروز", data.totals?.messagesToday ?? 0, "از نیمه‌شب")
+
+      const controls = card("بازهٔ گزارش", "همهٔ اعداد از پایگاه دادهٔ سرور در همین بازه خوانده می‌شوند.");
+      const bar = el("div", { class: "ow-toolbar" });
+      for (const days of [7, 30, 90]) {
+        const active = !state.from && state.days === days;
+        const btn = el("button", { class: active ? "ow-chip active" : "ow-chip", type: "button", text: `${days.toLocaleString("fa-IR")} روز` });
+        btn.addEventListener("click", () => {
+          state.days = days;
+          state.from = "";
+          state.to = "";
+          reload();
+        });
+        bar.append(btn);
+      }
+      const fromInput = el("input", { type: "date", class: "ow-input", "aria-label": "از تاریخ" });
+      fromInput.value = state.from;
+      const toInput = el("input", { type: "date", class: "ow-input", "aria-label": "تا تاریخ" });
+      toInput.value = state.to;
+      const apply = mkBtn("اعمال بازه", () => {
+        if (!fromInput.value || !toInput.value) return toast("هر دو تاریخ را انتخاب کن.", "error");
+        if (fromInput.value > toInput.value) return toast("تاریخ شروع باید قبل از پایان باشد.", "error");
+        state.from = fromInput.value;
+        state.to = toInput.value;
+        reload();
+      }, "mini-btn");
+      const reset = mkBtn("بازگشت به ۳۰ روز", () => {
+        state.days = 30;
+        state.from = "";
+        state.to = "";
+        reload();
+      }, "mini-btn");
+      bar.append(fromInput, toInput, apply, reset);
+      const stamp = el("p", { class: "ohint", text: `از ${new Date(data.range.from).toLocaleDateString("fa-IR")} تا ${new Date(data.range.to).toLocaleDateString("fa-IR")} · ${Number(data.range.days).toLocaleString("fa-IR")} روز · ساخته‌شده ${fmtDate(data.generatedAt)}` });
+      controls.append(bar, stamp);
+      view.append(controls);
+
+      const grid1 = el("div", { class: "stat-grid" });
+      grid1.append(
+        statCard("ثبت‌نام", Number(s.registrations || 0).toLocaleString("fa-IR"), `${Number(data.registrationsSharePct || 0).toLocaleString("fa-IR")}٪ از کل کاربران`),
+        statCard("کاربران فعال", Number(s.activeUsers || 0).toLocaleString("fa-IR"), "بر اساس نشست‌های دارای فعالیت"),
+        statCard("کل کاربران", Number(s.totalUsers || 0).toLocaleString("fa-IR"), "بدون حساب‌های حذف‌شده"),
+        statCard("پیام‌ها", Number(s.messages || 0).toLocaleString("fa-IR"), "پیام‌های ذخیره‌شده در بازه")
       );
-      const chart = card("ثبت‌نام ۱۴ روز اخیر", "روند روزانهٔ ساخت حساب.");
-      const chartBox = el("div", { class: "og-chart" });
-      const sLabels = (data.signups || []).map((d) => String(d.date).slice(5));
-      chartBox.append(barChart({ labels: sLabels, values: (data.signups || []).map((d) => d.value), color: "#3d6bff" }));
-      chart.append(chartBox);
-      const msgChart = card("پیام‌های ۱۴ روز اخیر", "فعالیت گفتگو در سرور.");
-      const msgBox = el("div", { class: "og-chart" });
-      msgBox.append(barChart({ labels: sLabels, values: (data.messages || []).map((d) => d.value), color: "#f5b23e" }));
-      msgChart.append(msgBox);
-      view.append(grid, chart, msgChart);
-      if ((data.events || []).length) {
-        view.append(el("h3", { class: "ow-h3", text: "رویدادهای پرتکرار" }), table(
-          ["رویداد", "تعداد"],
-          data.events.map((e) => [e.event, String(e.n)])
+      const grid2 = el("div", { class: "stat-grid" });
+      grid2.append(
+        statCard("اتاق‌های ساخته‌شده", Number(s.roomsCreated || 0).toLocaleString("fa-IR"), `${Number(s.activeRooms || 0).toLocaleString("fa-IR")} اتاق فعال`),
+        statCard("ورود به اتاق", Number(s.joinings || 0).toLocaleString("fa-IR"), "عضویت‌های تازه در بازه"),
+        avail.watchTime
+          ? statCard("زمان تماشا", fmtSpan(s.watchTime?.seconds), `${Number(s.watchTime?.sessions || 0).toLocaleString("fa-IR")} نشست تماشا`)
+          : statCard("زمان تماشا", "در دسترس نیست", missing(s.watchTime?.reason)),
+        avail.pageViews
+          ? statCard("بازدید صفحه", Number(s.pageViews?.count || 0).toLocaleString("fa-IR"), "رویدادهای ثبت‌شدهٔ مرورگر")
+          : statCard("بازدید صفحه", "در دسترس نیست", missing(s.pageViews?.reason))
+      );
+      const grid3 = el("div", { class: "stat-grid" });
+      grid3.append(
+        statCard("درآمد", fmtMoney(s.revenue?.amount, s.revenue?.currency), `${Number(s.revenue?.payments || 0).toLocaleString("fa-IR")} پرداخت موفق`),
+        statCard("بازگشت وجه", fmtMoney(s.refunds?.amount), `${Number(s.refunds?.payments || 0).toLocaleString("fa-IR")} مورد`),
+        statCard("اشتراک فعال", Number(s.subscriptions?.active || 0).toLocaleString("fa-IR"), `${Number(s.subscriptions?.trials || 0).toLocaleString("fa-IR")} آزمایشی · ${Number(s.subscriptions?.pendingOrders || 0).toLocaleString("fa-IR")} سفارش در انتظار`),
+        statCard("اشتراک در بازه", `${Number(s.subscriptions?.activated || 0).toLocaleString("fa-IR")} فعال‌سازی`, `${Number(s.subscriptions?.expired || 0).toLocaleString("fa-IR")} انقضا`)
+      );
+      const grid4 = el("div", { class: "stat-grid" });
+      grid4.append(
+        statCard("تیکت‌های باز", Number(s.support?.open || 0).toLocaleString("fa-IR"), `${Number(s.support?.created || 0).toLocaleString("fa-IR")} تیکت تازه در بازه`),
+        statCard("تیکت‌های حل‌شده", Number(s.support?.resolved || 0).toLocaleString("fa-IR"), s.support?.avgResolutionHours == null ? "میانگین پاسخ در دسترس نیست" : `میانگین ${Number(s.support.avgResolutionHours).toLocaleString("fa-IR")} ساعت`),
+        statCard("گزارش تخلف", Number(s.moderation?.reports || 0).toLocaleString("fa-IR"), `${Number(s.moderation?.open || 0).toLocaleString("fa-IR")} باز · ${Number(s.moderation?.closed || 0).toLocaleString("fa-IR")} بسته‌شده`),
+        statCard("خطاهای ثبت‌شده", Number(s.errors?.total || 0).toLocaleString("fa-IR"), `${Number(s.errors?.failedPayments || 0).toLocaleString("fa-IR")} پرداخت · ${Number(s.errors?.failedAutomationRuns || 0).toLocaleString("fa-IR")} گردش‌کار`)
+      );
+      view.append(grid1, grid2, grid3, grid4);
+
+      const labels = (series.labels || []).map((label) => String(label).slice(5));
+      const chartCard = (title, hint, values, color) => {
+        const node = card(title, hint);
+        const box = el("div", { class: "og-chart" });
+        box.append(barChart({ labels, values: values || [], color }));
+        node.append(box);
+        return node;
+      };
+      view.append(chartCard("ثبت‌نام روزانه", "تعداد حساب‌های ساخته‌شده در هر روز.", series.registrations, "#3d6bff"));
+      view.append(chartCard("پیام‌های روزانه", "پیام‌های ذخیره‌شده در گفتگوها.", series.messages, "#f5b23e"));
+      view.append(chartCard("درآمد روزانه", "جمع پرداخت‌های موفق (تومان).", series.revenue, "#34d399"));
+      if (avail.pageViews) {
+        view.append(chartCard("بازدید صفحهٔ روزانه", "رویدادهای واقعی جمع‌آوری‌شده از مرورگرها.", series.pageViews, "#a78bfa"));
+      }
+
+      if ((data.topPaths || []).length) {
+        view.append(el("h3", { class: "ow-h3", text: "پربازدیدترین مسیرها" }), table(
+          ["مسیر", "بازدید"],
+          data.topPaths.map((item) => [el("code", { dir: "ltr", text: item.path }), Number(item.count).toLocaleString("fa-IR")])
         ));
       }
+
+      const sys = s.system || {};
+      const sysCard = card("سیستم و ذخیره‌سازی", "وضعیت لحظهٔ سرور و مصرف فضای فایل‌ها.");
+      sysCard.append(table(["شاخص", "مقدار"], [
+        ["بالا بودن سرور", fmtSpan(sys.uptimeSeconds)],
+        ["نسخهٔ Node", sys.node || "—"],
+        ["حافظهٔ مصرفی (RSS)", fmtBytes(sys.rssBytes)],
+        ["هیپ مصرف‌شده", fmtBytes(sys.heapUsedBytes)],
+        ["حجم فایل پایگاه داده", sys.dbSizeBytes == null ? "در دسترس نیست" : fmtBytes(sys.dbSizeBytes)],
+        ["فضای فایل‌های آپلودی", s.storage?.available === false ? "در دسترس نیست" : fmtBytes(s.storage?.usedBytes)],
+        ["زمان پاسخ درخواست‌ها", avail.latency ? "دارد" : "اندازه‌گیری نمی‌شود"]
+      ]));
+      view.append(sysCard);
+      if (s.errors?.note) view.append(el("p", { class: "ohint", text: s.errors.note }));
+
+      const exportCard = card("خروجی CSV", "خروجی شامل ردیف‌های همان بازهٔ انتخاب‌شده است.");
+      const exportBar = el("div", { class: "ow-toolbar" });
+      for (const [dataset, label] of [["registrations", "ثبت‌نام‌ها"], ["revenue", "پرداخت‌ها"], ["tickets", "تیکت‌ها"], ["reports", "گزارش‌های تخلف"]]) {
+        exportBar.append(mkBtn(`دریافت ${label}`, async () => {
+          try {
+            await downloadCsv(`/admin/analytics/export?dataset=${dataset}&${qs.toString()}`);
+            toast("خروجی آماده شد.");
+          } catch (err) {
+            toast(err.message || "خروجی ساخته نشد.", "error");
+          }
+        }));
+      }
+      exportCard.append(exportBar);
+      view.append(exportCard);
       section.replaceChildren(view);
     } catch (err) {
       failure(section, err, reload);
@@ -1130,6 +1373,142 @@ function renderVault(section) {
       failure(section, err, reload);
     }
   };
+  reload();
+}
+
+function renderFiles(section, center) {
+  const state = { kind: "", files: [], nextBefore: null, kinds: [] };
+
+  const reload = async () => {
+    section.replaceChildren(loading("در حال خواندن فایل‌ها…"));
+    try {
+      const qs = new URLSearchParams({ limit: "30" });
+      if (state.kind) qs.set("kind", state.kind);
+      const [usage, list, mine] = await Promise.all([
+        api("/admin/storage/usage"),
+        api(`/admin/storage/files?${qs.toString()}`),
+        api("/uploads/usage").catch(() => null)
+      ]);
+      state.files = list.files || [];
+      state.nextBefore = list.nextBefore;
+      state.kinds = mine?.kinds || [];
+
+      const view = el("div", { class: "og-page" });
+      const grid = el("div", { class: "stat-grid" });
+      grid.append(
+        statCard("فایل‌های فعال", Number(usage.totalFiles || 0).toLocaleString("fa-IR"), `${(usage.byKind || []).length.toLocaleString("fa-IR")} نوع`),
+        statCard("حجم ذخیره‌شده", fmtBytes(usage.totalBytes), "فایل‌های حذف‌نشده"),
+        statCard("حجم روی دیسک", fmtBytes(usage.diskBytes), "شامل فایل‌های در انتظار پاک‌سازی"),
+        statCard("در انتظار پاک‌سازی", fmtBytes(usage.deleted?.bytes), `${Number(usage.deleted?.files || 0).toLocaleString("fa-IR")} فایل حذف‌شده`)
+      );
+
+      const quotaCard = card("سهمیه‌ها", "سهمیهٔ هر کاربر و سهمیهٔ سراسری از تنظیمات سرور خوانده می‌شود.");
+      const quota = usage.quota || {};
+      const quotaRow = (label, used, limit) => {
+        const pct = limit ? Math.min(100, Math.round((Number(used) / Number(limit)) * 100)) : 0;
+        const bar = el("span", { class: "quota-bar" });
+        const fill = el("span", { class: "quota-fill" });
+        fill.style.width = `${pct}%`;
+        if (pct > 90) fill.classList.add("hot");
+        bar.append(fill);
+        return el("div", { class: "quota-row" }, [
+          el("div", { class: "quota-top" }, [el("span", { text: label }), el("small", { text: `${fmtBytes(used)} از ${fmtBytes(limit)} · ${pct.toLocaleString("fa-IR")}٪` })]),
+          bar
+        ]);
+      };
+      quotaCard.append(quotaRow("فضای سراسری سرور", usage.totalBytes, quota.global));
+      if (mine) quotaCard.append(quotaRow("سهمیهٔ حساب مالک", mine.usedBytes, mine.quotaBytes));
+      if ((usage.byKind || []).length) {
+        quotaCard.append(el("h3", { class: "ow-h3", text: "مصرف به تفکیک نوع" }));
+        quotaCard.append(table(
+          ["نوع", "فایل", "حجم"],
+          usage.byKind.map((item) => [item.label || item.kind, Number(item.files).toLocaleString("fa-IR"), fmtBytes(item.bytes)])
+        ));
+      }
+
+      const fileRows = (file) => {
+        const thumb = file.visibility === "public" && /^image\//.test(file.mime)
+          ? el("a", { href: absoluteFileUrl(file.url), target: "_blank", rel: "noopener", title: "مشاهده" }, [el("img", { class: "file-thumb", src: absoluteFileUrl(file.url), alt: "", loading: "lazy" })])
+          : el("a", { class: "mini-btn", href: absoluteFileUrl(file.url), target: "_blank", rel: "noopener", text: "بازکردن" });
+        return [
+          thumb,
+          file.owner || "—",
+          file.label || file.kind,
+          fmtBytes(file.sizeBytes),
+          file.visibility === "public" ? tag("عمومی") : tag("خصوصی", "neutral"),
+          el("span", { dir: "ltr", text: file.purpose || "—" }),
+          fmtDate(file.createdAt),
+          mkBtn("حذف", () => {
+            if (!confirm(`فایل «${file.purpose || file.id}» برای همیشه حذف شود؟`)) return;
+            api(`/uploads/${encodeURIComponent(file.id)}`, { method: "DELETE" })
+              .then(() => {
+                toast("فایل حذف شد.");
+                reload();
+              })
+              .catch((err) => toast(err.message || "حذف نشد.", "error"));
+          }, "mini-btn danger")
+        ];
+      };
+      const tableBox = el("div");
+      const paintFiles = () => {
+        tableBox.replaceChildren(table(["پیش‌نمایش", "مالک", "نوع", "حجم", "دسترسی", "نام", "زمان", "اقدام"], state.files.map(fileRows)));
+      };
+      paintFiles();
+
+      const bar = el("div", { class: "ow-toolbar" });
+      const kindSelect = optionsSelect([["", "همهٔ نوع‌ها"], ...state.kinds.map((kind) => [kind.key, kind.label])], state.kind);
+      kindSelect.addEventListener("change", () => {
+        state.kind = kindSelect.value;
+        state.files = [];
+        state.nextBefore = null;
+        reload();
+      });
+      bar.append(kindSelect, mkBtn("تازه‌سازی", reload), mkBtn("پاک‌سازی فایل‌های رهاشده", () => openCleanup(), "mini-btn danger"));
+      if (state.nextBefore) {
+        bar.append(mkBtn("بیشتر", async () => {
+          try {
+            const more = await api(`/admin/storage/files?limit=30${state.kind ? `&kind=${encodeURIComponent(state.kind)}` : ""}&before=${state.nextBefore}`);
+            state.files = state.files.concat(more.files || []);
+            state.nextBefore = more.nextBefore;
+            paintFiles();
+            if (!more.nextBefore) toast("همهٔ فایل‌ها نمایش داده شد.");
+          } catch (err) {
+            toast(err.message || "ادامهٔ فهرست خوانده نشد.", "error");
+          }
+        }));
+      }
+
+      const filesCard = card("فایل‌های بارگذاری‌شده", "همهٔ فایل‌ها با بررسی نوع واقعی (magic bytes)، سهمیه و دسترسی ذخیره می‌شوند. فایل خصوصی فقط برای صاحب و کارکنان باز می‌شود.");
+      filesCard.append(bar, tableBox);
+      view.append(grid, quotaCard, filesCard);
+      section.replaceChildren(view);
+    } catch (err) {
+      failure(section, err, reload);
+    }
+  };
+
+  const openCleanup = () => {
+    const days = el("input", { type: "number", min: "0", max: "3650", dir: "ltr" });
+    days.value = "7";
+    const runBtn = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "پاک‌سازی کن" });
+    runBtn.addEventListener("click", async () => {
+      runBtn.disabled = true;
+      try {
+        const res = await api("/admin/storage/cleanup", { method: "POST", body: { confirm: true, olderThanDays: Number(days.value) || 0 } });
+        center.closeModal();
+        toast(`${Number(res.removed || 0).toLocaleString("fa-IR")} فایل پاک شد.`);
+        reload();
+      } catch (err) {
+        toast(err.message || "پاک‌سازی انجام نشد.", "error");
+        runBtn.disabled = false;
+      }
+    });
+    center.showModal("پاک‌سازی فایل‌های حذف‌شده", [
+      el("p", { class: "ohint", text: "فایل‌های حذف‌شدهٔ قدیمی‌تر از این تعداد روز، به‌همراه فایل‌های یتیم (بدون رکورد در پایگاه داده) پاک می‌شوند." }),
+      field("قدیمی‌تر از (روز)", days)
+    ], [mkBtn("انصراف", () => center.closeModal()), runBtn]);
+  };
+
   reload();
 }
 
@@ -1799,24 +2178,719 @@ function renderSupport(section, center) {
 /* ---------------- website pages & automation & broadcast ---------------- */
 
 function renderPages(section, center) {
+  const showList = async () => {
+    section.replaceChildren(loading());
+    try {
+      const data = await api("/admin/pages");
+      const view = el("div", { class: "og-page" });
+      const bar = el("div", { class: "ow-toolbar" });
+      bar.append(
+        mkBtn("+ صفحهٔ جدید", () => openEditor(null), "btn btn-primary btn-sm"),
+        mkBtn("تازه‌سازی", showList)
+      );
+      view.append(card("سازندهٔ صفحه‌های سایت", "صفحه‌ها از بلوک‌های امن (متن، تصویر، دکمه، بنر، فرم، ناوبری…) ساخته می‌شوند و هیچ کد دلخواهی اجرا نمی‌شود. صفحهٔ منتشرشده از نشانی page.html?slug=… واقعاً روی سایت دیده می‌شود."), bar);
+      const rows = (data.pages || []).map((p) => {
+        const scheduled = p.scheduledAt && p.scheduledAt > Date.now();
+        const statusTag = p.status === "published"
+          ? scheduled
+            ? tag(`انتشار ${fmtDate(p.scheduledAt)}`, "warn")
+            : tag("منتشرشده")
+          : p.status === "archived"
+            ? tag("آرشیو", "neutral")
+            : tag("پیش‌نویس", "warn");
+        const actions = el("div", { class: "og-actions" }, [
+          mkBtn("ویرایش", () => openEditor(p)),
+          p.status === "published" && !scheduled ? mkBtn("دیدن", () => window.open(`page.html?slug=${encodeURIComponent(p.slug)}`, "_blank", "noopener")) : null,
+          p.status !== "published" ? mkBtn("انتشار", () => quickStatus(p, "published")) : mkBtn("پیش‌نویس", () => quickStatus(p, "draft")),
+          p.status !== "archived" ? mkBtn("آرشیو", () => quickStatus(p, "archived", true), "mini-btn danger") : mkBtn("خروج از آرشیو", () => quickStatus(p, "draft"))
+        ].filter(Boolean));
+        return [
+          p.title,
+          el("code", { dir: "ltr", text: p.slug }),
+          statusTag,
+          VISIBILITY_LABELS[p.visibility] || p.visibility,
+          String(p.version),
+          String(p.submissionCount || 0),
+          fmtDate(p.updatedAt),
+          actions
+        ];
+      });
+      view.append(table(["عنوان", "نشانی", "وضعیت", "دسترسی", "نسخه", "فرم‌ها", "آخرین ویرایش", "اقدام"], rows));
+      section.replaceChildren(view);
+    } catch (err) {
+      failure(section, err, showList);
+    }
+  };
+
+  const quickStatus = async (page, status, danger = false) => {
+    if (danger && !confirm(`صفحهٔ «${page.title}» آرشیو شود؟`)) return;
+    try {
+      await api(`/admin/pages/${encodeURIComponent(page.id)}`, { method: "PATCH", body: { status } });
+      toast(status === "published" ? "صفحه منتشر شد." : status === "archived" ? "صفحه آرشیو شد." : "صفحه پیش‌نویس شد.");
+      showList();
+    } catch (err) {
+      toast(err.message || "وضعیت تغییر نکرد.", "error");
+    }
+  };
+
   const openEditor = (page) => {
-    const title = textInput({ maxlength: "160" });
-    title.value = page?.title || "";
-    const slug = textInput({ dir: "ltr", maxlength: "64" });
-    slug.value = page?.slug || "";
-    slug.disabled = Boolean(page);
-    const status = optionsSelect([["draft", "پیش‌نویس"], ["published", "منتشرشده"], ["archived", "آرشیو"]], page?.status || "draft");
-    const locale = optionsSelect([["fa", "فارسی"], ["en", "English"]], page?.locale || "fa");
-    const body = el("textarea", { rows: "10", maxlength: "200000", placeholder: "متن صفحه…" });
-    body.value = page?.body || "";
+    const draft = draftFromPage(page);
+    let isNew = !draft.id;
+    let dirty = false;
+
+    const statusLine = el("p", { class: "bld-status" });
+    const dirtyHint = el("span", { class: "bld-dirty" });
+    const updateStatusLine = () => {
+      const scheduled = draft.scheduledAt && draft.scheduledAt > Date.now();
+      statusLine.textContent = `${PAGE_STATUS_LABELS[draft.status] || draft.status}${scheduled ? ` · انتشار زمان‌دار: ${fmtDate(draft.scheduledAt)}` : ""} · نسخهٔ ${draft.version}${draft.id ? ` · شناسه ${draft.id.slice(0, 8)}` : ""}`;
+      dirtyHint.textContent = dirty ? "تغییرات ذخیره‌نشده" : "ذخیره‌شده";
+      dirtyHint.classList.toggle("is-dirty", dirty);
+    };
+
+    /* meta fields */
+    const titleInput = textInput({ maxlength: "160", placeholder: "عنوان صفحه" });
+    titleInput.value = draft.title;
+    titleInput.addEventListener("input", () => { draft.title = titleInput.value; dirty = true; refreshPreview(); updateStatusLine(); });
+
+    const slugInput = textInput({ dir: "ltr", maxlength: "64", placeholder: "about-us" });
+    slugInput.value = draft.slug;
+    slugInput.disabled = !isNew;
+    slugInput.addEventListener("input", () => { draft.slug = slugInput.value.trim().toLowerCase(); dirty = true; updateStatusLine(); });
+
+    const descInput = el("textarea", { rows: "2", maxlength: "400", placeholder: "توضیح کوتاه برای موتور جست‌وجو و اشتراک‌گذاری" });
+    descInput.value = draft.description;
+    descInput.addEventListener("input", () => { draft.description = descInput.value; dirty = true; refreshPreview(); updateStatusLine(); });
+
+    const localeInput = optionsSelect([["fa", "فارسی"], ["en", "English"]], draft.locale);
+    localeInput.addEventListener("change", () => { draft.locale = localeInput.value; dirty = true; updateStatusLine(); });
+
+    const visibilityInput = optionsSelect(Object.entries(VISIBILITY_LABELS), draft.visibility);
+    visibilityInput.addEventListener("change", () => { draft.visibility = visibilityInput.value; dirty = true; updateStatusLine(); });
+
+    const navToggle = el("input", { type: "checkbox" });
+    navToggle.checked = draft.showInNav;
+    navToggle.addEventListener("change", () => { draft.showInNav = navToggle.checked; dirty = true; updateStatusLine(); });
+
+    const navOrderInput = el("input", { type: "number", min: "0", max: "999", dir: "ltr" });
+    navOrderInput.value = String(draft.navOrder || 0);
+    navOrderInput.addEventListener("input", () => { draft.navOrder = Number(navOrderInput.value) || 0; dirty = true; updateStatusLine(); });
+
+    const scheduleInput = el("input", { type: "datetime-local" });
+    scheduleInput.value = toDateTimeInput(draft.scheduledAt);
+    scheduleInput.addEventListener("change", () => {
+      draft.scheduledAt = fromDateTimeInput(scheduleInput.value);
+      dirty = true;
+      updateStatusLine();
+      syncPublish();
+    });
+    const clearSchedule = mkBtn("حذف زمان‌بندی", () => {
+      scheduleInput.value = "";
+      draft.scheduledAt = null;
+      dirty = true;
+      updateStatusLine();
+      syncPublish();
+    });
+
+    /* preview */
+    const previewTitle = el("h3", { class: "bld-preview-title" });
+    const previewDesc = el("p", { class: "bld-preview-desc" });
+    const previewBox = el("div", { class: "pub-blocks bld-preview-blocks" });
+    const refreshPreview = () => {
+      previewTitle.textContent = draft.title || "بدون عنوان";
+      previewDesc.textContent = draft.description || "";
+      previewDesc.classList.toggle("hidden", !draft.description);
+      renderBlocks(previewBox, draft.blocks, { preview: true });
+    };
+
+    /* uploads inside blocks */
+    const uploadInto = (block, key, srcInput) => {
+      const fileInput = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", class: "hidden" });
+      const btn = mkBtn("بارگذاری تصویر", () => fileInput.click(), "mini-btn");
+      const progress = uploadProgressRow("بارگذاری تصویر");
+      progress.classList.add("hidden");
+      fileInput.addEventListener("change", async () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        btn.disabled = true;
+        progress.classList.remove("hidden");
+        try {
+          const data = await uploadFile(file, { kind: "page-image", token: ownerToken(), onProgress: (p) => progress.setProgress(p) });
+          const abs = absoluteFileUrl(data.url);
+          block[key] = /^https:\/\//i.test(abs) ? abs : data.url;
+          srcInput.value = block[key];
+          dirty = true;
+          refreshPreview();
+          updateStatusLine();
+          toast("تصویر بارگذاری شد.");
+        } catch (err) {
+          toast(err.message || "بارگذاری نشد.", "error");
+        } finally {
+          btn.disabled = false;
+          fileInput.value = "";
+          setTimeout(() => progress.classList.add("hidden"), 1500);
+        }
+      });
+      return el("div", { class: "bld-upload" }, [btn, fileInput, progress, el("small", { class: "ohint", text: "PNG/JPG/WebP تا ۵ مگابایت. بارگذاری از سهمیهٔ فضای حساب مالک کم می‌شود." })]);
+    };
+
+    const blockFields = (block) => {
+      const nodes = [];
+      const fieldText = (label, key, opts = {}) => {
+        const control = opts.textarea
+          ? el("textarea", { rows: String(opts.rows || 3), maxlength: String(opts.maxlength || 2000) })
+          : textInput({ maxlength: String(opts.maxlength || 300), dir: opts.dir || "auto", placeholder: opts.placeholder || "" });
+        control.value = block[key] ?? "";
+        control.addEventListener("input", () => { block[key] = control.value; dirty = true; refreshPreview(); updateStatusLine(); });
+        return field(label, control, opts.span2 ? "span2" : "");
+      };
+      switch (block.type) {
+        case "heading": {
+          nodes.push(fieldText("متن عنوان", "text", { span2: true, maxlength: 200 }));
+          const level = optionsSelect([["1", "عنوان اصلی (H1)"], ["2", "عنوان (H2)"], ["3", "زیرعنوان (H3)"]], String(block.level || 2));
+          level.addEventListener("change", () => { block.level = Number(level.value); dirty = true; refreshPreview(); updateStatusLine(); });
+          nodes.push(field("سطح", level));
+          break;
+        }
+        case "text":
+          nodes.push(fieldText("متن", "text", { textarea: true, rows: 6, span2: true, maxlength: 5000 }));
+          break;
+        case "image": {
+          const srcInput = textInput({ dir: "ltr", maxlength: "800", placeholder: "https://… یا /api/files/…" });
+          srcInput.value = block.src || "";
+          srcInput.addEventListener("input", () => { block.src = srcInput.value; dirty = true; refreshPreview(); updateStatusLine(); });
+          nodes.push(field("نشانی تصویر", srcInput, "span2"));
+          nodes.push(fieldText("متن جایگزین (alt)", "alt", { span2: true, maxlength: 200 }));
+          nodes.push(fieldText("زیرنویس", "caption", { span2: true, maxlength: 300 }));
+          nodes.push(uploadInto(block, "src", srcInput));
+          break;
+        }
+        case "button": {
+          nodes.push(fieldText("برچسب دکمه", "label", { maxlength: 80 }));
+          nodes.push(fieldText("مقصد", "href", { dir: "ltr", maxlength: 500, placeholder: "/ یا https:// یا #anchor" }));
+          const style = optionsSelect([["primary", "توپر"], ["ghost", "حاشیه‌دار"]], block.style === "ghost" ? "ghost" : "primary");
+          style.addEventListener("change", () => { block.style = style.value; dirty = true; refreshPreview(); updateStatusLine(); });
+          nodes.push(field("نمایش", style));
+          break;
+        }
+        case "link": {
+          nodes.push(fieldText("برچسب لینک", "label", { maxlength: 80 }));
+          nodes.push(fieldText("مقصد", "href", { dir: "ltr", maxlength: 500 }));
+          break;
+        }
+        case "banner": {
+          nodes.push(fieldText("عنوان بنر", "title", { span2: true, maxlength: 160 }));
+          nodes.push(fieldText("متن بنر", "text", { textarea: true, rows: 3, span2: true, maxlength: 1000 }));
+          const tone = optionsSelect([["primary", "برند"], ["soft", "ملایم"], ["dark", "تیره"]], block.tone || "primary");
+          tone.addEventListener("change", () => { block.tone = tone.value; dirty = true; refreshPreview(); updateStatusLine(); });
+          nodes.push(field("رنگ بنر", tone));
+          nodes.push(fieldText("برچسب دکمه", "ctaLabel", { maxlength: 60 }));
+          nodes.push(fieldText("مقصد دکمه", "ctaHref", { dir: "ltr", maxlength: 500 }));
+          const srcInput = textInput({ dir: "ltr", maxlength: "800", placeholder: "تصویر پس‌زمینه (اختیاری)" });
+          srcInput.value = block.image || "";
+          srcInput.addEventListener("input", () => { block.image = srcInput.value; dirty = true; refreshPreview(); updateStatusLine(); });
+          nodes.push(field("تصویر پس‌زمینه", srcInput, "span2"));
+          nodes.push(uploadInto(block, "image", srcInput));
+          break;
+        }
+        case "form": {
+          nodes.push(fieldText("عنوان فرم", "title", { span2: true, maxlength: 160 }));
+          nodes.push(fieldText("توضیح فرم", "text", { textarea: true, rows: 2, span2: true, maxlength: 600 }));
+          const checks = el("div", { class: "bld-checks span2" });
+          for (const [id, label] of [["name", "نام"], ["email", "ایمیل"], ["phone", "شماره موبایل"], ["message", "پیام"]]) {
+            const box = el("input", { type: "checkbox" });
+            box.checked = (block.fields || []).includes(id);
+            box.addEventListener("change", () => {
+              const set = new Set(block.fields || []);
+              if (box.checked) set.add(id);
+              else set.delete(id);
+              block.fields = [...set];
+              dirty = true;
+              refreshPreview();
+              updateStatusLine();
+            });
+            checks.append(el("label", { class: "ow-chip" }, [box, el("span", { text: label })]));
+          }
+          nodes.push(el("div", { class: "span2" }, [el("span", { class: "bld-lbl", text: "فیلدهای فرم" }), checks]));
+          nodes.push(fieldText("متن دکمهٔ ارسال", "submitLabel", { maxlength: 60 }));
+          nodes.push(fieldText("پیام موفقیت", "successText", { maxlength: 300 }));
+          break;
+        }
+        case "nav": {
+          const box = el("div", { class: "bld-repeater span2" });
+          const renderItems = () => {
+            box.replaceChildren();
+            (block.items || []).forEach((item, index) => {
+              const label = textInput({ maxlength: "40", placeholder: "برچسب" });
+              label.value = item.label || "";
+              label.addEventListener("input", () => { item.label = label.value; dirty = true; refreshPreview(); updateStatusLine(); });
+              const href = textInput({ dir: "ltr", maxlength: "300", placeholder: "/ یا https://" });
+              href.value = item.href || "";
+              href.addEventListener("input", () => { item.href = href.value; dirty = true; refreshPreview(); updateStatusLine(); });
+              box.append(el("div", { class: "bld-inline" }, [
+                label,
+                href,
+                mkBtn("حذف", () => {
+                  block.items.splice(index, 1);
+                  dirty = true;
+                  renderItems();
+                  refreshPreview();
+                  updateStatusLine();
+                }, "icon-btn danger")
+              ]));
+            });
+            if ((block.items || []).length < 8) {
+              box.append(mkBtn("+ آیتم", () => {
+                block.items = block.items || [];
+                block.items.push({ label: "آیتم", href: "/" });
+                dirty = true;
+                renderItems();
+                refreshPreview();
+                updateStatusLine();
+              }, "mini-btn"));
+            }
+            if (!(block.items || []).length) box.append(el("p", { class: "ohint", text: "حداقل یک آیتم لازم است؛ ناوبری خالی ذخیره نمی‌شود." }));
+          };
+          renderItems();
+          nodes.push(box);
+          break;
+        }
+        case "spacer": {
+          const size = optionsSelect([["sm", "کوچک"], ["md", "متوسط"], ["lg", "بزرگ"]], block.size || "md");
+          size.addEventListener("change", () => { block.size = size.value; dirty = true; refreshPreview(); updateStatusLine(); });
+          nodes.push(field("اندازه", size));
+          break;
+        }
+        default:
+          break;
+      }
+      return formGrid(...nodes);
+    };
+
+    const layoutRow = (block) => {
+      const layout = block.layout || (block.layout = { width: "narrow", tone: "none", align: "start" });
+      const width = optionsSelect([["narrow", "عرض محدود"], ["full", "عرض کامل"]], layout.width || "narrow");
+      width.addEventListener("change", () => { layout.width = width.value; dirty = true; refreshPreview(); updateStatusLine(); });
+      const tone = optionsSelect([["none", "بدون پس‌زمینه"], ["soft", "پس‌زمینه ملایم"], ["strong", "پس‌زمینه پررنگ"]], layout.tone || "none");
+      tone.addEventListener("change", () => { layout.tone = tone.value; dirty = true; refreshPreview(); updateStatusLine(); });
+      const align = optionsSelect([["start", "شروع"], ["center", "وسط"], ["end", "پایان"]], layout.align || "start");
+      align.addEventListener("change", () => { layout.align = align.value; dirty = true; refreshPreview(); updateStatusLine(); });
+      return el("div", { class: "bld-layout" }, [field("عرض", width), field("پس‌زمینه", tone), field("تراز", align)]);
+    };
+
+    const blocksWrap = el("div", { class: "bld-blocks" });
+    const swapBlocks = (a, b) => {
+      const list = draft.blocks;
+      [list[a], list[b]] = [list[b], list[a]];
+      dirty = true;
+      renderList();
+      refreshPreview();
+      updateStatusLine();
+    };
+    const blockCard = (block, index) => {
+      const node = el("section", { class: "bld-block" });
+      const tools = el("div", { class: "bld-block-tools" });
+      if (index > 0) tools.append(mkBtn("↑", () => swapBlocks(index, index - 1), "icon-btn"));
+      if (index < draft.blocks.length - 1) tools.append(mkBtn("↓", () => swapBlocks(index, index + 1), "icon-btn"));
+      tools.append(mkBtn("حذف", () => {
+        draft.blocks.splice(index, 1);
+        dirty = true;
+        renderList();
+        refreshPreview();
+        updateStatusLine();
+      }, "icon-btn danger"));
+      node.append(el("div", { class: "bld-block-head" }, [
+        el("strong", { text: `${index + 1}. ${BLOCK_LABELS[block.type] || block.type}` }),
+        tools
+      ]));
+      node.append(blockFields(block));
+      node.append(layoutRow(block));
+      return node;
+    };
+    const renderList = () => {
+      blocksWrap.replaceChildren();
+      if (!draft.blocks.length) {
+        blocksWrap.append(el("p", { class: "ohint", text: "هنوز بلوکی نداری؛ از دکمه‌های بالا یکی اضافه کن." }));
+        return;
+      }
+      draft.blocks.forEach((block, index) => blocksWrap.append(blockCard(block, index)));
+    };
+
+    const palette = el("div", { class: "bld-palette" });
+    for (const type of Object.keys(BLOCK_LABELS)) {
+      palette.append(mkBtn(`+ ${BLOCK_LABELS[type]}`, () => {
+        draft.blocks.push(newBlock(type));
+        dirty = true;
+        renderList();
+        refreshPreview();
+        updateStatusLine();
+      }, "bld-chip"));
+    }
+
+    /* toolbar */
+    const extras = el("div", { class: "bld-extras" });
+    const publishBtn = el("button", { class: "btn btn-primary btn-sm", type: "button" });
+    const syncPublish = () => {
+      publishBtn.textContent = draft.scheduledAt && draft.scheduledAt > Date.now() ? "انتشار زمان‌دار" : "انتشار";
+    };
+    syncPublish();
+
+    const save = async (status, btn) => {
+      if (!draft.title.trim()) {
+        toast("عنوان صفحه لازم است.", "error");
+        return;
+      }
+      if (isNew && !/^[a-z0-9-]{2,64}$/.test(draft.slug)) {
+        toast("نشانی صفحه فقط حروف لاتین کوچک، رقم و خط تیره باشد (۲ تا ۶۴ نویسه).", "error");
+        return;
+      }
+      if (status === "published" && draft.blocks.some((block) => block.type === "image" && !block.src)) {
+        toast("یکی از بلوک‌های تصویر نشانی ندارد؛ آن را کامل کن.", "error");
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const payload = {
+          title: draft.title.trim(),
+          description: draft.description,
+          blocks: draft.blocks,
+          locale: draft.locale,
+          visibility: draft.visibility,
+          showInNav: draft.showInNav,
+          navOrder: draft.navOrder,
+          scheduledAt: draft.scheduledAt,
+          status
+        };
+        const data = isNew
+          ? await api("/admin/pages", { method: "POST", body: { ...payload, slug: draft.slug } })
+          : await api(`/admin/pages/${encodeURIComponent(draft.id)}`, { method: "PATCH", body: payload });
+        const saved = data.page || {};
+        if (isNew) {
+          isNew = false;
+          draft.id = saved.id || "";
+          draft.slug = saved.slug || draft.slug;
+          slugInput.disabled = true;
+        }
+        draft.status = saved.status || status;
+        draft.version = Number(saved.version || draft.version);
+        draft.updatedAt = saved.updatedAt;
+        dirty = false;
+        updateStatusLine();
+        syncExtras();
+        toast(
+          status === "archived"
+            ? "صفحه آرشیو شد."
+            : status === "published"
+              ? `صفحه منتشر شد (نسخهٔ ${draft.version}).`
+              : `ذخیره شد (نسخهٔ ${draft.version}).`
+        );
+      } catch (err) {
+        toast(err.message || "ذخیره نشد.", "error");
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    const openVersions = async () => {
+      if (isNew) return;
+      try {
+        const data = await api(`/admin/pages/${encodeURIComponent(draft.id)}/versions`);
+        const rows = (data.versions || []).map((v) => [
+          String(v.version),
+          PAGE_STATUS_LABELS[v.status] || v.status,
+          fmtDate(v.createdAt),
+          mkBtn("بازگردانی", () => {
+            center.closeModal();
+            setTimeout(() => {
+              confirmThen(center, {
+                title: "بازگردانی نسخه",
+                text: `محتوای نسخهٔ ${v.version} به‌عنوان نسخهٔ تازه جایگزین می‌شود. نسخهٔ فعلی هم در تاریخچه می‌ماند.`,
+                danger: true
+              }, async () => {
+                await api(`/admin/pages/${encodeURIComponent(draft.id)}/rollback`, { method: "POST", body: { version: v.version, confirm: true } });
+                toast("نسخه بازگردانی شد.");
+                const fresh = await api(`/admin/pages/${encodeURIComponent(draft.id)}`);
+                openEditor(fresh.page);
+              });
+            }, 0);
+          })
+        ]);
+        center.showModal("تاریخچهٔ نسخه‌ها", [table(["نسخه", "وضعیت", "زمان", "اقدام"], rows)], [mkBtn("بستن", () => center.closeModal())]);
+      } catch (err) {
+        toast(err.message || "نسخه‌ها خوانده نشد.", "error");
+      }
+    };
+
+    const openSubmissions = async () => {
+      if (isNew) return;
+      try {
+        const data = await api(`/admin/pages/${encodeURIComponent(draft.id)}/submissions?limit=100`);
+        const rows = (data.submissions || []).map((item) => [item.name || "—", el("span", { dir: "ltr", text: item.email || "—" }), item.message || "—", fmtDate(item.createdAt)]);
+        center.showModal("پیام‌های فرم", [table(["نام", "ایمیل", "متن", "زمان"], rows)], [mkBtn("بستن", () => center.closeModal())]);
+      } catch (err) {
+        toast(err.message || "فرم‌ها خوانده نشد.", "error");
+      }
+    };
+
+    const syncExtras = () => {
+      extras.replaceChildren();
+      if (isNew) {
+        extras.append(el("span", { class: "ohint", text: "بعد از اولین ذخیره، تاریخچه و فرم‌ها فعال می‌شوند." }));
+        return;
+      }
+      extras.append(mkBtn("نسخه‌ها", openVersions));
+      extras.append(mkBtn(`فرم‌ها${draft.submissionCount ? ` (${draft.submissionCount})` : ""}`, openSubmissions));
+      if (draft.status === "published" && !(draft.scheduledAt && draft.scheduledAt > Date.now())) {
+        extras.append(mkBtn("بازکردن صفحه", () => window.open(`page.html?slug=${encodeURIComponent(draft.slug)}`, "_blank", "noopener")));
+      }
+    };
+
+    const saveBtn = el("button", { class: "mini-btn", type: "button", text: "ذخیره" });
+    saveBtn.addEventListener("click", () => save(draft.status === "archived" ? "draft" : draft.status, saveBtn));
+    publishBtn.addEventListener("click", () => save("published", publishBtn));
+    const archiveBtn = el("button", { class: "mini-btn danger", type: "button", text: "آرشیو" });
+    archiveBtn.addEventListener("click", async () => {
+      if (isNew) return toast("اول صفحه را ذخیره کن.", "error");
+      if (!confirm(`صفحهٔ «${draft.title}» آرشیو شود؟`)) return;
+      await save("archived", archiveBtn);
+      showList();
+    });
+    const backBtn = mkBtn("→ فهرست صفحه‌ها", () => {
+      if (dirty && !confirm("تغییرات ذخیره‌نشده کنار گذاشته شود؟")) return;
+      showList();
+    });
+
+    const toolbar = el("div", { class: "bld-toolbar" }, [backBtn, saveBtn, publishBtn, archiveBtn, extras, dirtyHint]);
+    const metaCard = card("مشخصات صفحه");
+    metaCard.append(formGrid(
+      field("عنوان", titleInput, "span2"),
+      field("نشانی ثابت (slug)", slugInput),
+      field("زبان", localeInput),
+      field("توضیح", descInput, "span2"),
+      field("دسترسی", visibilityInput),
+      field("ترتیب در ناوبری", navOrderInput),
+      field("نمایش در ناوبری سایت", navToggle),
+      field("انتشار زمان‌دار (اختیاری)", scheduleInput),
+      el("div", { class: "span2" }, [clearSchedule])
+    ));
+
+    const blocksCard = card("بلوک‌های صفحه", "فقط همین بلوک‌های امن مجازند؛ متن و نشانی‌ها پیش از ذخیره روی سرور پاک‌سازی می‌شوند.");
+    blocksCard.append(palette, blocksWrap);
+
+    const previewCard = card("پیش‌نمایش زنده", "همان چیزی که بازدیدکننده می‌بیند (فرم‌ها در پیش‌نمایش ارسال واقعی نمی‌کنند).");
+    previewCard.classList.add("bld-preview");
+    previewCard.append(previewTitle, previewDesc, previewBox);
+
+    const view = el("div", { class: "og-page bld" });
+    view.append(toolbar, statusLine);
+    view.append(el("div", { class: "bld-grid" }, [
+      el("div", { class: "bld-col" }, [metaCard, blocksCard]),
+      el("div", { class: "bld-col bld-col-side" }, [previewCard])
+    ]));
+    section.replaceChildren(view);
+
+    renderList();
+    refreshPreview();
+    syncExtras();
+    updateStatusLine();
+  };
+
+  showList();
+}
+
+function renderAutomation(section, center) {
+  const runRow = (run) => {
+    const duration = run.finishedAt && run.startedAt ? run.finishedAt - run.startedAt : null;
+    return [
+      run.workflowName || run.workflowId || "—",
+      el("code", { dir: "ltr", text: run.trigger }),
+      run.status === "ok" ? tag("موفق") : run.status === "running" ? tag("در حال اجرا", "neutral") : tag("ناموفق", "bad"),
+      String(run.attempts || 1),
+      duration == null ? "—" : `${(duration / 1000).toLocaleString("fa-IR", { maximumFractionDigits: 1 })} ثانیه`,
+      fmtDate(run.startedAt),
+      run.error || "—",
+      run.status === "failed"
+        ? mkBtn("تلاش دوباره", () => retryRun(run), "mini-btn")
+        : null
+    ];
+  };
+
+  const retryRun = (run) => {
+    const btn = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "اجرای دوباره" });
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const res = await api(`/admin/automation/runs/${encodeURIComponent(run.id)}/retry`, { method: "POST", body: { confirm: true } });
+        center.closeModal();
+        toast(res.status === "ok" ? "اجرای دوباره موفق بود." : "اجرای دوباره انجام شد ولی ناموفق بود.", res.status === "ok" ? "info" : "error");
+        reload();
+      } catch (err) {
+        toast(err.message || "اجرای دوباره شروع نشد.", "error");
+        btn.disabled = false;
+      }
+    });
+    center.showModal("اجرای دوباره", [
+      el("p", { class: "ohint", text: `اجرای «${run.workflowName || run.trigger}» با همان رویداد اولیه دوباره اجرا می‌شود. اقدام‌ها واقعی‌اند.` })
+    ], [mkBtn("انصراف", () => center.closeModal()), btn]);
+  };
+
+  const openRuns = async (meta) => {
+    const box = el("div", { class: "aut-runs-box" });
+    const filter = optionsSelect([["", "همه"], ["ok", "موفق"], ["failed", "ناموفق"], ["running", "در حال اجرا"]], "");
+    const listBox = el("div");
+    const load = async () => {
+      listBox.replaceChildren(el("p", { class: "ohint", text: "در حال خواندن‌…" }));
+      try {
+        const qs = new URLSearchParams({ limit: "100" });
+        if (filter.value) qs.set("status", filter.value);
+        const data = await api(`/admin/automation/runs?${qs.toString()}`);
+        listBox.replaceChildren(table(
+          ["گردش‌کار", "محرک", "وضعیت", "تلاش", "مدت", "شروع", "خطا", "اقدام"],
+          (data.runs || []).map(runRow)
+        ));
+      } catch (err) {
+        listBox.replaceChildren(el("p", { class: "ohint", text: err.message || "خوانده نشد." }));
+      }
+    };
+    filter.addEventListener("change", load);
+    box.append(el("div", { class: "ow-toolbar" }, [field("وضعیت", filter)]), listBox);
+    center.showModal("تاریخچهٔ اجراها", [box], [mkBtn("بستن", () => center.closeModal())]);
+    load();
+  };
+
+  const openEditor = (workflow, meta) => {
+    const wf = workflow
+      ? JSON.parse(JSON.stringify(workflow))
+      : { name: "", description: "", trigger: Object.keys(meta.triggers)[0] || "", conditions: { match: "all", rules: [] }, actions: [], enabled: false };
+    wf.conditions = wf.conditions && typeof wf.conditions === "object" ? wf.conditions : { match: "all", rules: [] };
+    wf.conditions.rules = Array.isArray(wf.conditions.rules) ? wf.conditions.rules : [];
+    wf.actions = Array.isArray(wf.actions) ? wf.actions : [];
+
+    const name = textInput({ maxlength: "120", placeholder: "مثلاً: یادآوری تمدید اشتراک" });
+    name.value = wf.name || "";
+    const description = el("textarea", { rows: "2", maxlength: "400", placeholder: "این گردش‌کار چه کاری انجام می‌دهد؟" });
+    description.value = wf.description || "";
+    const trigger = optionsSelect(Object.entries(meta.triggers), wf.trigger || Object.keys(meta.triggers)[0]);
+    const enabled = el("input", { type: "checkbox" });
+    enabled.checked = Boolean(wf.enabled);
+
+    const condBox = el("div", { class: "aut-box span2" });
+    const renderConditions = () => {
+      condBox.replaceChildren();
+      const match = optionsSelect([["all", "همهٔ شرط‌ها برقرار باشند"], ["any", "کافی است یکی برقرار باشد"]], wf.conditions.match || "all");
+      match.addEventListener("change", () => { wf.conditions.match = match.value; });
+      condBox.append(field("منطق شرط‌ها", match));
+      const rows = el("div", { class: "aut-rows" });
+      wf.conditions.rules.forEach((rule, index) => {
+        const fieldName = textInput({ dir: "ltr", maxlength: "64", placeholder: "user.role" });
+        fieldName.value = rule.field || "";
+        fieldName.addEventListener("input", () => { rule.field = fieldName.value.trim(); });
+        const op = optionsSelect(Object.entries(OP_LABELS), rule.op || "eq");
+        op.addEventListener("change", () => { rule.op = op.value; });
+        const value = textInput({ maxlength: "200", placeholder: "مقدار" });
+        value.value = rule.value ?? "";
+        value.addEventListener("input", () => { rule.value = /^-?\d+$/.test(value.value) ? Number(value.value) : value.value; });
+        rows.append(el("div", { class: "aut-row" }, [
+          field("فیلد رویداد", fieldName),
+          field("عملگر", op),
+          field("مقدار", value),
+          mkBtn("حذف", () => {
+            wf.conditions.rules.splice(index, 1);
+            renderConditions();
+          }, "icon-btn danger")
+        ]));
+      });
+      if (!wf.conditions.rules.length) rows.append(el("p", { class: "ohint", text: "بدون شرط، همهٔ رویدادهای این محرک گردش‌کار را اجرا می‌کنند." }));
+      if (wf.conditions.rules.length < 12) {
+        rows.append(mkBtn("+ شرط", () => {
+          wf.conditions.rules.push({ field: "", op: "eq", value: "" });
+          renderConditions();
+        }, "mini-btn"));
+      }
+      condBox.append(rows);
+      condBox.append(el("p", { class: "ohint", text: "فیلدها با نقطه روی رویداد جست‌وجو می‌شوند؛ مثال: user.role، plan.id، room.capacity." }));
+    };
+
+    const actBox = el("div", { class: "aut-box span2" });
+    const renderActions = () => {
+      actBox.replaceChildren();
+      wf.actions.forEach((action, index) => {
+        const typeSelect = optionsSelect(Object.entries(meta.actions).map(([id, def]) => [id, def.label]), action.type);
+        action.params = action.params && typeof action.params === "object" ? action.params : {};
+        const paramsBox = el("div", { class: "aut-row" });
+        const renderParams = () => {
+          paramsBox.replaceChildren();
+          const def = meta.actions[action.type];
+          const keys = Object.keys(def?.params || {});
+          if (!keys.length) {
+            paramsBox.append(el("p", { class: "ohint", text: "این اقدام پارامتری ندارد." }));
+            return;
+          }
+          for (const key of keys) {
+            if (key === "kind") {
+              const select = optionsSelect(Object.entries(NOTICE_KIND_LABELS), action.params.kind || "announcement");
+              select.addEventListener("change", () => { action.params.kind = select.value; });
+              paramsBox.append(field(PARAM_LABELS.kind || key, select));
+            } else if (key === "role") {
+              const select = optionsSelect(Object.entries(ROLE_LABELS), action.params.role || "member");
+              select.addEventListener("change", () => { action.params.role = select.value; });
+              paramsBox.append(field(PARAM_LABELS.role || key, select));
+            } else {
+              const control = key === "body" || key === "text"
+                ? el("textarea", { rows: "2", maxlength: String(def.params[key]) })
+                : textInput({ maxlength: String(def.params[key]), dir: key === "link" || key === "title" ? "auto" : "auto" });
+              control.value = action.params[key] ?? "";
+              control.addEventListener("input", () => { action.params[key] = control.value; });
+              paramsBox.append(field(PARAM_LABELS[key] || key, control, key === "body" || key === "text" ? "span2" : ""));
+            }
+          }
+        };
+        typeSelect.addEventListener("change", () => {
+          action.type = typeSelect.value;
+          action.params = {};
+          renderParams();
+        });
+        renderParams();
+        const cardEl = el("div", { class: "aut-action" });
+        cardEl.append(el("div", { class: "aut-action-head" }, [
+          el("strong", { text: `اقدام ${index + 1}` }),
+          typeSelect,
+          mkBtn("حذف", () => {
+            wf.actions.splice(index, 1);
+            renderActions();
+          }, "icon-btn danger")
+        ]));
+        cardEl.append(paramsBox);
+        cardEl.append(el("p", { class: "ohint", text: meta.actions[action.type]?.fa || "" }));
+        actBox.append(cardEl);
+      });
+      if (!wf.actions.length) actBox.append(el("p", { class: "ohint", text: "هنوز اقدامی اضافه نشده است. گردش‌کار بدون اقدام قابل فعال‌سازی نیست." }));
+      if (wf.actions.length < 10) {
+        actBox.append(mkBtn("+ اقدام", () => {
+          wf.actions.push({ type: "notify_user", params: { title: "", body: "", kind: "announcement", link: "" } });
+          renderActions();
+        }, "mini-btn"));
+      }
+    };
+
+    renderConditions();
+    renderActions();
+
     const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیره" });
     save.addEventListener("click", async () => {
+      if (!name.value.trim()) return toast("نام گردش‌کار لازم است.", "error");
+      const payload = {
+        name: name.value.trim(),
+        description: description.value.trim(),
+        trigger: trigger.value,
+        conditions: wf.conditions,
+        actions: wf.actions,
+        enabled: enabled.checked
+      };
       save.disabled = true;
       try {
-        const payload = { title: title.value.trim(), body: body.value, status: status.value, locale: locale.value };
-        if (page) await api(`/admin/pages/${encodeURIComponent(page.id)}`, { method: "PATCH", body: payload });
-        else await api("/admin/pages", { method: "POST", body: { ...payload, slug: slug.value.trim().toLowerCase() } });
-        toast("صفحه ذخیره شد.");
+        if (workflow) await api(`/admin/automation/${encodeURIComponent(workflow.id)}`, { method: "PATCH", body: payload });
+        else await api("/admin/automation", { method: "POST", body: payload });
+        toast(workflow ? "گردش‌کار به‌روز شد." : "گردش‌کار ساخته شد.");
         center.closeModal();
         reload();
       } catch (err) {
@@ -1824,113 +2898,102 @@ function renderPages(section, center) {
         save.disabled = false;
       }
     });
-    center.showModal(page ? `ویرایش ${page.title}` : "صفحهٔ جدید", [formGrid(
-      field("عنوان", title),
-      field("نشانی (slug)", slug),
-      field("وضعیت", status),
-      field("زبان", locale),
-      field("متن", body, "span2")
-    )], [mkBtn("انصراف", () => center.closeModal()), save]);
+
+    const body = el("div", { class: "aut-editor" });
+    body.append(formGrid(
+      field("نام گردش‌کار", name),
+      field("فعال باشد", enabled),
+      field("توضیح", description, "span2"),
+      field("رویداد محرک", trigger, "span2"),
+      condBox,
+      actBox
+    ));
+    body.append(el("p", { class: "ohint", text: "اقدام‌ها فقط از فهرست مجاز بالا انتخاب می‌شوند و روی همین سرور اجرا می‌شوند؛ هیچ کد دلخواهی پذیرفته نمی‌شود." }));
+    const box = center.showModal(workflow ? `ویرایش ${workflow.name}` : "گردش‌کار جدید", [body], [mkBtn("انصراف", () => center.closeModal()), save]);
+    box.classList.add("ow-modal-wide");
   };
 
-  const reload = async () => {
-    section.replaceChildren(loading());
-    try {
-      const data = await api("/admin/pages");
-      const view = el("div", { class: "og-page" });
-      const bar = el("div", { class: "ow-toolbar" });
-      bar.append(mkBtn("صفحهٔ جدید", () => openEditor(null)), mkBtn("تازه‌سازی", reload));
-      view.append(card("صفحه‌های سایت", "صفحه‌های محتوایی (قوانین، درباره ما و…) بدون تغییر سورس؛ آرشیو بازگشت‌پذیر است."), bar);
-      view.append(table(
-        ["عنوان", "نشانی", "وضعیت", "زبان", "آخرین ویرایش", "اقدام"],
-        (data.pages || []).map((p) => [
-          p.title,
-          el("code", { text: p.slug }),
-          p.status === "published" ? tag("منتشرشده") : p.status === "archived" ? tag("آرشیو", "warn") : tag("پیش‌نویس", "warn"),
-          p.locale,
-          fmtDate(p.updatedAt),
-          el("div", { class: "og-actions" }, [
-            mkBtn("ویرایش", () => openEditor(p)),
-            p.status !== "archived" ? mkBtn("آرشیو", () => {
-              confirmThen(center, { title: "آرشیو صفحه", text: `صفحهٔ «${p.title}» از حالت فعال خارج می‌شود.`, danger: true }, async () => {
-                await api(`/admin/pages/${encodeURIComponent(p.id)}`, { method: "DELETE", body: { confirm: true } });
-                toast("صفحه آرشیو شد.");
-                reload();
-              });
-            }, "mini-btn danger") : null
-          ].filter(Boolean))
-        ])
-      ));
-      section.replaceChildren(view);
-    } catch (err) {
-      failure(section, err, reload);
-    }
-  };
-  reload();
-}
-
-function renderAutomation(section, center) {
-  const openEditor = () => {
-    const name = textInput({ maxlength: "120", placeholder: "مثلاً: یادآوری تمدید" });
-    const trigger = textInput({ dir: "ltr", placeholder: "subscription.expiring" });
-    const conditions = el("textarea", { rows: "3", dir: "ltr", placeholder: '{"days": 3}' });
-    conditions.value = "{}";
-    const actions = el("textarea", { rows: "3", dir: "ltr", placeholder: '[{"type":"notify","template":"renewal"}]' });
-    actions.value = "[]";
-    const enabled = el("input", { type: "checkbox" });
-    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیره" });
-    save.addEventListener("click", async () => {
-      let conditionsValue = {};
-      let actionsValue = [];
-      try { conditionsValue = JSON.parse(conditions.value || "{}"); } catch { return toast("شرط‌ها JSON معتبر نیست.", "error"); }
-      try { actionsValue = JSON.parse(actions.value || "[]"); } catch { return toast("اقدام‌ها JSON معتبر نیست.", "error"); }
-      save.disabled = true;
+  const simulate = (workflow, meta) => {
+    const run = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "اجرای آزمایشی" });
+    run.addEventListener("click", async () => {
+      run.disabled = true;
       try {
-        await api("/admin/automation", {
-          method: "POST",
-          body: { name: name.value.trim(), trigger: trigger.value.trim(), conditions: conditionsValue, actions: actionsValue, enabled: enabled.checked }
-        });
-        toast("گردش‌کار ثبت شد.");
+        const res = await api(`/admin/automation/${encodeURIComponent(workflow.id)}/simulate`, { method: "POST", body: { confirm: true } });
         center.closeModal();
-        reload();
+        setTimeout(() => {
+          const rows = (res.actions || []).map((action) => [
+            meta.actions[action.type]?.label || action.type,
+            ACTION_STATUS_LABELS[action.status] || action.status,
+            action.note || "—"
+          ]);
+          center.showModal("نتیجهٔ آزمایش", [
+            el("p", { class: "ohint", text: res.matched ? "رویداد نمونه با شرط‌ها منطبق بود. اقدام‌ها فقط آزمایشی (بدون اثر واقعی) اجرا شدند." : "رویداد نمونه با شرط‌ها منطبق نبود؛ اقدامی اجرا نشد." }),
+            table(["اقدام", "وضعیت", "توضیح"], rows)
+          ], [mkBtn("بستن", () => center.closeModal())]);
+        }, 0);
       } catch (err) {
-        toast(err.message || "ثبت نشد.", "error");
-        save.disabled = false;
+        toast(err.message || "آزمایش اجرا نشد.", "error");
+        run.disabled = false;
       }
     });
-    center.showModal("گردش‌کار جدید", [formGrid(
-      field("نام", name),
-      field("رویداد محرک", trigger),
-      field("شرط‌ها (JSON)", conditions),
-      field("اقدام‌ها (JSON)", actions),
-      field("فعال", enabled)
-    )], [mkBtn("انصراف", () => center.closeModal()), save]);
+    center.showModal("آزمایش گردش‌کار", [
+      el("p", { class: "ohint", text: `یک رویداد نمونه برای «${meta.triggers[workflow.trigger] || workflow.trigger}» ساخته می‌شود. اجرا آزمایشی است و اعلان/ایمیلی نمی‌فرستد.` })
+    ], [mkBtn("انصراف", () => center.closeModal()), run]);
+  };
+
+  const toggle = async (workflow) => {
+    try {
+      await api(`/admin/automation/${encodeURIComponent(workflow.id)}`, { method: "PATCH", body: { enabled: !workflow.enabled } });
+      toast(workflow.enabled ? "گردش‌کار خاموش شد." : "گردش‌کار روشن شد.");
+      reload();
+    } catch (err) {
+      toast(err.message || "تغییر نکرد.", "error");
+    }
   };
 
   const reload = async () => {
     section.replaceChildren(loading());
     try {
       const data = await api("/admin/automation");
+      const meta = data.runner || { triggers: {}, actions: {} };
+      const workflows = data.workflows || [];
+      const runs = data.runs || [];
       const view = el("div", { class: "og-page" });
+      const grid = el("div", { class: "stat-grid" });
+      grid.append(
+        statCard("گردش‌کارها", workflows.length.toLocaleString("fa-IR"), `${workflows.filter((w) => w.enabled).length.toLocaleString("fa-IR")} فعال`),
+        statCard("اقدام‌های تعریف‌شده", workflows.reduce((sum, w) => sum + (w.actions || []).length, 0).toLocaleString("fa-IR"), "روی همهٔ گردش‌کارها"),
+        statCard("اجراهای اخیر", runs.length.toLocaleString("fa-IR"), "۲۵ اجرای آخر"),
+        statCard("اجراهای ناموفق", runs.filter((r) => r.status === "failed").length.toLocaleString("fa-IR"), "در اجراهای اخیر")
+      );
       const bar = el("div", { class: "ow-toolbar" });
-      bar.append(mkBtn("گردش‌کار جدید", openEditor), mkBtn("تازه‌سازی", reload));
-      view.append(card("خودکارسازی", "تعریف گردش‌کار و فعال‌سازی. اجرای واقعی به سرویس اجراکنندهٔ جداگانه نیاز دارد."), bar);
-      if (data.runner) view.append(el("p", { class: "ohint", text: data.runner.note || "" }));
+      bar.append(
+        mkBtn("+ گردش‌کار جدید", () => openEditor(null, meta), "btn btn-primary btn-sm"),
+        mkBtn("تاریخچهٔ اجراها", () => openRuns(meta)),
+        mkBtn("تازه‌سازی", reload)
+      );
+      view.append(grid, card("موتور خودکارسازی", "محرک‌ها و اقدام‌ها از فهرست مجاز انتخاب می‌شوند و همین سرور آن‌ها را با رعایت مجوز اجرا می‌کند. اجرای هر رویداد در تاریخچه ثبت می‌شود و اجرای ناموفق دو بار تلاش می‌کند."), bar);
       view.append(table(
-        ["نام", "محرک", "فعال", "آخرین تغییر", "اقدام"],
-        (data.workflows || []).map((w) => [
-          w.name,
-          el("code", { text: w.trigger }),
+        ["نام", "محرک", "شرط", "اقدام", "فعال", "آخرین اجرا", "خطا", "اقدام"],
+        workflows.map((w) => [
+          el("div", {}, [el("strong", { text: w.name }), w.description ? el("small", { text: w.description }) : null]),
+          el("code", { dir: "ltr", text: w.trigger }),
+          String((w.conditions?.rules || []).length),
+          String((w.actions || []).length),
           w.enabled ? tag("فعال") : tag("خاموش", "warn"),
-          fmtDate(w.updatedAt),
-          mkBtn(w.enabled ? "خاموش" : "روشن", async () => {
-            try {
-              await api(`/admin/automation/${encodeURIComponent(w.id)}`, { method: "PATCH", body: { enabled: !w.enabled } });
-              toast("وضعیت عوض شد.");
-              reload();
-            } catch (err) { toast(err.message || "تغییر نکرد.", "error"); }
-          })
+          w.lastRunAt ? el("span", {}, [tag(RUN_STATUS_LABELS[w.lastStatus] || w.lastStatus || "—", w.lastStatus === "failed" ? "bad" : "ok"), el("small", { text: fmtDate(w.lastRunAt) })]) : "—",
+          String(w.errorCount || 0),
+          el("div", { class: "og-actions" }, [
+            mkBtn("ویرایش", () => openEditor(w, meta)),
+            mkBtn(w.enabled ? "خاموش" : "روشن", () => toggle(w)),
+            mkBtn("آزمایش", () => simulate(w, meta))
+          ])
         ])
+      ));
+      view.append(el("h3", { class: "ow-h3", text: "اجراهای اخیر" }));
+      view.append(table(
+        ["گردش‌کار", "محرک", "وضعیت", "تلاش", "مدت", "شروع", "خطا", "اقدام"],
+        runs.map(runRow)
       ));
       section.replaceChildren(view);
     } catch (err) {
@@ -2002,13 +3065,14 @@ export function installGodPages(center) {
     { id: "billingAdmin", view: "billingAdmin", label: "اشتراک و پرداخت", icon: "◭", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "پلن، تخفیف و پرداخت", sub: "ساخت پلن، کد تخفیف، تایید پرداخت، بازگشت وجه و مدیریت اشتراک بدون تغییر سورس.", keywords: "plans coupons subscriptions billing پرداخت پلن تخفیف اشتراک" },
     { id: "godRoles", view: "godRoles", label: "نقش و مجوز", icon: "⛨", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "نقش‌ها و محدودیت‌ها", sub: "مجوزهای هر نقش، تعلیق‌ها و رفع مسدودی با ثبت رویداد.", keywords: "roles permissions restrictions نقش مجوز محدودیت" },
     { id: "support", view: "support", label: "صف پشتیبانی", icon: "☏", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "صف پشتیبانی", sub: "اولویت‌بندی، ارجاع و حل تیکت‌های پشتیبانی.", keywords: "support tickets پشتیبانی تیکت" },
-    { id: "godPages", view: "godPages", label: "صفحه‌های سایت", icon: "▥", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "صفحه‌های سایت", sub: "ساخت و ویرایش صفحه‌های محتوایی، انتشار و آرشیو.", keywords: "pages cms content صفحه محتوا" },
-    { id: "godAutomation", view: "godAutomation", label: "خودکارسازی", icon: "⟳", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "خودکارسازی", sub: "گردش‌کارها و محرک‌ها؛ اجرای واقعی نیازمند سرویس اجراکنندهٔ جداگانه است.", keywords: "automation workflow خودکار گردش" },
+    { id: "godPages", view: "godPages", label: "سازندهٔ صفحه", icon: "▥", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "سازندهٔ صفحه‌های سایت", sub: "ساخت و ویرایش صفحه با بلوک‌های امن، پیش‌نمایش زنده، انتشار، زمان‌بندی، نسخه‌ها و فرم‌ها.", keywords: "pages cms builder صفحه محتوا ساخت" },
+    { id: "godAutomation", view: "godAutomation", label: "خودکارسازی", icon: "⟳", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "خودکارسازی", sub: "محرک، شرط و اقدام واقعی روی سرور؛ تاریخچهٔ اجرا، خطاها و تلاش دوباره.", keywords: "automation workflow خودکار گردش" },
     { id: "broadcast", view: "broadcast", label: "اعلان همگانی", icon: "◍", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "اعلان همگانی", sub: "ارسال اعلان داخل‌برنامه‌ای به همه یا یک نقش.", keywords: "notifications broadcast اعلان اطلاع" },
-    { id: "serAnalytics", view: "serAnalytics", label: "آمار سرور", icon: "◔", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "آمار سرور", sub: "روند ثبت‌نام و پیام ۱۴ روز اخیر از پایگاه داده.", keywords: "analytics آمار" },
+    { id: "serAnalytics", view: "serAnalytics", label: "آمار و گزارش", icon: "◔", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "آمار و گزارش", sub: "گزارش واقعی ثبت‌نام، فعالیت، درآمد، پشتیبانی، تخلف، ذخیره‌سازی و سیستم با بازهٔ زمانی و خروجی CSV.", keywords: "analytics report آمار گزارش" },
     { id: "governance", view: "governance", label: "کنترل قابلیت‌ها", icon: "◧", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "کنترل قابلیت‌ها", sub: "روشن/خاموش با دامنهٔ سراسری، کاربر، نقش، سرور، اتاق و پلن؛ همراه وابستگی، زمان‌بندی و تاریخچه.", keywords: "features flags قابلیت کنترل" },
     { id: "siteSettings", view: "siteSettings", label: "تنظیمات سایت", icon: "⚙", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "تنظیمات سایت", sub: "برندینگ، ظاهر، اتاق، چت، پخش، امنیت و پرداخت؛ ذخیرهٔ مستقیم روی سرور.", keywords: "settings configuration تنظیمات" },
     { id: "vault", view: "vault", label: "داده و پشتیبان", icon: "⛁", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "داده و پشتیبان", sub: "سلامت پایگاه داده، جدول‌ها، پشتیبان‌گیری، خروجی و پاک‌سازی قدیمی‌ها.", keywords: "storage backup storage ذخیره" },
+    { id: "godFiles", view: "godFiles", label: "فایل و فضا", icon: "⛃", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "فایل و فضای ذخیره‌سازی", sub: "پایش مصرف و سهمیه، مرور فایل‌های بارگذاری‌شده، حذف و پاک‌سازی فایل‌های رهاشده.", keywords: "files uploads storage فایل آپلود فضا" },
     { id: "serverAudit", view: "serverAudit", label: "رویدادهای سرور", icon: "≡", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "رویدادهای سرور", sub: "گزارش کامل اقدامات مدیریتی سرور.", keywords: "audit log رویداد" }
   ];
   for (const def of defs) {
@@ -2028,6 +3092,7 @@ export function installGodPages(center) {
       governance: (section) => renderGovernance(section, center),
       siteSettings: (section) => renderSiteSettings(section),
       vault: (section) => renderVault(section),
+      godFiles: (section) => renderFiles(section, center),
       serverAudit: (section) => renderServerAudit(section)
     }[def.id];
     center.registerPage(def, renderer);

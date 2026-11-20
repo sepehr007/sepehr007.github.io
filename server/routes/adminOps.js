@@ -6,6 +6,16 @@ import { audit } from "../audit.js";
 import { adminLimit, ownerOnly, permissionOnly } from "../adminGuard.js";
 import { sqlGetTicket, sqlPatchTicket, sqlListSupportAgents } from "../stores/social.js";
 import { deliverNotice, deliverNoticeMany } from "../notify.js";
+import { sanitizeBlocks, blocksFromJson, sanitizeVisibility } from "../pageBlocks.js";
+import {
+  TRIGGERS,
+  ACTIONS,
+  sanitizeConditions,
+  sanitizeActions,
+  simulateWorkflow,
+  retryRun,
+  sampleEvent
+} from "../automation.js";
 
 const ROLES = ["user", "member", "moderator", "administrator", "owner", "super_owner"];
 const STATUSES = ["active", "suspended", "banned"];
@@ -46,9 +56,15 @@ function mapPage(row) {
     id: row.id,
     slug: row.slug,
     title: row.title,
-    body: row.body,
+    description: row.description || "",
+    blocks: blocksFromJson(row.blocks_json || row.body),
     status: row.status,
     locale: row.locale,
+    visibility: row.visibility || "public",
+    scheduledAt: row.scheduled_at ? Number(row.scheduled_at) : null,
+    showInNav: Boolean(row.show_in_nav),
+    navOrder: Number(row.nav_order || 0),
+    version: Number(row.version || 1),
     updatedBy: row.updated_by || "",
     createdAt: Number(row.created_at || 0),
     updatedAt: Number(row.updated_at || 0),
@@ -64,12 +80,93 @@ function mapWorkflow(row) {
   return {
     id: row.id,
     name: row.name,
+    description: row.description || "",
     trigger: row.trigger,
     conditions,
     actions,
     enabled: Boolean(row.enabled),
+    lastRunAt: row.last_run_at ? Number(row.last_run_at) : null,
+    lastStatus: row.last_status || "",
+    lastError: row.last_error || "",
+    runCount: Number(row.run_count || 0),
+    errorCount: Number(row.error_count || 0),
     createdAt: Number(row.created_at || 0),
     updatedAt: Number(row.updated_at || 0)
+  };
+}
+
+function mapRun(row) {
+  let actions = [];
+  try { actions = JSON.parse(row.actions_json || "[]"); } catch {}
+  return {
+    id: row.id,
+    workflowId: row.workflow_id,
+    trigger: row.trigger,
+    status: row.status,
+    attempts: Number(row.attempts || 1),
+    actions,
+    error: row.error || "",
+    retryOf: row.retry_of || "",
+    startedAt: Number(row.started_at || 0),
+    finishedAt: row.finished_at ? Number(row.finished_at) : null
+  };
+}
+
+function snapshotPage(pageId, actorId) {
+  const row = get("SELECT * FROM website_pages WHERE id = ?", pageId);
+  if (!row) return null;
+  run(
+    `INSERT OR REPLACE INTO page_versions (id, page_id, version, title, description, blocks_json, status, visibility, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    crypto.randomUUID(),
+    row.id,
+    Number(row.version || 1),
+    row.title,
+    row.description || "",
+    row.blocks_json || "[]",
+    row.status,
+    row.visibility || "public",
+    actorId || null,
+    Date.now()
+  );
+  run(
+    "DELETE FROM page_versions WHERE page_id = ? AND version <= ?",
+    row.id,
+    Math.max(0, Number(row.version || 1) - 30)
+  );
+  return row;
+}
+
+function pageInput(input, current) {
+  const blocksRaw = input.blocks !== undefined ? input.blocks : undefined;
+  let blocks;
+  if (blocksRaw !== undefined) {
+    const result = sanitizeBlocks(blocksRaw);
+    if (!result.ok) return { ok: false, error: result.error };
+    blocks = result.blocks;
+  } else if (current === null && typeof input.body === "string" && input.body.trim()) {
+    const result = sanitizeBlocks([{ type: "text", text: input.body }]);
+    if (!result.ok) return { ok: false, error: result.error };
+    blocks = result.blocks;
+  }
+  const scheduled =
+    input.scheduledAt === undefined
+      ? undefined
+      : input.scheduledAt === null || input.scheduledAt === ""
+        ? null
+        : Number(input.scheduledAt || 0) || null;
+  return {
+    ok: true,
+    fields: {
+      title: input.title === undefined ? undefined : String(input.title || "").trim().slice(0, 160),
+      description: input.description === undefined ? undefined : String(input.description || "").slice(0, 400),
+      blocks,
+      locale: input.locale === undefined ? undefined : String(input.locale || "fa").slice(0, 8),
+      visibility: input.visibility === undefined ? undefined : sanitizeVisibility(String(input.visibility)),
+      scheduledAt: scheduled,
+      showInNav: input.showInNav === undefined ? undefined : Boolean(input.showInNav),
+      navOrder: input.navOrder === undefined ? undefined : Number(input.navOrder) || 0
+    }
   };
 }
 
@@ -299,6 +396,14 @@ export default async function adminOpsRoutes(app) {
       targetId: ticket.id,
       meta: { status: ticket.status, priority: ticket.priority, assignedTo: ticket.assignedTo || "" }
     });
+    emitEvent(req.server, "support.ticket_updated", {
+      ticketId: ticket.id,
+      userId: ownerId || "",
+      status: ticket.status,
+      priority: ticket.priority,
+      assignedTo: ticket.assignedTo || "",
+      statusChanged: Boolean(events.statusChanged)
+    });
     return { ok: true, ticket, events };
   });
 
@@ -468,7 +573,73 @@ export default async function adminOpsRoutes(app) {
   app.get("/pages", async (req, reply) => {
     if (!(await permissionOnly(req, reply, "content.manage"))) return undefined;
     if (!(await ready(reply))) return undefined;
-    return { ok: true, pages: all("SELECT * FROM website_pages ORDER BY updated_at DESC LIMIT 100").map(mapPage) };
+    const rows = all(
+      `SELECT p.*, (SELECT COUNT(*) FROM page_submissions s WHERE s.page_id = p.id) AS submission_count
+       FROM website_pages p ORDER BY p.nav_order ASC, p.updated_at DESC LIMIT 100`
+    );
+    return {
+      ok: true,
+      pages: rows.map((row) => ({ ...mapPage(row), submissionCount: Number(row.submission_count || 0) }))
+    };
+  });
+
+  app.get("/pages/:id", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "content.manage"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    const row = get("SELECT * FROM website_pages WHERE id = ?", String(req.params.id));
+    if (!row) return fail(reply, 404, "page_missing", "That page does not exist.");
+    const versions = all(
+      "SELECT version, status, created_at, created_by FROM page_versions WHERE page_id = ? ORDER BY version DESC LIMIT 30",
+      row.id
+    ).map((item) => ({
+      version: Number(item.version),
+      status: item.status,
+      createdAt: Number(item.created_at),
+      createdBy: item.created_by || ""
+    }));
+    const submissions = Number(get("SELECT COUNT(*) AS n FROM page_submissions WHERE page_id = ?", row.id)?.n || 0);
+    return { ok: true, page: { ...mapPage(row), versions, submissionCount: submissions } };
+  });
+
+  app.get("/pages/:id/versions", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "content.manage"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    const row = get("SELECT id FROM website_pages WHERE id = ?", String(req.params.id));
+    if (!row) return fail(reply, 404, "page_missing", "That page does not exist.");
+    const versions = all("SELECT * FROM page_versions WHERE page_id = ? ORDER BY version DESC LIMIT 30", row.id).map((item) => ({
+      id: item.id,
+      version: Number(item.version),
+      title: item.title,
+      description: item.description || "",
+      blocks: blocksFromJson(item.blocks_json),
+      status: item.status,
+      visibility: item.visibility || "public",
+      createdAt: Number(item.created_at)
+    }));
+    return { ok: true, versions };
+  });
+
+  app.get("/pages/:id/submissions", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "content.manage"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    const row = get("SELECT id FROM website_pages WHERE id = ?", String(req.params.id));
+    if (!row) return fail(reply, 404, "page_missing", "That page does not exist.");
+    const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 50));
+    const rows = all(
+      "SELECT * FROM page_submissions WHERE page_id = ? ORDER BY created_at DESC LIMIT ?",
+      row.id,
+      limit
+    );
+    return {
+      ok: true,
+      submissions: rows.map((item) => ({
+        id: item.id,
+        name: item.name,
+        email: item.email,
+        message: item.message,
+        createdAt: Number(item.created_at)
+      }))
+    };
   });
 
   app.post("/pages", async (req, reply) => {
@@ -477,28 +648,47 @@ export default async function adminOpsRoutes(app) {
     const input = body(req);
     const slug = String(input.slug || "").trim().toLowerCase();
     if (!/^[a-z0-9-]{2,64}$/.test(slug)) return fail(reply, 400, "invalid_slug", "Slug must be 2-64 latin letters, digits or dashes.");
-    const title = String(input.title || "").trim().slice(0, 160);
+    const parsed = pageInput(input, null);
+    if (!parsed.ok) return fail(reply, 400, parsed.error, "One of the blocks is not valid.");
+    const title = parsed.fields.title === undefined ? "" : parsed.fields.title;
     if (!title) return fail(reply, 400, "invalid_title", "A title is required.");
     if (get("SELECT 1 FROM website_pages WHERE slug = ?", slug)) return fail(reply, 409, "slug_exists", "That slug already exists.");
     const status = ["draft", "published", "archived"].includes(input.status) ? input.status : "draft";
     const now = Date.now();
     const id = crypto.randomUUID();
     run(
-      `INSERT INTO website_pages (id, slug, title, body, status, locale, updated_by, created_at, updated_at, published_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO website_pages
+       (id, slug, title, description, body, blocks_json, status, locale, visibility, scheduled_at, show_in_nav, nav_order, version, updated_by, created_at, updated_at, published_at)
+       VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
       id,
       slug,
       title,
-      String(input.body || "").slice(0, 200_000),
+      parsed.fields.description || "",
+      JSON.stringify(parsed.fields.blocks || []),
       status,
-      String(input.locale || "fa").slice(0, 8),
+      parsed.fields.locale || "fa",
+      parsed.fields.visibility || "public",
+      parsed.fields.scheduledAt || null,
+      parsed.fields.showInNav ? 1 : 0,
+      parsed.fields.navOrder || 0,
       req.auth.userId,
       now,
       now,
       status === "published" ? now : null
     );
-    await audit("admin.page.create", req, { targetType: "page", targetId: id, meta: { slug } });
+    snapshotPage(id, req.auth.userId);
+    await audit("admin.page.create", req, { targetType: "page", targetId: id, meta: { slug, blocks: (parsed.fields.blocks || []).length } });
     return { ok: true, page: mapPage(get("SELECT * FROM website_pages WHERE id = ?", id)) };
+  });
+
+  app.post("/pages/reorder", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "content.manage"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    const ids = Array.isArray(body(req).ids) ? body(req).ids.slice(0, 100).map(String) : [];
+    if (!ids.length) return fail(reply, 400, "empty_order", "Send the page ids in display order.");
+    ids.forEach((id, index) => run("UPDATE website_pages SET nav_order = ?, updated_at = ? WHERE id = ?", index, Date.now(), id));
+    await audit("admin.page.reorder", req, { targetType: "page", meta: { count: ids.length } });
+    return { ok: true, order: ids };
   });
 
   app.patch("/pages/:id", async (req, reply) => {
@@ -509,19 +699,57 @@ export default async function adminOpsRoutes(app) {
     const input = body(req);
     const status = input.status === undefined ? row.status : String(input.status);
     if (!["draft", "published", "archived"].includes(status)) return fail(reply, 400, "invalid_status", "Page status is not valid.");
+    const parsed = pageInput(input, row);
+    if (!parsed.ok) return fail(reply, 400, parsed.error, "One of the blocks is not valid.");
+    const f = parsed.fields;
+    const contentChanged = f.blocks !== undefined || (f.title !== undefined && f.title !== row.title) || (f.description !== undefined && f.description !== row.description);
+    const nextVersion = contentChanged ? Number(row.version || 1) + 1 : Number(row.version || 1);
     const now = Date.now();
     run(
-      "UPDATE website_pages SET title = ?, body = ?, status = ?, locale = ?, published_at = ?, updated_by = ?, updated_at = ? WHERE id = ?",
-      input.title === undefined ? row.title : String(input.title).slice(0, 160),
-      input.body === undefined ? row.body : String(input.body).slice(0, 200_000),
+      `UPDATE website_pages SET title = ?, description = ?, blocks_json = ?, status = ?, locale = ?, visibility = ?,
+       scheduled_at = ?, show_in_nav = ?, nav_order = ?, version = ?, published_at = ?, updated_by = ?, updated_at = ? WHERE id = ?`,
+      f.title === undefined ? row.title : f.title,
+      f.description === undefined ? row.description : f.description,
+      f.blocks === undefined ? row.blocks_json : JSON.stringify(f.blocks),
       status,
-      input.locale === undefined ? row.locale : String(input.locale).slice(0, 8),
+      f.locale === undefined ? row.locale : f.locale,
+      f.visibility === undefined ? row.visibility || "public" : f.visibility,
+      f.scheduledAt === undefined ? row.scheduled_at : f.scheduledAt,
+      f.showInNav === undefined ? row.show_in_nav : f.showInNav ? 1 : 0,
+      f.navOrder === undefined ? row.nav_order : f.navOrder,
+      nextVersion,
       status === "published" ? row.published_at || now : row.published_at,
       req.auth.userId,
       now,
       row.id
     );
-    await audit("admin.page.update", req, { targetType: "page", targetId: row.id, meta: { status } });
+    if (contentChanged) snapshotPage(row.id, req.auth.userId);
+    await audit("admin.page.update", req, { targetType: "page", targetId: row.id, meta: { status, version: nextVersion } });
+    return { ok: true, page: mapPage(get("SELECT * FROM website_pages WHERE id = ?", row.id)) };
+  });
+
+  app.post("/pages/:id/rollback", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "content.manage"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    if (!needConfirm(reply, req)) return undefined;
+    const row = get("SELECT * FROM website_pages WHERE id = ?", String(req.params.id));
+    if (!row) return fail(reply, 404, "page_missing", "That page does not exist.");
+    const version = Number(body(req).version || 0);
+    const snap = get("SELECT * FROM page_versions WHERE page_id = ? AND version = ?", row.id, version);
+    if (!snap) return fail(reply, 404, "version_missing", "That version does not exist.");
+    const nextVersion = Number(row.version || 1) + 1;
+    run(
+      "UPDATE website_pages SET title = ?, description = ?, blocks_json = ?, version = ?, updated_by = ?, updated_at = ? WHERE id = ?",
+      snap.title,
+      snap.description || "",
+      snap.blocks_json,
+      nextVersion,
+      req.auth.userId,
+      Date.now(),
+      row.id
+    );
+    snapshotPage(row.id, req.auth.userId);
+    await audit("admin.page.rollback", req, { targetType: "page", targetId: row.id, meta: { from: version, to: nextVersion } });
     return { ok: true, page: mapPage(get("SELECT * FROM website_pages WHERE id = ?", row.id)) };
   });
 
@@ -540,11 +768,48 @@ export default async function adminOpsRoutes(app) {
   app.get("/automation", async (req, reply) => {
     if (!(await permissionOnly(req, reply, "site.manage"))) return undefined;
     if (!(await ready(reply))) return undefined;
+    const runs = all(
+      `SELECT r.*, w.name AS workflow_name FROM automation_runs r
+       LEFT JOIN automation_workflows w ON w.id = r.workflow_id
+       ORDER BY r.started_at DESC LIMIT 25`
+    ).map((row) => ({ ...mapRun(row), workflowName: row.workflow_name || "" }));
     return {
       ok: true,
       workflows: all("SELECT * FROM automation_workflows ORDER BY updated_at DESC LIMIT 100").map(mapWorkflow),
-      runner: { available: false, note: "ثبت و فعال‌سازی گردش‌کارها انجام می‌شود؛ اجرای خودکار به سرویس اجراکنندهٔ جداگانه نیاز دارد." }
+      runs,
+      runner: { available: true, triggers: TRIGGERS, actions: ACTIONS }
     };
+  });
+
+  app.get("/automation/runs", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "site.manage"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    const status = ["ok", "failed", "running"].includes(String(req.query?.status || "")) ? String(req.query.status) : "";
+    const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 50));
+    const rows = status
+      ? all(
+          `SELECT r.*, w.name AS workflow_name FROM automation_runs r
+           LEFT JOIN automation_workflows w ON w.id = r.workflow_id
+           WHERE r.status = ? ORDER BY r.started_at DESC LIMIT ?`,
+          status,
+          limit
+        )
+      : all(
+          `SELECT r.*, w.name AS workflow_name FROM automation_runs r
+           LEFT JOIN automation_workflows w ON w.id = r.workflow_id
+           ORDER BY r.started_at DESC LIMIT ?`,
+          limit
+        );
+    return { ok: true, runs: rows.map((row) => ({ ...mapRun(row), workflowName: row.workflow_name || "" })) };
+  });
+
+  app.get("/automation/:id", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "site.manage"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    const row = get("SELECT * FROM automation_workflows WHERE id = ?", String(req.params.id));
+    if (!row) return fail(reply, 404, "workflow_missing", "That workflow does not exist.");
+    const runs = all("SELECT * FROM automation_runs WHERE workflow_id = ? ORDER BY started_at DESC LIMIT 50", row.id).map(mapRun);
+    return { ok: true, workflow: mapWorkflow(row), runs };
   });
 
   app.post("/automation", async (req, reply) => {
@@ -552,25 +817,33 @@ export default async function adminOpsRoutes(app) {
     if (!(await ready(reply))) return undefined;
     const input = body(req);
     const name = String(input.name || "").trim().slice(0, 120);
-    const trigger = String(input.trigger || "").trim().slice(0, 80);
-    if (!name || !trigger) return fail(reply, 400, "invalid_workflow", "Name and trigger are required.");
-    const actions = Array.isArray(input.actions) ? input.actions.slice(0, 20) : [];
+    if (!name) return fail(reply, 400, "invalid_name", "A workflow name is required.");
+    const trigger = String(input.trigger || "").trim();
+    if (!TRIGGERS[trigger]) return fail(reply, 400, "invalid_trigger", "That trigger is not supported.");
+    const conditions = sanitizeConditions(input.conditions);
+    if (!conditions.ok) return fail(reply, 400, conditions.error, "One of the conditions is not valid.");
+    const actions = sanitizeActions(input.actions);
+    if (!actions.ok) return fail(reply, 400, actions.error, "One of the actions is not supported.");
+    const enabled = Boolean(input.enabled);
+    if (enabled && !actions.actions.length) return fail(reply, 400, "no_actions", "Add at least one action before enabling.");
     const now = Date.now();
     const id = crypto.randomUUID();
     run(
-      `INSERT INTO automation_workflows (id, name, trigger, conditions_json, actions_json, enabled, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO automation_workflows
+       (id, name, description, trigger, conditions_json, actions_json, enabled, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       name,
+      String(input.description || "").slice(0, 400),
       trigger,
-      JSON.stringify(input.conditions && typeof input.conditions === "object" ? input.conditions : {}),
-      JSON.stringify(actions),
-      input.enabled ? 1 : 0,
+      JSON.stringify(conditions.conditions),
+      JSON.stringify(actions.actions),
+      enabled ? 1 : 0,
       req.auth.userId,
       now,
       now
     );
-    await audit("admin.automation.create", req, { targetType: "workflow", targetId: id, meta: { name, trigger } });
+    await audit("admin.automation.create", req, { targetType: "workflow", targetId: id, meta: { name, trigger, enabled } });
     return { ok: true, workflow: mapWorkflow(get("SELECT * FROM automation_workflows WHERE id = ?", id)) };
   });
 
@@ -580,19 +853,64 @@ export default async function adminOpsRoutes(app) {
     const row = get("SELECT * FROM automation_workflows WHERE id = ?", String(req.params.id));
     if (!row) return fail(reply, 404, "workflow_missing", "That workflow does not exist.");
     const input = body(req);
+    const trigger = input.trigger === undefined ? row.trigger : String(input.trigger || "").trim();
+    if (!TRIGGERS[trigger]) return fail(reply, 400, "invalid_trigger", "That trigger is not supported.");
+    let conditionsJson = row.conditions_json;
+    if (input.conditions !== undefined) {
+      const conditions = sanitizeConditions(input.conditions);
+      if (!conditions.ok) return fail(reply, 400, conditions.error, "One of the conditions is not valid.");
+      conditionsJson = JSON.stringify(conditions.conditions);
+    }
+    let actionsJson = row.actions_json;
+    if (input.actions !== undefined) {
+      const actions = sanitizeActions(input.actions);
+      if (!actions.ok) return fail(reply, 400, actions.error, "One of the actions is not supported.");
+      actionsJson = JSON.stringify(actions.actions);
+    }
+    const enabled = input.enabled === undefined ? Boolean(row.enabled) : Boolean(input.enabled);
+    let actionCount = 0;
+    try {
+      actionCount = JSON.parse(actionsJson || "[]").length;
+    } catch {}
+    if (enabled && !actionCount) return fail(reply, 400, "no_actions", "Add at least one action before enabling.");
     run(
-      `UPDATE automation_workflows SET name = ?, trigger = ?, conditions_json = ?, actions_json = ?, enabled = ?, updated_at = ?
+      `UPDATE automation_workflows SET name = ?, description = ?, trigger = ?, conditions_json = ?, actions_json = ?, enabled = ?, updated_at = ?
        WHERE id = ?`,
-      input.name === undefined ? row.name : String(input.name).slice(0, 120),
-      input.trigger === undefined ? row.trigger : String(input.trigger).slice(0, 80),
-      input.conditions === undefined ? row.conditions_json : JSON.stringify(input.conditions && typeof input.conditions === "object" ? input.conditions : {}),
-      input.actions === undefined ? row.actions_json : JSON.stringify(Array.isArray(input.actions) ? input.actions.slice(0, 20) : []),
-      input.enabled === undefined ? row.enabled : input.enabled ? 1 : 0,
+      input.name === undefined ? row.name : String(input.name || "").trim().slice(0, 120) || row.name,
+      input.description === undefined ? row.description : String(input.description || "").slice(0, 400),
+      trigger,
+      conditionsJson,
+      actionsJson,
+      enabled ? 1 : 0,
       Date.now(),
       row.id
     );
-    await audit("admin.automation.update", req, { targetType: "workflow", targetId: row.id, meta: { enabled: input.enabled } });
+    await audit("admin.automation.update", req, { targetType: "workflow", targetId: row.id, meta: { enabled } });
     return { ok: true, workflow: mapWorkflow(get("SELECT * FROM automation_workflows WHERE id = ?", row.id)) };
+  });
+
+  app.post("/automation/:id/simulate", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "site.manage"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    if (!needConfirm(reply, req)) return undefined;
+    const row = get("SELECT * FROM automation_workflows WHERE id = ?", String(req.params.id));
+    if (!row) return fail(reply, 404, "workflow_missing", "That workflow does not exist.");
+    const eventInput = body(req).event && typeof body(req).event === "object" ? body(req).event : {};
+    const event = { ...sampleEvent(row.trigger), ...eventInput, trigger: row.trigger };
+    const outcomes = await simulateWorkflow(req.server, row.id, event);
+    const outcome = outcomes[0] || { matched: false, results: [] };
+    await audit("admin.automation.simulate", req, { targetType: "workflow", targetId: row.id, meta: { matched: Boolean(outcome.matched) } });
+    return { ok: true, matched: Boolean(outcome.matched), actions: outcome.results || [], dryRun: true };
+  });
+
+  app.post("/automation/runs/:id/retry", async (req, reply) => {
+    if (!(await permissionOnly(req, reply, "site.manage"))) return undefined;
+    if (!(await ready(reply))) return undefined;
+    if (!needConfirm(reply, req)) return undefined;
+    const result = await retryRun(req.server, String(req.params.id), req.auth.userId);
+    if (!result.ok) return fail(reply, result.error === "run_missing" ? 404 : 409, result.error, "Retry could not be started.");
+    await audit("admin.automation.retry", req, { targetType: "run", targetId: result.runId, meta: { status: result.status } });
+    return { ok: true, runId: result.runId, status: result.status, actions: result.results };
   });
 
   /* ------------------------------------------------------ notifications push */
@@ -626,6 +944,7 @@ export default async function adminOpsRoutes(app) {
       targetType: "notification",
       meta: { audience, role, delivered, title }
     });
+    emitEvent(req.server, "notification.broadcast", { audience, role, delivered, title, userId: req.auth.userId });
     return { ok: true, audience, delivered, note: "کاربرانی که همهٔ اعلان‌ها را خاموش کرده‌اند دریافت نمی‌کنند." };
   });
 }

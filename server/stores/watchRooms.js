@@ -393,7 +393,7 @@ export async function leaveRoom(userId, code) {
   );
   const count = setMemberCount(db, row.id);
   db.prepare("UPDATE rooms SET last_activity_at = ? WHERE id = ?").run(now, row.id);
-  return { ok: true, memberCount: count };
+  return { ok: true, memberCount: count, roomId: row.id, roomCode: row.room_code };
 }
 
 export async function touchRoom(userId, code) {

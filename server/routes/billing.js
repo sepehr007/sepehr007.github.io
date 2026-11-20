@@ -24,6 +24,7 @@ import { get, run } from "../database/index.js";
 import { audit } from "../audit.js";
 import { deliverNotice } from "../notify.js";
 import { resolveFeatureState, isEnabled } from "../features.js";
+import { emitEvent } from "../automation.js";
 
 const DEFAULT_PLANS = [
   {
@@ -261,6 +262,12 @@ export default async function billingRoutes(app) {
         JSON.stringify(event.payload),
         Date.now()
       );
+      emitEvent(req.server, "payment.failed", {
+        userId: orderRow.user_id,
+        orderId: event.orderId,
+        amount: orderRow.amount,
+        provider: req.params.provider
+      });
       return { ok: true, failed: true };
     }
     const result = await sqlActivateOrder({
@@ -293,6 +300,13 @@ export default async function billingRoutes(app) {
         body: `اشتراک ${result.plan?.name || order.planId} فعال شد.`,
         link: "profile.html#planCard",
         dedupeKey: `paid:${order.id}`
+      });
+      emitEvent(req.server, "subscription.activated", {
+        userId: order.user,
+        orderId: order.id,
+        planId: result.plan?.id || order.planId || "",
+        amount: order.amount,
+        source: "webhook"
       });
     }
     return { ok: true, activated: true, duplicate: Boolean(result.duplicate) };

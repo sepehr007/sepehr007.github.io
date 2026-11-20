@@ -1,6 +1,7 @@
 import { t } from "./i18n.js";
 import { el, toast, confirmDialog, copyText } from "./core.js";
 import { apiFetch, apiGetToken, apiConnectSocket } from "./api.js";
+import { uploadFile, absoluteFileUrl, uploadProgressRow } from "./uploader.js";
 
 const ROLE_KEY = {
   host: "room.roleManager",
@@ -285,6 +286,65 @@ function buildEditor(room) {
   grid.append(field("room.editVisibility", visibility));
   grid.append(field("room.editColor", color));
 
+  let coverValue = room.coverUrl || "";
+  const coverPreview = el("img", { class: "mgmt-cover-img", alt: t("room.editCover") });
+  const coverEmpty = el("p", { class: "hint", text: t("room.editCover") });
+  const coverFile = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp", class: "hidden" });
+  const coverUpload = el("button", { type: "button", class: "btn btn-secondary btn-sm", text: t("room.coverUpload") });
+  const coverRemove = el("button", { type: "button", class: "btn btn-ghost danger-text btn-sm", text: t("room.coverRemove") });
+  const coverProgress = uploadProgressRow("بارگذاری تصویر");
+  coverProgress.classList.add("hidden");
+  const paintCover = () => {
+    if (coverValue) {
+      coverPreview.src = coverValue;
+      coverPreview.classList.remove("hidden");
+      coverEmpty.classList.add("hidden");
+      coverRemove.classList.remove("hidden");
+    } else {
+      coverPreview.removeAttribute("src");
+      coverPreview.classList.add("hidden");
+      coverEmpty.classList.remove("hidden");
+      coverRemove.classList.add("hidden");
+    }
+  };
+  paintCover();
+  coverUpload.addEventListener("click", () => coverFile.click());
+  coverFile.addEventListener("change", async () => {
+    const file = coverFile.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast(t("room.coverTooBig"), "error");
+      coverFile.value = "";
+      return;
+    }
+    coverUpload.disabled = true;
+    coverProgress.classList.remove("hidden");
+    try {
+      const data = await uploadFile(file, { kind: "room-cover", onProgress: (p) => coverProgress.setProgress(p) });
+      coverValue = absoluteFileUrl(data.url);
+      paintCover();
+      toast(t("room.coverBadge"), "success");
+    } catch (err) {
+      toast(err?.message || t("social.failed"), "error");
+    } finally {
+      coverUpload.disabled = false;
+      coverFile.value = "";
+      setTimeout(() => coverProgress.classList.add("hidden"), 1200);
+    }
+  });
+  coverRemove.addEventListener("click", () => {
+    coverValue = "";
+    paintCover();
+  });
+  const coverBox = el("div", { class: "mgmt-cover wide" }, [
+    el("span", { class: "mgmt-cover-label", text: t("room.editCover") }),
+    coverPreview,
+    coverEmpty,
+    el("div", { class: "mgmt-cover-actions" }, [coverUpload, coverRemove, coverFile]),
+    coverProgress
+  ]);
+  grid.append(coverBox);
+
   const desc = el("textarea", { rows: "2", maxlength: "600" });
   desc.value = room.description || "";
   const rules = el("textarea", { rows: "3", maxlength: "2000" });
@@ -312,6 +372,7 @@ function buildEditor(room) {
       visibility: visibility.value,
       capacity: Number(capacity.value) || 6
     };
+    if (coverValue !== (room.coverUrl || "")) patch.coverUrl = coverValue;
     if (removePwd.checked) patch.password = "";
     else if (pwd.value) patch.password = pwd.value;
     save.disabled = true;

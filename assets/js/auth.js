@@ -499,6 +499,7 @@ export function setAvatar(value) {
   if (!val) delete profile.avatar;
   else if (isAvatarId(val)) profile.avatar = presetValue(avatarId(val));
   else if (val.length <= 500000 && /^data:image\/(png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(val)) profile.avatar = val;
+  else if (val.length <= 500 && /^https?:\/\/[^\s"'<>]{3,400}\/api\/files\/[a-f0-9-]{8,64}$/i.test(val)) profile.avatar = val;
   else return { ok: false, error: "image" };
   users[key] = { ...rec, profile };
   writeUsers(users);

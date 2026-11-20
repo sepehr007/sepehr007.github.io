@@ -993,5 +993,72 @@ export const MIGRATIONS = [
         CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_idempotency ON payments(idempotency_key) WHERE idempotency_key <> '';
       `);
     }
+  },
+  {
+    version: 14,
+    name: "website-builder-automation-runs-uploads",
+    up(db) {
+      addColumn(db, "website_pages", "description", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "website_pages", "blocks_json", "TEXT NOT NULL DEFAULT '[]'");
+      addColumn(db, "website_pages", "visibility", "TEXT NOT NULL DEFAULT 'public'");
+      addColumn(db, "website_pages", "scheduled_at", "INTEGER");
+      addColumn(db, "website_pages", "show_in_nav", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "website_pages", "nav_order", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "website_pages", "version", "INTEGER NOT NULL DEFAULT 1");
+      addColumn(db, "automation_workflows", "description", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "automation_workflows", "last_run_at", "INTEGER");
+      addColumn(db, "automation_workflows", "last_status", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "automation_workflows", "last_error", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "automation_workflows", "run_count", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "automation_workflows", "error_count", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "rooms", "cover_url", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "media_objects", "visibility", "TEXT NOT NULL DEFAULT 'private'");
+      addColumn(db, "media_objects", "purpose", "TEXT NOT NULL DEFAULT ''");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS page_versions (
+          id TEXT PRIMARY KEY,
+          page_id TEXT NOT NULL REFERENCES website_pages(id) ON DELETE CASCADE,
+          version INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          blocks_json TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL DEFAULT 'draft',
+          visibility TEXT NOT NULL DEFAULT 'public',
+          created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+          created_at INTEGER NOT NULL,
+          UNIQUE (page_id, version)
+        );
+        CREATE TABLE IF NOT EXISTS page_submissions (
+          id TEXT PRIMARY KEY,
+          page_id TEXT NOT NULL REFERENCES website_pages(id) ON DELETE CASCADE,
+          name TEXT NOT NULL DEFAULT '',
+          email TEXT NOT NULL DEFAULT '',
+          message TEXT NOT NULL DEFAULT '',
+          meta_json TEXT NOT NULL DEFAULT '{}',
+          ip_hash TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS automation_runs (
+          id TEXT PRIMARY KEY,
+          workflow_id TEXT NOT NULL REFERENCES automation_workflows(id) ON DELETE CASCADE,
+          trigger TEXT NOT NULL,
+          event_json TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'running',
+          attempts INTEGER NOT NULL DEFAULT 1,
+          actions_json TEXT NOT NULL DEFAULT '[]',
+          error TEXT NOT NULL DEFAULT '',
+          retry_of TEXT,
+          started_at INTEGER NOT NULL,
+          finished_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_page_versions_page ON page_versions(page_id, version DESC);
+        CREATE INDEX IF NOT EXISTS idx_page_submissions_page ON page_submissions(page_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_automation_runs_workflow ON automation_runs(workflow_id, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_automation_runs_status ON automation_runs(status, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_pages_nav ON website_pages(show_in_nav, nav_order, status);
+        CREATE INDEX IF NOT EXISTS idx_media_owner ON media_objects(owner_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_media_purpose ON media_objects(purpose, created_at DESC);
+      `);
+    }
   }
 ];

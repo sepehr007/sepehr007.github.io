@@ -21,6 +21,14 @@ import adminOpsRoutes from "./routes/adminOps.js";
 import adminBillingRoutes from "./routes/adminBilling.js";
 import socialRoutes from "./routes/social.js";
 import roomRoutes from "./routes/rooms.js";
+import publicPageRoutes from "./routes/publicPages.js";
+import analyticsRoutes from "./routes/analytics.js";
+import adminAnalyticsRoutes from "./routes/adminAnalytics.js";
+import adminStorageRoutes from "./routes/adminStorage.js";
+import uploadRoutes from "./routes/uploads.js";
+import fileRoutes from "./routes/files.js";
+import { sqlSweepExpired } from "./stores/billing.js";
+import { emitEvent } from "./automation.js";
 import { startMaintenance, getDatabase, databaseState, stopMaintenance, closeDatabase } from "./database/index.js";
 import { Room } from "./models/Room.js";
 import { Message } from "./models/Message.js";
@@ -439,7 +447,7 @@ export async function buildServer() {
     origin: corsOrigin,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-File-Name", "X-File-Type", "X-File-Kind"],
     maxAge: 86400
   });
 
@@ -457,6 +465,24 @@ export async function buildServer() {
       done(err);
     }
   });
+
+  app.addContentTypeParser(
+    [
+      "application/octet-stream",
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/gif",
+      "application/pdf",
+      "text/plain",
+      "text/vtt",
+      "application/x-subrip",
+      "video/mp4",
+      "video/webm"
+    ],
+    { parseAs: "buffer", bodyLimit: 55 * 1024 * 1024 },
+    (req, body, done) => done(null, body)
+  );
 
   const limiter = createRateLimiter({
     max: appConfig.rateLimit.max,
@@ -511,6 +537,12 @@ export async function buildServer() {
   await app.register(adminBillingRoutes, { prefix: "/api/admin" });
   await app.register(socialRoutes, { prefix: "/api/social" });
   await app.register(roomRoutes, { prefix: "/api/rooms" });
+  await app.register(publicPageRoutes, { prefix: "/api/pages" });
+  await app.register(analyticsRoutes, { prefix: "/api/analytics" });
+  await app.register(adminAnalyticsRoutes, { prefix: "/api/admin" });
+  await app.register(adminStorageRoutes, { prefix: "/api/admin" });
+  await app.register(uploadRoutes, { prefix: "/api/uploads" });
+  await app.register(fileRoutes, { prefix: "/api/files" });
 
   app.get("/api/features", async (req) => {
     const auth = readAuth(req);
@@ -573,11 +605,23 @@ async function start() {
       }
     });
 
+  const expirySweep = setInterval(async () => {
+    if (dbReady()) return;
+    try {
+      const due = await sqlSweepExpired();
+      for (const item of due) emitEvent(app, "subscription.expired", { ...item });
+    } catch (err) {
+      app.log.warn(`[billing] expiry sweep failed: ${err.message}`);
+    }
+  }, 5 * 60_000);
+  expirySweep.unref?.();
+
   let closing = false;
   const shutdown = async (signal) => {
     if (closing) return;
     closing = true;
     app.log.info(`Received ${signal}, shutting down`);
+    clearInterval(expirySweep);
     stopMaintenance();
     try {
       await app.close();
