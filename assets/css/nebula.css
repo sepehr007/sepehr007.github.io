@@ -29,15 +29,21 @@ html[data-theme] body{
   -webkit-font-smoothing:antialiased;
   text-rendering:optimizeLegibility;
 }
+html[data-theme] body:has(> .bg-aurora){background:transparent}
 html[data-theme] .bg-aurora,
 html[data-theme] .owner-body .owner-bg{
   display:block;position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;
-  background:transparent;
+  background:url("../img/ambient-night.webp") 50% 22%/cover no-repeat,#0a0818;
+}
+html[data-theme] .bg-aurora::before,
+html[data-theme] .owner-body .owner-bg::before{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,rgba(7,6,18,.2),rgba(7,6,18,.05) 40%,rgba(7,6,18,.28));
 }
 html[data-theme] .owner-body .owner-bg{z-index:0}
 html[data-theme] .bg-aurora .aurora,
 html[data-theme] .owner-body .owner-bg .aurora{
-  position:absolute;border-radius:50%;opacity:.5;
+  position:absolute;border-radius:50%;opacity:.34;
   will-change:transform;
 }
 html[data-theme] .aurora.a1{width:52vw;height:52vw;top:-18vw;inset-inline-end:-12vw;background:radial-gradient(circle,rgba(var(--brand-rgb),.85) 0%,rgba(var(--brand-rgb),.4) 30%,rgba(var(--brand-rgb),.12) 52%,transparent 70%);animation:nxDrift1 26s ease-in-out infinite alternate}
@@ -462,38 +468,23 @@ html[data-theme] .price-list li{font-size:13px;color:var(--text-dim);border-top:
 html[data-theme] .price-list li::before{color:var(--nx-green)}
 html[data-theme] .v8-pay-note{color:var(--text-faint);max-width:70ch;margin-inline:auto;text-align:center}
 
-/* CTA band — CSS-only "cinema night" scene */
+/* CTA band — framed night-sky poster */
 html[data-theme] .cta-band{
   position:relative;overflow:hidden;isolation:isolate;
-  border-radius:32px;border:1px solid rgba(255,255,255,.18);
+  border-radius:32px;border:1px solid rgba(255,255,255,.2);
   background:
-    radial-gradient(58% 34% at 50% -6%,rgba(200,226,255,.42),transparent 64%),
-    radial-gradient(40% 54% at 0% 102%,rgba(59,232,255,.22),transparent 70%),
-    radial-gradient(48% 58% at 100% 106%,rgba(var(--brand-2-rgb),.34),transparent 68%),
-    radial-gradient(60% 84% at 50% 50%,rgba(10,6,26,.56),rgba(10,6,26,.2) 66%,rgba(10,6,26,0) 90%),
-    radial-gradient(132% 132% at 50% 44%,transparent 52%,rgba(6,4,16,.6) 100%),
-    linear-gradient(162deg,#150b36 0%,#221046 30%,#2c0f4a 52%,#160b30 74%,#0c0720 100%);
+    radial-gradient(110% 80% at 50% 0%,rgba(12,9,32,.12),rgba(12,9,32,.42) 58%,rgba(12,9,32,.6)),
+    url("../img/ambient-night-vivid.webp") 50% 16%/cover no-repeat;
   color:#fff;padding:clamp(40px,6vw,72px);text-align:center;
-  box-shadow:0 42px 110px -44px rgba(var(--brand-rgb),.95),0 0 0 1px rgba(8,6,20,.4),inset 0 1px 0 rgba(255,255,255,.22);
+  box-shadow:0 42px 110px -44px rgba(var(--brand-rgb),.85),0 0 0 1px rgba(8,6,20,.35),inset 0 1px 0 rgba(255,255,255,.22);
 }
 html[data-theme] .cta-band::before{
   content:"";position:absolute;inset:-26% -12%;z-index:-1;pointer-events:none;
   background:
-    linear-gradient(101deg,transparent 26%,rgba(196,228,255,.14) 44%,transparent 60%),
-    linear-gradient(79deg,transparent 40%,rgba(255,190,246,.11) 52%,transparent 66%);
+    linear-gradient(101deg,transparent 26%,rgba(196,228,255,.12) 44%,transparent 60%),
+    linear-gradient(79deg,transparent 40%,rgba(255,190,246,.09) 52%,transparent 66%);
   filter:blur(22px);mix-blend-mode:screen;
 }
-html[data-theme] .cta-aurora{
-  position:absolute;inset:-30% -20%;z-index:-1;pointer-events:none;
-  background:
-    linear-gradient(104deg,transparent 14%,rgba(59,232,255,.5) 30%,rgba(var(--brand-rgb),.55) 44%,transparent 62%) 0 12%/120% 20% no-repeat,
-    linear-gradient(76deg,transparent 24%,rgba(var(--brand-2-rgb),.55) 44%,rgba(255,150,240,.3) 54%,transparent 70%) 100% 92%/130% 22% no-repeat,
-    radial-gradient(30% 48% at 50% -6%,rgba(214,232,255,.36),transparent 72%);
-  filter:blur(26px);opacity:.72;mix-blend-mode:screen;
-  animation:ctaDrift 22s ease-in-out infinite alternate;
-  will-change:transform;
-}
-@keyframes ctaDrift{0%{transform:translate3d(-2%,1%,0) rotate(-2deg) scale(1)}100%{transform:translate3d(2%,-1%,0) rotate(2deg) scale(1.07)}}
 html[data-theme] .cta-band::after{
   content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;opacity:.85;
   background-image:
@@ -517,12 +508,6 @@ html[data-theme] .cta-lights::after{
 html[data-theme] .cta-lights::before{inset-inline-start:23%;top:19%}
 html[data-theme] .cta-lights::after{inset-inline-end:20%;bottom:21%;font-size:11px;animation-delay:-2.6s}
 @keyframes ctaSparkle{0%,100%{opacity:.3;transform:scale(.8) rotate(0deg)}50%{opacity:1;transform:scale(1.15) rotate(18deg)}}
-html[data-theme] .cta-lights i{position:absolute;border-radius:50%;filter:blur(6px);will-change:transform;mix-blend-mode:screen}
-html[data-theme] .cta-lights i:nth-child(1){width:118px;height:118px;inset-inline-start:9%;top:17%;background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.95) 0 9%,rgba(140,250,255,.8) 26%,rgba(59,232,255,.3) 52%,transparent 72%);animation:ctaFloat 9s ease-in-out infinite}
-html[data-theme] .cta-lights i:nth-child(2){width:150px;height:150px;inset-inline-end:7%;top:7%;background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.95) 0 8%,rgba(255,150,240,.85) 24%,rgba(var(--brand-2-rgb),.32) 54%,transparent 74%);animation:ctaFloat 11s ease-in-out infinite reverse}
-html[data-theme] .cta-lights i:nth-child(3){width:92px;height:92px;inset-inline-start:35%;bottom:2%;background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.8) 0 8%,rgba(196,176,255,.75) 28%,rgba(140,110,255,.22) 58%,transparent 74%);animation:ctaFloat 13s ease-in-out infinite}
-html[data-theme] .cta-lights i:nth-child(4){width:72px;height:72px;inset-inline-end:29%;bottom:9%;background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.95) 0 10%,rgba(210,225,255,.6) 30%,transparent 70%);animation:ctaFloat 8s ease-in-out infinite reverse}
-@keyframes ctaFloat{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(0,-16px,0)}}
 html[data-theme] .cta-shoot{
   position:absolute;top:24%;inset-inline-start:64%;width:96px;height:2px;z-index:-1;pointer-events:none;
   border-radius:2px;opacity:0;will-change:transform,opacity;
@@ -542,8 +527,7 @@ html[data-theme] .v8-cta-glow{
   filter:blur(34px);
 }
 @media (max-width:640px){
-  html[data-theme] .cta-lights i:nth-child(2){width:112px;height:112px}
-  html[data-theme] .cta-lights i:nth-child(4){display:none}
+  html[data-theme] .bg-aurora{background-position:26% 30%}
 }
 html[data-theme] .cta-band h2{color:#fff;font-size:clamp(28px,4vw,48px);font-weight:900;text-shadow:0 2px 6px rgba(6,4,18,.45),0 10px 34px rgba(0,0,0,.5)}
 html[data-theme] .cta-band p{color:rgba(255,255,255,.94);margin-top:8px;text-shadow:0 1px 4px rgba(6,4,18,.45)}
@@ -1254,6 +1238,15 @@ html[data-theme] .wt-maint-box{border-radius:28px;background:var(--glass-bg-stro
 html[data-theme] .wt-maint{background:rgba(6,5,20,.85);backdrop-filter:blur(8px)}
 
 /* ---------- light theme («فراست») ---------- */
+html[data-theme="light"] .bg-aurora,
+html[data-theme="light"] .owner-body .owner-bg{
+  background:
+    radial-gradient(1100px 650px at 80% -10%,rgba(var(--brand-rgb),.16),transparent 65%),
+    radial-gradient(900px 600px at 10% 110%,rgba(var(--brand-2-rgb),.13),transparent 65%),
+    var(--bg);
+}
+html[data-theme="light"] .bg-aurora::before,
+html[data-theme="light"] .owner-body .owner-bg::before{display:none}
 html[data-theme="light"] body{
   background:
     radial-gradient(1100px 700px at 90% -10%,rgba(var(--brand-rgb),.16),transparent 60%),
@@ -1394,16 +1387,12 @@ html[data-theme] .dm-layout{background-color:var(--glass-bg-strong)}
   html[data-theme] .hv-float,
   html[data-theme] .social-empty::before,
   html[data-theme] .stage-empty .empty-ico,
-  html[data-theme] .cta-aurora,
-  html[data-theme] .cta-lights i,
   html[data-theme] .cta-lights::before,
   html[data-theme] .cta-lights::after,
   html[data-theme] .cta-band::after,
   html[data-theme] .cta-shoot{animation:none!important}
   html[data-theme] .aurora,html[data-theme] .grid-overlay,html[data-theme] .grid-overlay::after{will-change:auto}
   html[data-theme] .cta-shoot{display:none}
-  html[data-theme] .cta-aurora{filter:none;opacity:.5}
-  html[data-theme] .cta-lights i{filter:none;opacity:.7}
   html[data-theme] .cta-lights::before,html[data-theme] .cta-lights::after{opacity:.8}
   html[data-theme] .grad-text{filter:none}
   html[data-theme] :is(.site-header,.v8-header,.v8-auth-header,.nx-rail,.top-menu,.owner-body .owner-top,.owner-header){
@@ -1421,8 +1410,6 @@ html[data-theme] .dm-layout{background-color:var(--glass-bg-strong)}
   html[data-theme] .hv-float,
   html[data-theme] .social-empty::before,
   html[data-theme] .stage-empty .empty-ico,
-  html[data-theme] .cta-aurora,
-  html[data-theme] .cta-lights i,
   html[data-theme] .cta-lights::before,
   html[data-theme] .cta-lights::after,
   html[data-theme] .cta-band::after,

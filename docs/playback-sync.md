@@ -33,4 +33,4 @@
 - `assets/js/net.js` — `#nowPlayback`, snapshot/welcome/syncRequest.
 - `assets/js/room.js` — `requestPlaybackSync` و بازگشت هم‌گام پس از اتصال دوباره.
 - `assets/js/i18n.js` — کلیدهای fa/en.
-- `sw.js` — کش `wt-v110`.
+- `sw.js` — کش `wt-v111`.
