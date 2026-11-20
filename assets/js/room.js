@@ -24,6 +24,8 @@ initI18n();
 applyUIPrefs();
 registerServiceWorker();
 
+globalThis.addEventListener?.("wt:api-unauthorized", () => toast(t("profile.session"), "error", 7000));
+
 const params = new URLSearchParams(location.search);
 const code = (params.get("room") || "").toUpperCase();
 const isHost = params.get("host") === "1";

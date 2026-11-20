@@ -27,6 +27,9 @@
 | 10 | رویداد تکراری/بدون ترتیب در WS | `server/index.js` | `seq` + بافر ۲۰۰تایی + `join.since` → `resumed`؛ `cid` → `chat-ack duplicate` | `ws-resume` |
 | 11 | ارتقای نقش خودکار در اثر تغییر نقش هم‌زمان | `routes/platform.js` | تغییر نقش خود شخص ۴۰۹ `self_role_change` | `self-role` |
 | 12 | هدرهای امنیتی نبود | `server/index.js` | hook سراسری `onSend` | بررسی هدر در تست |
+| 13 | کنسول مالک با هش PBKDF2 هاردکد و نشست محلی قابل جعل باز می‌شد؛ رمز قابل تغییر نبود | `assets/js/owner.js`، `owner.html` | حذف کامل مسیر محلی؛ ورود فقط با حساب `owner`/`super_owner` روی سرور و JWT، بررسی `/auth/owner/identity` و الزام ایمیل تأییدشده **یا** شمارهٔ پیامک | `owner` در `section42.test.mjs` و جریان مرورگر واقعی |
+| 14 | تغییر رمز مالک فقط سمت کلاینت بود | `server/routes/auth.js` | `POST /auth/owner/password/code` + `POST /auth/owner/password/confirm`: یک کد ۸ رقمی (ایمیل یا پیامک)، رد رمز تکراری، سقف تلاش، انقضای ۱۰ دقیقه، باطل‌سازی همهٔ نشست‌ها و ثبت در audit | `owner` در `section42.test.mjs` |
+| 15 | رمز مالک از مسیرهای عادی سایت هم قابل تغییر بود | `server/routes/auth.js`، `assets/js/profile.js` | برای `owner`/`super_owner` مسیرهای `/auth/password`، `/auth/recovery-code` و `/auth/recover` با `403 owner_console_only` و forgot با پاسخ خنثی بسته شدند؛ فرم رمز پروفایل برای مالک با پیام راهنما جایگزین می‌شود. تنها مسیر تغییر رمز، کنسول `owner.html` است | `owner` در `section42.test.mjs` و بررسی API با حساب واقعی |
 
 ## چیزهایی که از قبل درست بود (تأیید شده)
 

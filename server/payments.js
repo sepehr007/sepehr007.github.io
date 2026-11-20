@@ -40,6 +40,7 @@ export function initiatePayment({ order, plan }) {
   const cfg = paymentConfig();
   const state = paymentProviderState();
   const amount = Number(order?.amount || 0);
+  const currency = order?.currency || plan?.currency || cfg.currency || "IRT";
   if (!state.configured) {
     return {
       ok: false,
@@ -53,14 +54,14 @@ export function initiatePayment({ order, plan }) {
     const url = new URL(cfg.checkoutUrl);
     url.searchParams.set("order", order.id);
     url.searchParams.set("amount", String(amount));
-    url.searchParams.set("currency", order.currency || plan?.currency || "IRT");
+    url.searchParams.set("currency", currency);
     if (cfg.merchantId) url.searchParams.set("merchant", cfg.merchantId);
     return {
       ok: true,
       provider: "hmac",
       mode: "redirect",
       amount,
-      currency: order.currency || plan?.currency || "IRT",
+      currency,
       checkoutUrl: url.toString(),
       instructions: "برای تکمیل خرید به صفحهٔ پرداخت منتقل شو. فعال‌سازی فقط بعد از تأیید امضای وب‌هوک انجام می‌شود."
     };
@@ -70,7 +71,7 @@ export function initiatePayment({ order, plan }) {
     provider: "manual",
     mode: "manual",
     amount,
-    currency: order.currency || plan?.currency || "IRT",
+    currency,
     checkoutUrl: "",
     instructions: "پرداخت دستی: مبلغ را واریز کن و کد پیگیری را برای پشتیبانی بفرست. اشتراک فقط بعد از تأیید مالک فعال می‌شود."
   };

@@ -9,15 +9,20 @@
     "start": "node index.js",
     "dev": "node --watch index.js",
     "seed": "node seed.js",
+    "owner:setup": "node owner-set.js",
     "config": "node config-check.js",
     "restore": "node restore.js",
     "integrity": "node integrity.js",
-    "test:sec": "node tests/sec36-38.test.mjs"
+    "release:check": "node release-check.js",
+    "test": "node tests/sec36-38.test.mjs && node tests/section42.test.mjs",
+    "test:sec": "node tests/sec36-38.test.mjs",
+    "test:qa": "node tests/section42.test.mjs"
   },
   "engines": {
     "node": ">=22.5"
   },
   "dependencies": {
+    "@fastify/compress": "^9.3.0",
     "@fastify/cors": "^11.4.3",
     "@fastify/websocket": "^11.3.7",
     "bcryptjs": "^3.0.3",

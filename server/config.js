@@ -127,6 +127,25 @@ export function configWarnings(envVars = process.env) {
       message: "SQLite + in-memory sessions: correct for one node. Set MONGO_URI/REDIS_URL to scale out."
     });
   }
+  if (appConfig.isDeployed && !String(envVars.OWNER_PHONE || "").trim()) {
+    warnings.push({
+      level: "warn",
+      code: "owner_phone_missing",
+      message: "OWNER_PHONE is empty: owner verification can only use the verified owner email."
+    });
+  }
+  if (
+    appConfig.isDeployed &&
+    (!String(envVars.OWNER_PASSWORD || "").trim() ||
+      String(envVars.OWNER_PASSWORD || "") === "change_me_before_deploying" ||
+      String(envVars.OWNER_PASSWORD || "").length < 12)
+  ) {
+    warnings.push({
+      level: "warn",
+      code: "owner_password_weak",
+      message: "Set a unique OWNER_PASSWORD of at least 12 characters before deploying."
+    });
+  }
   return warnings;
 }
 

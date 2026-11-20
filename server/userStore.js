@@ -112,6 +112,22 @@ export async function findUsersByPhone(phone) {
   return db.prepare("SELECT * FROM users WHERE phone = ?").all(phone).map(fromSql);
 }
 
+export async function findOwnerAccount() {
+  if (dbReady()) {
+    const doc = await User.findOne({ role: { $in: ["owner", "super_owner"] } })
+      .sort({ createdAt: 1 })
+      .select("+passwordHash +recoveryHash")
+      .lean();
+    return doc ? toUser(doc) : null;
+  }
+  const db = await getDatabase();
+  if (!db) return null;
+  const row = db
+    .prepare("SELECT * FROM users WHERE role IN ('owner', 'super_owner') AND deleted_at IS NULL ORDER BY created_at LIMIT 1")
+    .get();
+  return row ? fromSql(row) : null;
+}
+
 export async function getAppSetting(key) {
   const name = String(key || "");
   if (!name) return null;

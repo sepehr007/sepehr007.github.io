@@ -35,59 +35,23 @@
     <h1>کنسول مالک سایت</h1>
     <p class="gate-sub">ورود امن به مدیریت سراسری هم‌تماشا. این مسیر در هیچ منویی لینک نشده است.</p>
 
-    <div class="gate-tabs" role="tablist">
-      <button class="active" id="gateTabLogin" type="button">ورود مالک</button>
-      <button id="gateTabGithub" type="button" hidden disabled>اتصال به گیت‌هاب</button>
-    </div>
-
     <div class="gate-note">
-      <b>ورود ساده و مستقیم</b>
-      ورود فقط با رمز ثابت مالک انجام می‌شود. اتصال گیت‌هاب و توکن PAT به‌طور کامل غیرفعال شده است و برای ورود هیچ حساب دیگری لازم نیست. نشست مالک تا بسته‌شدن تب فعال می‌ماند.
+      <b>ورود فقط برای مالک</b>
+      این کنسول فقط با حساب مالک روی سرور باز می‌شود. کافی است ایمیل تأییدشده یا شمارهٔ تماس مالک از قبل روی سرور ثبت شده باشد. تغییر رمز با یک کد ایمیل یا پیامک انجام می‌شود.
     </div>
 
     <form class="gate-form" id="loginForm" autocomplete="off">
       <label class="ofield">
-        <span>رمز مالک</span>
-        <input id="ownerPass" type="password" autocomplete="current-password" placeholder="رمز مالک را وارد کن">
+        <span>ایمیل یا نام کاربری مالک</span>
+        <input id="ownerId" type="text" dir="ltr" autocomplete="username" spellcheck="false" placeholder="owner@example.com">
       </label>
-      <p class="gate-hint" id="loginHint">رمز مالک را وارد کن؛ اتصال گیت‌هاب لازم نیست.</p>
+      <label class="ofield">
+        <span>رمز مالک</span>
+        <input id="ownerPass" type="password" autocomplete="current-password" placeholder="رمز مالک">
+      </label>
+      <p class="gate-hint" id="loginHint">ورود نیازمند اتصال به API سرور است.</p>
       <p class="gate-err" id="loginErr" role="alert"></p>
       <button class="btn btn-primary btn-block" id="loginBtn" type="submit">باز کردن کنسول</button>
-    </form>
-
-    <form class="gate-form hidden" id="githubForm" autocomplete="off">
-      <label class="ofield">
-        <span>حساب مالک</span>
-        <input id="ghLogin" type="text" dir="ltr" readonly>
-      </label>
-      <label class="ofield">
-        <span>توکن گیت‌هاب <small>(Fine-grained، دسترسی Contents: Read and write)</small></span>
-        <input id="ghToken" type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
-      </label>
-      <div class="ofield-row">
-        <label class="ofield">
-          <span>رمز محلی جدید <small>(حداقل ۱۰ کاراکتر)</small></span>
-          <input id="newOwnerPass" type="password" autocomplete="new-password">
-        </label>
-        <label class="ofield">
-          <span>تکرار رمز</span>
-          <input id="newOwnerPass2" type="password" autocomplete="new-password">
-        </label>
-      </div>
-      <details class="gate-help">
-        <summary>چطور توکن امن بسازم؟</summary>
-        <ol>
-          <li>وارد GitHub شو → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token.</li>
-          <li>در Repository access گزینهٔ <b>Only select repositories</b> را بزن و مخزن <code id="ghRepo">sepehr007/sepehr007.github.io</code> را انتخاب کن.</li>
-          <li>در Repository permissions فقط <b>Contents</b> را روی <b>Read and write</b> بگذار. Metadata خودکار Read-only است.</li>
-          <li>Expiration را کوتاه بگذار (مثلاً ۹۰ روز)، توکن را کپی کن و فقط در همین کادر بچسبان.</li>
-          <li>توکن را در چت، Issue، اسکرین‌شات یا کد نگذار. این صفحه آن را فقط در حافظهٔ همین تب نگه می‌دارد.</li>
-        </ol>
-        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">ساخت توکن در GitHub ↗</a>
-      </details>
-      <p class="gate-hint">توکن باید به مخزن <code id="ghRepoTxt">sepehr007/sepehr007.github.io</code> دسترسی نوشتن داشته باشد.</p>
-      <p class="gate-err" id="githubErr" role="alert"></p>
-      <button class="btn btn-primary btn-block" id="githubBtn" type="submit">تأیید با گیت‌هاب و فعال‌سازی</button>
     </form>
 
     <a class="gate-back" href="./">بازگشت به سایت</a>
@@ -240,7 +204,7 @@
 
         <article class="ocard honesty">
           <h2>مرزهای صادقانهٔ معماری</h2>
-          <p>سایت روی GitHub Pages استاتیک اجرا می‌شود. این کنسول تنظیمات سایت را از طریق API گیت‌هاب در مخزن شما منتشر می‌کند و همان تنظیمات واقعاً روی همهٔ بازدیدکنندگان اعمال می‌شود. اما فهرست اتاق‌های زنده، آمار سراسری بازدید، مسدودسازی کاربران در همهٔ دستگاه‌ها و کنترل IP بدون بک‌اند ممکن نیست؛ موارد این صفحه که «محلی» برچسب خورده‌اند فقط روی همین مرورگر اثر دارند.</p>
+          <p>این کنسول با حساب مالک روی API سرور کار می‌کند و تنظیمات حساس سمت سرور بررسی می‌شوند. فهرست اتاق‌های زنده، آمار سراسری، مسدودسازی کاربران در همهٔ دستگاه‌ها و کنترل IP فقط با بک‌اند فعال و معتبر ممکن است؛ موارد این صفحه که «محلی» برچسب خورده‌اند فقط روی همین مرورگر اثر دارند.</p>
         </article>
       </section>
 
@@ -411,25 +375,35 @@
       <!-- security -->
       <section class="oview" data-view="security">
         <article class="ocard">
-          <h2>رمز ثابت مالک</h2>
-          <p class="ohint">ورود این نسخه فقط با رمز ثابت مالک انجام می‌شود و رمز داخل مرورگر با PBKDF2 بررسی می‌شود. تغییر رمز از این صفحه غیرفعال است.</p>
-          <form class="form-grid" id="passForm" autocomplete="off" hidden>
-            <label class="ofield"><span>رمز فعلی</span><input id="curPass" type="password" autocomplete="current-password" disabled></label>
-            <label class="ofield"><span>رمز جدید</span><input id="nextPass" type="password" autocomplete="new-password" disabled></label>
-            <label class="ofield"><span>تکرار رمز جدید</span><input id="nextPass2" type="password" autocomplete="new-password" disabled></label>
-            <div class="ofield span2"><button class="btn btn-primary btn-sm" type="submit" disabled>ذخیرهٔ رمز جدید</button></div>
+          <h2>رمز مالک و تأیید یک‌کاناله</h2>
+          <p class="ohint">رمز فقط روی سرور تغییر می‌کند. یک کد ۸ رقمی به ایمیل یا پیامک مالک فرستاده می‌شود و همان یک کد کافی است. رمز فعلی لازم نیست؛ بعد از تغییر، همهٔ نشست‌های قبلی بسته می‌شوند.</p>
+          <ul class="okv">
+            <li><span>ایمیل مالک</span><b id="ownerIdEmail">—</b></li>
+            <li><span>شمارهٔ پیامک</span><b id="ownerIdPhone">—</b></li>
+            <li><span>وضعیت دسترسی</span><b id="ownerIdState">—</b></li>
+          </ul>
+          <div class="form-grid">
+            <label class="ofield"><span>روش تأیید</span>
+              <select id="codeChannel">
+                <option value="email">ایمیل</option>
+                <option value="sms">پیامک</option>
+              </select>
+            </label>
+            <div class="ofield"><button class="btn btn-secondary btn-sm" id="sendCodeBtn" type="button">ارسال کد</button></div>
+          </div>
+          <p class="ohint" id="codeState" role="status"></p>
+          <form class="form-grid" id="passForm" autocomplete="off">
+            <label class="ofield"><span>کد تأیید (۸ رقم)</span><input id="verifyCode" type="text" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="12345678"></label>
+            <label class="ofield"><span>رمز جدید <small>(حداقل ۱۲ کاراکتر)</small></span><input id="nextPass" type="password" autocomplete="new-password" minlength="12"></label>
+            <label class="ofield"><span>تکرار رمز جدید</span><input id="nextPass2" type="password" autocomplete="new-password" minlength="12"></label>
+            <div class="ofield span2"><button class="btn btn-primary btn-sm" type="submit">ذخیرهٔ رمز جدید</button></div>
           </form>
           <p class="gate-err" id="passErr" role="alert"></p>
         </article>
 
-        <article class="ocard" id="tokenCard" hidden>
-          <h2>توکن گیت‌هاب</h2>
-          <p class="ohint">اتصال توکن گیت‌هاب غیرفعال شده است.</p>
-          <form class="token-row" id="tokenForm" autocomplete="off">
-            <input id="sessionToken" type="password" dir="ltr" placeholder="github_pat_…" autocomplete="off" spellcheck="false" disabled>
-            <button class="btn btn-secondary btn-sm" type="submit" disabled>بررسی توکن</button>
-          </form>
-          <p class="token-state" id="tokenState">توکن گیت‌هاب غیرفعال است.</p>
+        <article class="ocard honesty">
+          <h2>پیش‌نیاز امنیتی</h2>
+          <p>حداقل یکی از این دو باید روی سرور تنظیم باشد: ایمیل تأییدشده (<code>OWNER_EMAIL</code>) یا شمارهٔ پیامک (<code>OWNER_PHONE</code>). اگر حساب مالک از قبل ساخته شده، با <code>npm run owner:setup -- --yes</code> این مقادیر را اعمال کن. بدون هیچ‌کدام، کنسول باز نمی‌شود و کدی ارسال نمی‌شود.</p>
         </article>
       </section>
 
@@ -467,7 +441,7 @@
       <!-- publish -->
       <section class="oview" data-view="publish">
         <article class="ocard">
-          <h2>تغییرات آمادهٔ انتشار</h2>
+          <h2>تغییرات ذخیره‌نشده</h2>
           <div class="diff-list" id="diffList"><p class="empty">تغییری نسبت به نسخهٔ منتشرشده نیست.</p></div>
           <div class="ov-actions">
             <button class="btn btn-ghost btn-sm" id="discardBtn" type="button">دور انداختن تغییرات</button>
@@ -478,22 +452,13 @@
         </article>
 
         <article class="ocard">
-          <h2>انتشار تنظیمات</h2>
-          <p class="ohint">انتشار خودکار با توکن گیت‌هاب غیرفعال شده است. تغییرات را با «دانلود JSON» بگیر یا از تب پیش‌نمایش بررسی کن؛ نسخهٔ منتشرشدهٔ سایت از مخزن گیت‌هاب سرو می‌شود.</p>
-          <form class="token-row" id="publishForm" autocomplete="off" hidden>
-            <input id="publishToken" type="password" dir="ltr" placeholder="توکن گیت‌هاب با دسترسی نوشتن" autocomplete="off" spellcheck="false" disabled>
-            <button class="btn btn-primary" id="publishBtn" type="submit" disabled>انتشار تغییرات</button>
-          </form>
-          <p class="pub-state" id="pubState" role="status">انتشار خودکار با توکن غیرفعال است.</p>
-          <div class="pub-links">
-            <a id="repoLink" href="https://github.com/sepehr007/sepehr007.github.io" target="_blank" rel="noopener">مخزن گیت‌هاب ↗</a>
-            <a id="actionsLink" href="https://github.com/sepehr007/sepehr007.github.io/actions" target="_blank" rel="noopener">وضعیت ساخت Pages ↗</a>
-          </div>
+          <h2>پشتیبان تنظیمات</h2>
+          <p class="ohint">این نسخه تنظیمات را روی همین مرورگر نگه می‌دارد. برای نگهداری، فایل JSON را دانلود کن یا یک نسخهٔ پشتیبان را بارگذاری کن. پیش‌نمایش فقط در همین مرورگر و برای مالک باز می‌شود.</p>
         </article>
 
         <article class="ocard honesty">
           <h2>هشدار امنیتی</h2>
-          <p>رمز مالک داخل کد سمت مرورگر بررسی می‌شود؛ بنابراین نقش یک قفل سادهٔ ورود را دارد و مرز امنیتی واقعی مخزن نیست. رمز را جایی منتشر نکن و تغییرات حساس را از مسیر امن خود گیت‌هاب اعمال کن.</p>
+          <p>رمز مالک فقط روی سرور بررسی می‌شود. تغییر رمز بدون یک کد تأیید ایمیل یا پیامک ممکن نیست، همهٔ نشست‌های قبلی بسته می‌شوند و رمز هرگز در مرورگر یا فایل‌های پروژه ذخیره نمی‌شود.</p>
         </article>
       </section>
 

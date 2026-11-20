@@ -12,11 +12,6 @@ const LIVE_TTL = 86400000;
 export const SITE_CONFIG_DEFAULTS = {
   version: 1,
   updatedAt: "",
-  owner: {
-    login: "sepehr007",
-    repo: "sepehr007/sepehr007.github.io",
-    branch: "main"
-  },
   site: {
     nameFa: "هم‌تماشا",
     nameEn: "Watch Together",
@@ -115,6 +110,7 @@ function merge(base, extra) {
 
 export function normalizeSiteConfig(raw) {
   const merged = merge(SITE_CONFIG_DEFAULTS, raw || {});
+  delete merged.owner;
   const num = (v, fallback, min, max) => {
     const n = Number(v);
     if (!Number.isFinite(n)) return fallback;
@@ -133,9 +129,6 @@ export function normalizeSiteConfig(raw) {
   if (!["dark", "light"].includes(merged.site.defaultTheme)) merged.site.defaultTheme = "dark";
   if (!/^#[0-9a-f]{6}$/i.test(merged.site.accent) || /^#d97742$/i.test(merged.site.accent)) merged.site.accent = "#6c5cff";
   if (!/^#[0-9a-f]{6}$/i.test(merged.site.accent2) || /^#7fb6a0$/i.test(merged.site.accent2)) merged.site.accent2 = "#ff4fd2";
-  if (!/^[\w.-]+\/[\w.-]+$/.test(merged.owner.repo)) merged.owner.repo = SITE_CONFIG_DEFAULTS.owner.repo;
-  if (!/^[A-Za-z0-9_.-]+$/.test(merged.owner.branch)) merged.owner.branch = "main";
-  if (!/^[A-Za-z0-9-]+$/.test(merged.owner.login)) merged.owner.login = SITE_CONFIG_DEFAULTS.owner.login;
   const httpUrl = (value) => {
     if (!value) return "";
     try {

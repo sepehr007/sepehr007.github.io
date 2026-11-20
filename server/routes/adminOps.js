@@ -15,7 +15,8 @@ import {
   sanitizeActions,
   simulateWorkflow,
   retryRun,
-  sampleEvent
+  sampleEvent,
+  emitEvent
 } from "../automation.js";
 
 const ROLES = ["user", "member", "moderator", "administrator", "owner", "super_owner"];

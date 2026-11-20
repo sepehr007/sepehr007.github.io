@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import bcrypt from "bcryptjs";
 import { WebSocket } from "ws";
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wt-sec-"));
+const here = path.dirname(fileURLToPath(import.meta.url));
+const tmpRoot = path.join(here, "..", ".tmp");
+fs.mkdirSync(tmpRoot, { recursive: true });
+const tmp = fs.mkdtempSync(path.join(tmpRoot, "sec-"));
 process.env.APP_ENV = "development";
 process.env.DATA_DIR = tmp;
 process.env.SQLITE_FILE = path.join(tmp, "wt.sqlite");
@@ -146,6 +149,13 @@ await step("security headers and no-store on api", async () => {
   assert.match(res.headers.get("cache-control") || "", /no-store/);
 });
 
+await step("error responses carry a request id", async () => {
+  const res = await api("GET", "/api/does-not-exist");
+  assert.equal(res.status, 404);
+  assert.equal(res.json.error, "not_found");
+  assert.ok(String(res.json.requestId || "").length > 0);
+});
+
 await step("register users", async () => {
   owner = await register("owner1");
   alice = await register("alice1");
@@ -159,6 +169,15 @@ await step("promote owner role in database and admin works", async () => {
   invalidateAuthCache(owner.user.id);
   const res = await api("GET", "/api/admin/overview", { token: owner.token });
   assert.equal(res.status, 200, res.text);
+});
+
+await step("large json responses are gzip compressed", async () => {
+  const res = await fetch(`${base}/api/features`, { headers: { "accept-encoding": "gzip" } });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-encoding"), "gzip");
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.ok(body.features && typeof body.features === "object");
 });
 
 await step("owner cannot change own role", async () => {

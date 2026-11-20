@@ -134,6 +134,12 @@ function connect() {
 
 function handleSocket(data) {
   if (!data || typeof data !== "object") return;
+  if (data.type === "error") {
+    if (["invalid_token", "session_revoked", "user_missing"].includes(data.code)) {
+      globalThis.dispatchEvent?.(new CustomEvent("wt:api-unauthorized"));
+    }
+    return;
+  }
   if (data.type === "room-event") {
     if (data.event === "manager") {
       refresh();

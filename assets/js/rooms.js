@@ -247,14 +247,14 @@ function roomCard(room, { compact = false, reason = "" } = {}) {
 
   if (room.coverUrl) {
     card.append(el("div", { class: "room-card-cover" }, [
-      el("img", { src: room.coverUrl, alt: "", loading: "lazy" })
+      el("img", { src: room.coverUrl, alt: "", loading: "lazy", decoding: "async" })
     ]));
   }
 
   const head = el("div", { class: "room-card-head" });
   const mark = el("span", { class: "room-card-mark" });
   if (room.iconUrl) {
-    mark.append(el("img", { src: room.iconUrl, alt: "", loading: "lazy" }));
+    mark.append(el("img", { src: room.iconUrl, alt: "", loading: "lazy", decoding: "async" }));
   } else {
     mark.textContent = "▷";
   }

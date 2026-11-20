@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import compress from "@fastify/compress";
 import websocket from "@fastify/websocket";
 import { connectDB, dbReady, dbState, disconnectDB } from "./db.js";
 import { storeState } from "./userStore.js";
@@ -490,7 +491,7 @@ function registerRealtime(app) {
                 username: client.name,
                 content,
                 type: "text"
-              }).catch(() => {});
+              }).catch((err) => app.log.warn({ err }, "chat message persist failed"));
             } else {
               sqlAddMessage({
                 roomId: client.roomId,
@@ -499,7 +500,7 @@ function registerRealtime(app) {
                 content,
                 type: "text",
                 meta: cid ? { cid } : {}
-              }).catch(() => {});
+              }).catch((err) => app.log.warn({ err }, "chat message persist failed"));
             }
           }
           return undefined;
@@ -540,7 +541,7 @@ function registerRealtime(app) {
                     }
                   },
                   { upsert: true }
-                ).catch(() => {});
+                ).catch((err) => app.log.warn({ err }, "playback state persist failed"));
               } else {
                 sqlSavePlaybackState({
                   roomId: client.roomId,
@@ -548,7 +549,7 @@ function registerRealtime(app) {
                   paused: payload.paused,
                   rate: payload.rate,
                   userId: client.userId || null
-                }).catch(() => {});
+                }).catch((err) => app.log.warn({ err }, "playback state persist failed"));
               }
             }
           }
@@ -641,7 +642,7 @@ export async function buildServer() {
   const app = Fastify({
     logger: { level: appConfig.logLevel },
     trustProxy: appConfig.trustProxy,
-    ignoreTrailingSlash: true,
+    routerOptions: { ignoreTrailingSlash: true },
     bodyLimit: 1024 * 1024
   });
 
@@ -666,6 +667,13 @@ export async function buildServer() {
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-File-Name", "X-File-Type", "X-File-Kind"],
     maxAge: 86400
+  });
+
+  await app.register(compress, {
+    global: true,
+    threshold: 1024,
+    encodings: ["gzip", "deflate"],
+    customTypes: /^application\/json/
   });
 
   await app.register(websocket, {
@@ -805,7 +813,7 @@ export async function buildServer() {
   registerRealtime(app);
 
   app.setNotFoundHandler((req, reply) =>
-    reply.code(404).send({ error: "not_found", message: `Route ${req.method} ${req.url} not found.` })
+    reply.code(404).send({ error: "not_found", message: `Route ${req.method} ${req.url} not found.`, requestId: req.id })
   );
 
   app.setErrorHandler((err, req, reply) => {
@@ -813,7 +821,8 @@ export async function buildServer() {
     const status = Number(err?.statusCode) >= 400 && Number(err?.statusCode) < 600 ? Number(err.statusCode) : 500;
     return reply.code(status).send({
       error: status >= 500 ? "internal_error" : err.code || "request_failed",
-      message: status >= 500 ? "Unexpected server error." : err.message
+      message: status >= 500 ? "Unexpected server error." : err.message,
+      requestId: req.id
     });
   });
 

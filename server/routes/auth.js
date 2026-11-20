@@ -17,8 +17,8 @@ import {
   purgeEmailTokens,
   softDeleteUser
 } from "../userStore.js";
-import { sendVerificationMail, sendResetMail, sendTestMail, mailMode, mailState, applyMailSettings } from "../mailer.js";
-import { sendResetSms, sendTestSms, smsMode, smsState } from "../sms.js";
+import { sendVerificationMail, sendResetMail, sendTestMail, sendSystemMail, mailMode, mailState, applyMailSettings } from "../mailer.js";
+import { sendResetSms, sendTestSms, sendSms, smsMode, smsState } from "../sms.js";
 import { loadConnections, saveConnections, safeConnections } from "../settings.js";
 import {
   saveDbSession,
@@ -66,6 +66,8 @@ const PHONE_RE = /^09\d{9}$/;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const VERIFY_TTL_MINUTES = 30;
 const RESET_TTL_MINUTES = 15;
+const OWNER_CODE_TTL_MINUTES = 10;
+const OWNER_PASSWORD_MIN = 12;
 const MAX_CODE_ATTEMPTS = 5;
 const CODE_HASH_ROUNDS = 8;
 
@@ -80,6 +82,8 @@ const forgotLimit = createRateLimiter({ max: 6, windowMs: 60_000, prefix: "wt:rl
 const resetLimit = createRateLimiter({ max: 12, windowMs: 60_000, prefix: "wt:rl:reset:" });
 const connectionsLimit = createRateLimiter({ max: 20, windowMs: 60_000, prefix: "wt:rl:connections:" });
 const connectionsTestLimit = createRateLimiter({ max: 6, windowMs: 60_000, prefix: "wt:rl:constest:" });
+const ownerCodeLimit = createRateLimiter({ max: 8, windowMs: 60_000, prefix: "wt:rl:ownercode:" });
+const ownerConfirmLimit = createRateLimiter({ max: 12, windowMs: 60_000, prefix: "wt:rl:ownerconfirm:" });
 
 const mailCooldowns = new Map();
 
@@ -202,6 +206,63 @@ function getSecret() {
   }
   return "dev-only-secret-change-me";
 }
+
+const OWNER_CODE_KINDS = Object.freeze({ email: "owner-email", sms: "owner-sms" });
+
+async function issueOwnerCode(user, channel) {
+  const kind = OWNER_CODE_KINDS[channel];
+  const code = newNumericCode();
+  await deleteEmailTokens(user.id, kind);
+  const record = await createEmailToken({
+    userId: user.id,
+    kind,
+    codeHash: await bcrypt.hash(code, CODE_HASH_ROUNDS),
+    linkHash: "",
+    expiresAt: Date.now() + OWNER_CODE_TTL_MINUTES * 60_000
+  });
+  purgeEmailTokens().catch(() => {});
+  const text =
+    `کد امنیتی تغییر رمز مالک هم‌تماشا: ${code}\n` +
+    `این کد تا ${OWNER_CODE_TTL_MINUTES} دقیقه معتبر است و فقط برای تغییر رمز مالک استفاده می‌شود.\n` +
+    "اگر این درخواست را خودت ندادی، همین حالا رمز را عوض کن و دسترسی‌ها را بررسی کن.";
+  const delivery =
+    channel === "email"
+      ? await sendSystemMail({ to: user.email, subject: "کد امنیتی تغییر رمز مالک هم‌تماشا", text })
+      : await sendSms({ to: user.phone, text: `هم‌تماشا: ${text}` });
+  return { code, delivery, record, minutes: OWNER_CODE_TTL_MINUTES, channel };
+}
+
+function ownerDeliveryPayload(user, issued) {
+  const delivery = issued.delivery || { ok: false, mode: "", error: "unknown" };
+  const payload = {
+    channel: issued.channel,
+    sent: Boolean(delivery.ok),
+    mode: delivery.mode || "",
+    email: issued.channel === "email" ? maskEmail(user.email) : "",
+    phone: issued.channel === "sms" ? maskPhone(user.phone) : "",
+    minutes: issued.minutes
+  };
+  if (!delivery.ok) payload.error = delivery.error || "send_failed";
+  if (delivery.ok && delivery.mode === "outbox" && devSecretsAllowed()) payload.previewCode = issued.code;
+  return payload;
+}
+
+function ownerContactState(user) {
+  const email = String(user?.email || "").trim();
+  const phone = String(user?.phone || "").trim();
+  return {
+    email,
+    phone,
+    emailReady: Boolean(email && user.emailVerified),
+    phoneReady: Boolean(phone)
+  };
+}
+
+function isOwnerAccount(user) {
+  return Boolean(user && (user.role === "owner" || user.role === "super_owner"));
+}
+
+const OWNER_CONSOLE_ONLY = "The owner password can only be changed from the owner console (owner.html).";
 
 export function readAuth(req) {
   const header = req.headers.authorization || "";
@@ -841,6 +902,9 @@ export default async function authRoutes(app) {
     }
     const user = await findUserById(req.auth.userId);
     if (!user) return fail(reply, 401, "user_missing", "Account not found.");
+    if (isOwnerAccount(user)) {
+      return fail(reply, 403, "owner_console_only", OWNER_CONSOLE_ONLY);
+    }
     const valid = await bcrypt.compare(current, user.passwordHash);
     if (!valid) return fail(reply, 403, "wrong_password", "Current password is incorrect.");
 
@@ -885,6 +949,9 @@ export default async function authRoutes(app) {
     if (!user || !valid) {
       return fail(reply, 401, "invalid_recovery", "That username and recovery code do not match.");
     }
+    if (isOwnerAccount(user)) {
+      return fail(reply, 403, "owner_console_only", OWNER_CONSOLE_ONLY);
+    }
 
     const recoveryCode = newRecoveryCode();
     const updated = await updateUser(user.id, {
@@ -923,6 +990,9 @@ export default async function authRoutes(app) {
     const password = String(body.password ?? "");
     const user = await findUserById(req.auth.userId);
     if (!user) return fail(reply, 401, "user_missing", "Account not found.");
+    if (isOwnerAccount(user)) {
+      return fail(reply, 403, "owner_console_only", OWNER_CONSOLE_ONLY);
+    }
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) return fail(reply, 403, "wrong_password", "Current password is incorrect.");
     const recoveryCode = newRecoveryCode();
@@ -1069,7 +1139,7 @@ export default async function authRoutes(app) {
       const rows = await findUsersByPhone(phone);
       const user = rows.length === 1 ? rows[0] : null;
       const masked = { phone: maskPhone(phone), minutes: RESET_TTL_MINUTES, channel: "sms" };
-      if (!user || !user.phone) return { ok: true, sent: true, ...masked };
+      if (!user || !user.phone || isOwnerAccount(user)) return { ok: true, sent: true, ...masked };
       if (!takeCooldown(`forgot:phone:${phone}`, 60_000)) {
         return { ok: true, sent: true, cooldown: true, ...masked };
       }
@@ -1089,7 +1159,7 @@ export default async function authRoutes(app) {
 
     const rows = await findUsers({ email });
     const user = rows[0] || null;
-    if (!user) {
+    if (!user || isOwnerAccount(user)) {
       // Same answer for unknown emails so accounts cannot be probed.
       return { ok: true, sent: true, channel: "email", email: maskEmail(email), minutes: RESET_TTL_MINUTES };
     }
@@ -1142,6 +1212,9 @@ export default async function authRoutes(app) {
       record = user ? await findActiveEmailToken(user.id, "reset") : null;
       if (!user || !record) return fail(reply, 400, "code_expired", "The code expired. Request a new one.");
       checkCode = true;
+    }
+    if (isOwnerAccount(user)) {
+      return fail(reply, 403, "owner_console_only", OWNER_CONSOLE_ONLY);
     }
     if (checkCode) {
       const valid = await bcrypt.compare(code, record.codeHash || "");
@@ -1198,6 +1271,139 @@ export default async function authRoutes(app) {
     await cacheDel(`user:${req.auth.userId}`);
     await audit("auth.logout", req, { targetType: "session", targetId: req.auth.jti });
     return { ok: true };
+  });
+
+  /* ---------- owner: identity + two-channel password change ---------- */
+  app.get("/owner/identity", { preHandler: [requireAuth] }, async (req, reply) => {
+    if (!["owner", "super_owner"].includes(req.auth.role)) {
+      return fail(reply, 403, "forbidden", "Only the site owner can open the owner console.");
+    }
+    const user = await findUserById(req.auth.userId);
+    if (!user) return fail(reply, 401, "user_missing", "Account not found.");
+    const contact = ownerContactState(user);
+    return {
+      ok: true,
+      role: user.role,
+      canAccess: contact.emailReady || contact.phoneReady,
+      identity: {
+        email: maskEmail(contact.email),
+        phone: maskPhone(contact.phone),
+        emailSet: Boolean(contact.email),
+        phoneSet: Boolean(contact.phone),
+        emailVerified: Boolean(user.emailVerified),
+        emailReady: contact.emailReady,
+        phoneReady: contact.phoneReady
+      },
+      delivery: { mail: mailMode(), sms: smsMode() },
+      minPassword: OWNER_PASSWORD_MIN
+    };
+  });
+
+  app.post("/owner/password/code", { preHandler: [requireAuth, ownerCodeLimit] }, async (req, reply) => {
+    if (!["owner", "super_owner"].includes(req.auth.role)) {
+      return fail(reply, 403, "forbidden", "Only the site owner can change the owner password.");
+    }
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const channel = String(body.channel || "").trim();
+    if (!OWNER_CODE_KINDS[channel]) {
+      return fail(reply, 400, "invalid_channel", "Channel must be email or sms.");
+    }
+    const user = await findUserById(req.auth.userId);
+    if (!user) return fail(reply, 401, "user_missing", "Account not found.");
+    const contact = ownerContactState(user);
+    if ((channel === "email" && !contact.emailReady) || (channel === "sms" && !contact.phoneReady)) {
+      return fail(reply, 409, "owner_contact_missing", "Set a verified owner email or the owner phone on the server first.");
+    }
+    if (!takeCooldown(`owner-code:${user.id}:${channel}`, 45_000)) {
+      return fail(reply, 429, "code_cooldown", "Wait a few seconds before requesting another code.");
+    }
+    let issued;
+    try {
+      issued = await issueOwnerCode(user, channel);
+    } catch (err) {
+      req.log.error({ err }, "owner password code failed");
+      return fail(reply, 502, `${channel}_failed`, "The verification code could not be sent right now.");
+    }
+    const delivery = ownerDeliveryPayload(user, issued);
+    await audit("auth.owner_password_code", req, {
+      targetType: "user",
+      targetId: user.id,
+      meta: { channel, sent: delivery.sent, mode: delivery.mode }
+    });
+    if (!delivery.sent) {
+      return fail(reply, 502, `${channel}_failed`, "The verification code could not be sent right now.");
+    }
+    return { ok: true, delivery };
+  });
+
+  app.post("/owner/password/confirm", { preHandler: [requireAuth, ownerConfirmLimit] }, async (req, reply) => {
+    if (!["owner", "super_owner"].includes(req.auth.role)) {
+      return fail(reply, 403, "forbidden", "Only the site owner can change the owner password.");
+    }
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const channel = String(body.channel || "").trim();
+    const next = String(body.password ?? body.next ?? "");
+    const code = String(body.code ?? "").replace(/\D/g, "");
+    if (!OWNER_CODE_KINDS[channel]) {
+      return fail(reply, 400, "invalid_channel", "Channel must be email or sms.");
+    }
+    if (next.length < OWNER_PASSWORD_MIN || next.length > 128) {
+      return fail(reply, 400, "invalid_password", `The new password must be between ${OWNER_PASSWORD_MIN} and 128 characters.`);
+    }
+    if (!/^\d{8}$/.test(code)) {
+      return fail(reply, 400, "invalid_code", "An 8-digit verification code is required.");
+    }
+    const user = await findUserById(req.auth.userId);
+    if (!user) return fail(reply, 401, "user_missing", "Account not found.");
+    const contact = ownerContactState(user);
+    if ((channel === "email" && !contact.emailReady) || (channel === "sms" && !contact.phoneReady)) {
+      return fail(reply, 409, "owner_contact_missing", "Set a verified owner email or the owner phone on the server first.");
+    }
+    if (await bcrypt.compare(next, user.passwordHash)) {
+      return fail(reply, 400, "password_unchanged", "Choose a password different from the current one.");
+    }
+
+    const record = await findActiveEmailToken(user.id, OWNER_CODE_KINDS[channel]);
+    if (!record) {
+      return fail(reply, 400, "code_expired", "The code expired. Request a fresh code.");
+    }
+    const codeOk = await bcrypt.compare(code, record.codeHash || "");
+    if (!codeOk) {
+      const attempts = await bumpEmailTokenAttempts(record.id);
+      if (attempts >= MAX_CODE_ATTEMPTS) {
+        await consumeEmailToken(record.id);
+        return fail(reply, 429, "too_many_attempts", "Too many wrong codes. Request a fresh code.");
+      }
+      return fail(reply, 400, "invalid_code", "The code is not correct.");
+    }
+
+    const updated = await updateUser(user.id, {
+      passwordHash: await bcrypt.hash(next, BCRYPT_ROUNDS)
+    });
+    await consumeEmailToken(record.id);
+    await revokeAllSessions(user.id);
+    await cacheDel(`user:${user.id}`);
+    const issued = await issueToken(updated, req);
+    await audit("auth.owner_password_change", req, {
+      targetType: "user",
+      targetId: user.id,
+      meta: { verified: [channel] }
+    });
+    await deliverNotice(req.server, user.id, {
+      kind: "security",
+      title: "رمز مالک تغییر کرد",
+      body: `رمز مالک با تأیید ${channel === "email" ? "ایمیل" : "پیامک"} عوض شد و همهٔ نشست‌های قبلی بسته شدند.`,
+      link: "owner.html",
+      dedupeKey: `security:owner-password:${user.id}`,
+      dedupeWindowMs: 60_000
+    });
+    return {
+      ok: true,
+      token: issued.token,
+      tokenType: "Bearer",
+      expiresIn: issued.expiresIn,
+      user: publicUser(updated)
+    };
   });
 
   /* ---------- owner: email + SMS connections ---------- */

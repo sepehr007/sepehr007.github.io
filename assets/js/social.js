@@ -158,7 +158,7 @@ function avatarEl(user, cls = "person-avatar") {
   const box = el("span", { class: cls });
   const raw = String(user?.avatar || "");
   const src = /^https?:/i.test(raw) ? raw : avatarSrc(raw);
-  if (src) box.append(el("img", { src, alt: "", loading: "lazy" }));
+  if (src) box.append(el("img", { src, alt: "", loading: "lazy", decoding: "async" }));
   else box.textContent = initials(user?.nick || user?.username || "?");
   return box;
 }
@@ -1384,7 +1384,7 @@ function attachNode(attachment) {
     dir: "ltr"
   });
   if (isImage) {
-    node.append(el("img", { src: url, alt: attachment.name || "attachment", loading: "lazy" }));
+    node.append(el("img", { src: url, alt: attachment.name || "attachment", loading: "lazy", decoding: "async" }));
   }
   node.append(el("span", { text: attachment.name || "attachment" }));
   return node;

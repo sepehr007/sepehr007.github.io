@@ -1274,7 +1274,7 @@ function roomByCode(db, code) {
 function canAccessRoom(db, userId, role, room) {
   if (isStaff(role)) return true;
   if (String(room.host_id) === String(userId)) return true;
-  if (room.privacy === "public" && room.is_active) return true;
+  if (room.privacy === "public" && room.visibility !== "private" && room.is_active) return true;
   return Boolean(
     db
       .prepare("SELECT 1 AS hit FROM room_memberships WHERE room_id = ? AND user_id = ? AND left_at IS NULL")

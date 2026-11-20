@@ -1099,5 +1099,15 @@ export const MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_automation_runs_started ON automation_runs(started_at DESC);
       `);
     }
+  },
+  {
+    version: 16,
+    name: "performance-indexes",
+    up(db) {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_users_active_created ON users(created_at DESC) WHERE deleted_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_rooms_last_activity ON rooms(last_activity_at DESC);
+      `);
+    }
   }
 ];

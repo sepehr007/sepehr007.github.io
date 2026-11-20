@@ -1,11 +1,6 @@
 {
   "version": 1,
   "updatedAt": "2026-11-18T00:00:00.000Z",
-  "owner": {
-    "login": "sepehr007",
-    "repo": "sepehr007/sepehr007.github.io",
-    "branch": "main"
-  },
   "site": {
     "nameFa": "هم‌تماشا",
     "nameEn": "Watch Together",

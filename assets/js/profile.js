@@ -472,6 +472,19 @@ function renderMeter(pw) {
 }
 
 function wirePassword() {
+  const me = currentUser();
+  if (me && ["owner", "super_owner"].includes(me.role)) {
+    const card = $("#pwForm")?.closest(".profile-card");
+    if (card) {
+      card.replaceChildren();
+      const title = el("h2");
+      title.textContent = t("profile.security");
+      const hint = el("p", { class: "hint" });
+      hint.textContent = "رمز مالک فقط از کنسول مالک (owner.html) و با تأیید ایمیل یا پیامک تغییر می‌کند.";
+      card.append(title, hint);
+    }
+    return;
+  }
   $("#pNew").addEventListener("input", (e) => renderMeter(e.target.value));
   $("#pwForm").addEventListener("submit", async (e) => {
     e.preventDefault();

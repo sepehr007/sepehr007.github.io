@@ -1,7 +1,7 @@
 import { $, $$, toast, store, applyUIPrefs, safeReload, onceAsync } from "./core.js";
 import {
-  SITE_CONFIG_DEFAULTS, normalizeSiteConfig, loadSiteConfig, getSiteConfig,
-  verifyOwnerSession, setOwnerSession, savePreviewDraft, broadcastLiveConfig
+  SITE_CONFIG_DEFAULTS, normalizeSiteConfig, loadSiteConfig,
+  setOwnerSession, savePreviewDraft, broadcastLiveConfig
 } from "./site-config.js";
 import { normalizeRule, normalizeFeatureRules } from "./feature-flags.js";
 import { readModLog, logModeration, clearModLog } from "./modlog.js";
@@ -12,23 +12,17 @@ import { installGodPages } from "./owner-god.js";
 import { pageDef } from "./owner-registry.js";
 
 const DRAFT_KEY = "wt.ownerDraft";
-const CRED_KEY = "wt.ownerCred";
-const TOKEN_KEY = "wt.ownerToken";
 const OWNER_JWT_KEY = "wt.ownerJwt";
+const OWNER_ID_KEY = "wt.ownerId";
 const LOCK_KEY = "wt.ownerLock";
 const BANS_KEY = "wt.localBans";
 const USERS_KEY = "wt.users";
-const CONFIG_PATH = "assets/data/site-config.json";
-const PBKDF2_ITER = 210000;
-const OWNER_SALT = "5e7a19c3b2d84f6011a9c7e3d5b8f204";
-const OWNER_PASS_HASH = "12a4e7961abe05cf869f7a433b92a96aa1d087e3eee8d2ff9a7b7510b6f1906f";
 
 applyUIPrefs();
 document.documentElement.dataset.theme = "dark";
 
 let published = null;
 let draft = null;
-let verifiedToken = "";
 let saveTimer = 0;
 let lockDeadline = 0;
 const committed = new Map();
@@ -49,13 +43,12 @@ const VIEW_META = {
   moderation: ["مدیریت محلی", "حساب‌های همین مرورگر و گزارش رخدادها."],
   rooms: ["اتاق‌ها", "پایهٔ مدیریت اتاق‌ها؛ نسخهٔ فعلی اتاق سروری ندارد."],
   system: ["سیستم", "وضعیت API، شبکه و محیط اجرا."],
-  security: ["امنیت مالک", "ورود، نشست و قفل کنسول."],
+  security: ["امنیت مالک", "ورود سروری و تغییر رمز با یک کد ایمیل یا پیامک."],
   analytics: ["آمار", "پایهٔ شاخص‌های مصرف؛ دادهٔ سراسری در فاز بعد."],
-  publish: ["انتشار تغییرات", "بازبینی، پیش‌نمایش و کامیت روی GitHub."]
+  publish: ["پشتیبان تنظیمات", "بازبینی تغییرات، پیش‌نمایش و دریافت فایل JSON."]
 };
 
 function clone(v) { return JSON.parse(JSON.stringify(v)); }
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 function getPath(obj, path) {
   return path.split(".").reduce((acc, key) => (acc == null ? undefined : acc[key]), obj);
@@ -68,47 +61,6 @@ function setPath(obj, path, value) {
     cur = cur[keys[i]];
   }
   cur[keys[keys.length - 1]] = value;
-}
-
-function hex(buf) {
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-function unhex(s) {
-  const out = new Uint8Array(s.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
-  return out;
-}
-function randHex(n = 16) {
-  return hex(crypto.getRandomValues(new Uint8Array(n)));
-}
-async function pbkdf2(pass, saltHex) {
-  if (!crypto.subtle) throw new Error("secure");
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: unhex(saltHex), iterations: PBKDF2_ITER, hash: "SHA-256" },
-    key,
-    256
-  );
-  return hex(bits);
-}
-function sameHex(a = "", b = "") {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-async function checkOwnerPass(pass) {
-  const hash = await pbkdf2(String(pass || ""), OWNER_SALT);
-  return sameHex(hash, OWNER_PASS_HASH);
-}
-function readCred() {
-  const c = store.get(CRED_KEY, null);
-  return c && c.salt && c.hash ? c : null;
-}
-async function writeCred(pass, login) {
-  const salt = randHex(16);
-  const hash = await pbkdf2(pass, salt);
-  store.set(CRED_KEY, { v: 1, salt, hash, login, createdAt: Date.now(), updatedAt: Date.now() });
 }
 
 /* ---------- local owner lockout ---------- */
@@ -126,67 +78,6 @@ function noteOwnerFailure() {
 function clearOwnerFailures() {
   store.del(LOCK_KEY);
   lockDeadline = 0;
-}
-
-/* ---------- github api ---------- */
-function repoSlug() {
-  return published?.owner?.repo || SITE_CONFIG_DEFAULTS.owner.repo;
-}
-function branchName() {
-  return published?.owner?.branch || SITE_CONFIG_DEFAULTS.owner.branch || "main";
-}
-function ownerLogin() {
-  return (published?.owner?.login || SITE_CONFIG_DEFAULTS.owner.login).toLowerCase();
-}
-async function gh(path, token, options = {}) {
-  const res = await fetch(`https://api.github.com${path}`, {
-    ...options,
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...(options.headers || {})
-    }
-  });
-  let data = null;
-  try { data = await res.json(); } catch {}
-  if (!res.ok) {
-    const err = new Error(data?.message || `GitHub ${res.status}`);
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
-  return data;
-}
-
-async function verifyOwnerToken(token) {
-  const tok = String(token || "").trim();
-  if (!tok) throw new Error("توکن خالی است.");
-  const user = await gh("/user", tok);
-  if (String(user?.login || "").toLowerCase() !== ownerLogin()) {
-    throw new Error(`این توکن به حساب «${user?.login || "?"}» است، نه «${published?.owner?.login || SITE_CONFIG_DEFAULTS.owner.login}».`);
-  }
-  const repo = await gh(`/repos/${repoSlug()}`, tok);
-  const canPush = repo?.permissions?.push === true || repo?.permissions?.admin === true || repo?.permissions?.maintain === true;
-  let canReadContents = false;
-  try {
-    await gh(`/repos/${repoSlug()}/contents/${CONFIG_PATH}?ref=${encodeURIComponent(branchName())}`, tok);
-    canReadContents = true;
-  } catch (err) {
-    if (err.status !== 404) throw err;
-    canReadContents = true;
-  }
-  if (!canPush) throw new Error("این توکن دسترسی نوشتن (Contents: Read and write) به مخزن ندارد.");
-  if (!canReadContents) throw new Error("خواندن فایل تنظیمات از مخزن ممکن نشد.");
-  return tok;
-}
-
-function b64utf8(text) {
-  const bytes = new TextEncoder().encode(text);
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin);
 }
 
 /* ---------- draft ---------- */
@@ -462,36 +353,33 @@ function showView(name) {
   if (!$("#ownerApp")?.classList.contains("hidden")) setUi({ view: info.page });
   if (info.view === "moderation") { renderUsers(); renderLog(); }
   if (info.view === "publish") refreshDiff();
-  if (info.view === "security") refreshTokenState();
+  if (info.view === "security") refreshOwnerIdentity();
   if (info.view === "system") refreshSystemView();
 }
-function goto(name) {
-  showView(name);
-  $("#ownerSide")?.classList.remove("open");
-}
-
 /* ---------- gate ---------- */
 function configureGate() {
-  const login = ownerLogin();
-  const repo = repoSlug();
-  $("#ghLogin").value = login;
-  $("#ghRepo").textContent = repo;
-  $("#repoLink").href = `https://github.com/${repo}`;
-  $("#actionsLink").href = `https://github.com/${repo}/actions`;
-  const pubBranch = $("#pubBranch");
-  if (pubBranch) pubBranch.textContent = branchName();
-  const gateGithub = $("#gateTabGithub");
-  if (gateGithub) { gateGithub.hidden = true; gateGithub.disabled = true; }
-  $("#githubForm")?.classList.add("hidden");
-  $("#loginHint").textContent = "رمز مالک را وارد کن؛ اتصال گیت‌هاب لازم نیست.";
+  let base = "";
+  try { base = getApiBase(); } catch {}
+  const savedId = String(store.get(OWNER_ID_KEY, "") || "");
+  if (savedId) $("#ownerId").value = savedId;
+  $("#loginHint").textContent = base
+    ? "فقط حساب مالک سرور با ایمیل تأییدشده یا شمارهٔ پیامک ثبت‌شده اجازهٔ ورود دارد."
+    : "کنسول امن فقط با بک‌اند فعال کار می‌کند؛ apiBase را در runtime-config تنظیم کن.";
   $("#ownerPass").disabled = false;
 }
-function setGateTab(which) {
-  const login = which !== "github";
-  $("#gateTabLogin").classList.toggle("active", login);
-  $("#gateTabGithub").classList.toggle("active", !login);
-  $("#loginForm").classList.toggle("hidden", !login);
-  $("#githubForm").classList.toggle("hidden", login);
+function getOwnerJwt() {
+  try { return sessionStorage.getItem(OWNER_JWT_KEY) || ""; } catch { return ""; }
+}
+function setOwnerJwt(token) {
+  try {
+    if (token) sessionStorage.setItem(OWNER_JWT_KEY, token);
+    else sessionStorage.removeItem(OWNER_JWT_KEY);
+  } catch {}
+}
+async function ownerApi(path, options = {}) {
+  const token = getOwnerJwt();
+  if (!token) throw Object.assign(new Error("owner session missing"), { code: "no_session", status: 401 });
+  return apiFetch(path, { ...options, token, auth: false });
 }
 async function unlock() {
   await setOwnerSession(true);
@@ -502,20 +390,49 @@ async function unlock() {
   logModeration("ownerLogin", "ورود موفق به کنسول");
   logAudit({ kind: "security", action: "ورود مالک به کنسول" });
 }
-async function storeOwnerToken(pass) {
+async function storeOwnerToken(identifier, pass) {
+  const res = await apiFetch("/auth/login", {
+    method: "POST",
+    auth: false,
+    timeoutMs: 12000,
+    body: { identifier, password: pass }
+  });
+  if (!res?.token || !["owner", "super_owner"].includes(res.user?.role)) {
+    throw Object.assign(new Error("not_owner"), { code: "not_owner", status: 403 });
+  }
+  setOwnerJwt(res.token);
+  let identity = null;
   try {
-    const res = await apiFetch("/auth/login", {
-      method: "POST",
-      auth: false,
-      timeoutMs: 10000,
-      body: { identifier: "owner@qoder.local", password: pass }
+    identity = await apiFetch("/auth/owner/identity", { token: res.token, auth: false, timeoutMs: 10000 });
+  } catch (err) {
+    setOwnerJwt("");
+    throw err;
+  }
+  if (!identity?.canAccess) {
+    setOwnerJwt("");
+    throw Object.assign(new Error("owner_contact_missing"), {
+      code: "owner_contact_missing",
+      status: 409,
+      identity: identity?.identity || null
     });
-    if (res?.token && (res.user?.role === "super_owner" || res.user?.role === "owner")) {
-      try { sessionStorage.setItem(OWNER_JWT_KEY, res.token); } catch {}
-      return true;
-    }
-  } catch {}
-  return false;
+  }
+  return identity;
+}
+function loginErrorMessage(err) {
+  const code = err?.code || "";
+  if (code === "not_configured" || err?.status === 0 && /configured/i.test(err?.message || "")) {
+    return "بک‌اند تنظیم نشده است. apiBase را در assets/data/runtime-config.json بگذار.";
+  }
+  if (code === "owner_contact_missing") {
+    return "ایمیل تأییدشده یا شمارهٔ پیامک مالک روی سرور تنظیم نشده است. با npm run owner:setup -- --yes اعمالش کن.";
+  }
+  if (code === "not_owner") return "این حساب نقش مالک ندارد.";
+  if (code === "too_many_attempts") return "تلاش‌های زیاد؛ کمی بعد دوباره امتحان کن.";
+  if (err?.status === 401 || code === "invalid_credentials") return "ایمیل/نام کاربری یا رمز اشتباه است.";
+  if (err?.status === 403) return "ورود مالک برای این حساب مجاز نیست.";
+  if (code === "database_unavailable") return "پایگاه دادهٔ سرور آماده نیست؛ کمی بعد دوباره تلاش کن.";
+  if (code === "network_error" || code === "timeout") return "اتصال به سرور برقرار نشد.";
+  return err?.message || "ورود انجام نشد.";
 }
 async function doPasswordLogin(e) {
   e.preventDefault();
@@ -526,122 +443,170 @@ async function doPasswordLogin(e) {
     err.textContent = `تلاش‌های زیاد. ${Math.ceil((lock.until - Date.now()) / 1000)} ثانیه صبر کن.`;
     return;
   }
+  const identifier = $("#ownerId").value.trim().toLowerCase();
   const pass = $("#ownerPass").value;
+  if (!identifier) { err.textContent = "ایمیل یا نام کاربری مالک را وارد کن."; return; }
   if (!pass) { err.textContent = "رمز را وارد کن."; return; }
   const btn = $("#loginBtn");
   btn.disabled = true;
   btn.textContent = "در حال بررسی…";
   try {
-    const ok = await checkOwnerPass(pass);
-    if (!ok) {
+    const identity = await storeOwnerToken(identifier, pass);
+    clearOwnerFailures();
+    store.set(OWNER_ID_KEY, identifier);
+    $("#ownerPass").value = "";
+    await unlock();
+    renderOwnerIdentity(identity);
+  } catch (ex) {
+    if (ex?.status === 401 || ex?.code === "invalid_credentials") {
       noteOwnerFailure();
       const l = readLock();
-      err.textContent = l ? "پنج تلاش ناموفق؛ پنج دقیقه قفل شد." : "رمز اشتباه است.";
+      err.textContent = l ? "پنج تلاش ناموفق؛ پنج دقیقه قفل شد." : "ایمیل/نام کاربری یا رمز اشتباه است.";
       if (l) logModeration("loginLock", "قفل پنج دقیقه‌ای کنسول");
-      else logModeration("loginFail", "رمز مالک اشتباه");
-      return;
+      else logModeration("loginFail", "ورود مالک ناموفق");
+    } else {
+      err.textContent = loginErrorMessage(ex);
     }
-    clearOwnerFailures();
-    $("#ownerPass").value = "";
-    await storeOwnerToken(pass);
-    await unlock();
-  } catch {
-    err.textContent = "رمزنگاری مرورگر در دسترس نیست؛ سایت را روی HTTPS باز کن.";
   } finally {
     btn.disabled = false;
     btn.textContent = "باز کردن کنسول";
   }
 }
-async function doGithubActivate(e) {
-  e.preventDefault();
-  const err = $("#githubErr");
-  err.textContent = "اتصال گیت‌هاب غیرفعال شده است؛ فقط از رمز مالک استفاده کن.";
-  return;
-  const token = $("#ghToken").value.trim();
-  const pass = $("#newOwnerPass").value;
-  const pass2 = $("#newOwnerPass2").value;
-  if (pass.length < 10) { err.textContent = "رمز محلی باید حداقل ۱۰ کاراکتر باشد."; return; }
-  if (pass !== pass2) { err.textContent = "تکرار رمز یکسان نیست."; return; }
-  if (!token) { err.textContent = "توکن گیت‌هاب را وارد کن."; return; }
-  const btn = $("#githubBtn");
-  btn.disabled = true;
-  btn.textContent = "در حال بررسی با گیت‌هاب…";
-  try {
-    const tok = await verifyOwnerToken(token);
-    await writeCred(pass, ownerLogin());
-    verifiedToken = tok;
-    try { sessionStorage.setItem(TOKEN_KEY, tok); } catch {}
-    clearOwnerFailures();
-    $("#ghToken").value = "";
-    $("#newOwnerPass").value = "";
-    $("#newOwnerPass2").value = "";
-    logModeration("ownerLogin", "فعال‌سازی کنسول با توکن گیت‌هاب");
-    await unlock();
-    refreshTokenState();
-    toast("کنسول مالک فعال شد.", "success");
-  } catch (ex) {
-    err.textContent = ex.message || "تأیید گیت‌هاب ناموفق بود.";
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "تأیید با گیت‌هاب و فعال‌سازی";
-  }
-}
 
 /* ---------- security ---------- */
-function refreshTokenState() {
-  const node = $("#tokenState");
-  if (!node) return;
-  node.textContent = "اتصال توکن گیت‌هاب غیرفعال شده است.";
-  node.className = "token-state";
+function renderOwnerIdentity(data) {
+  const id = data?.identity || null;
+  const emailEl = $("#ownerIdEmail");
+  const phoneEl = $("#ownerIdPhone");
+  const stateEl = $("#ownerIdState");
+  if (emailEl) emailEl.textContent = id?.email || "تنظیم نشده";
+  if (phoneEl) phoneEl.textContent = id?.phone || "تنظیم نشده";
+  const emailReady = Boolean(id?.emailReady);
+  const phoneReady = Boolean(id?.phoneReady);
+  const anyReady = emailReady || phoneReady;
+  if (stateEl) {
+    const open = emailReady && phoneReady ? "ایمیل و پیامک" : emailReady ? "ایمیل" : phoneReady ? "پیامک" : "";
+    stateEl.textContent = anyReady ? `فعال؛ تأیید با ${open} ممکن است` : "ناقص؛ ایمیل تأییدشده یا شماره را روی سرور تنظیم کن";
+    stateEl.classList.toggle("on", anyReady);
+    stateEl.classList.toggle("off", !anyReady);
+  }
+  const select = $("#codeChannel");
+  if (select) {
+    for (const option of select.options) {
+      option.disabled = option.value === "email" ? !emailReady : !phoneReady;
+    }
+    if (select.selectedOptions[0]?.disabled) {
+      const first = [...select.options].find((option) => !option.disabled);
+      if (first) select.value = first.value;
+    }
+  }
+  const sendBtn = $("#sendCodeBtn");
+  if (sendBtn) sendBtn.disabled = !anyReady;
+  const min = Number(data?.minPassword || 12);
+  if ($("#nextPass")) $("#nextPass").minLength = min;
+  if ($("#nextPass2")) $("#nextPass2").minLength = min;
+}
+async function refreshOwnerIdentity() {
+  const stateEl = $("#ownerIdState");
+  try {
+    const data = await ownerApi("/auth/owner/identity", { timeoutMs: 10000 });
+    renderOwnerIdentity(data);
+    return data;
+  } catch (ex) {
+    if (stateEl) {
+      stateEl.textContent = ex?.status === 401 ? "نشست منقضی شده؛ دوباره وارد شو" : "دریافت وضعیت ممکن نشد";
+      stateEl.classList.add("off");
+    }
+    return null;
+  }
+}
+async function sendOwnerCode() {
+  const stateEl = $("#codeState");
+  const btn = $("#sendCodeBtn");
+  const channel = $("#codeChannel")?.value === "sms" ? "sms" : "email";
+  if (btn) { btn.disabled = true; btn.textContent = "در حال ارسال…"; }
+  if (stateEl) stateEl.textContent = channel === "email" ? "ارسال کد به ایمیل…" : "ارسال کد به پیامک…";
+  try {
+    const res = await ownerApi("/auth/owner/password/code", {
+      method: "POST",
+      timeoutMs: 15000,
+      body: { channel }
+    });
+    const d = res?.delivery || {};
+    if (stateEl) {
+      const target = channel === "email" ? d.email : d.phone;
+      let text = `کد به ${target || (channel === "email" ? "ایمیل" : "پیامک")} ارسال شد (${d.mode || "ارسال"}).`;
+      if (d.previewCode) text += ` کد آزمایشی این محیط: ${d.previewCode}`;
+      stateEl.textContent = text;
+    }
+    logAudit({ kind: "security", action: "درخواست کد تغییر رمز مالک", target: channel });
+    toast(channel === "email" ? "کد ایمیل ارسال شد." : "کد پیامک ارسال شد.", "success");
+  } catch (ex) {
+    const code = ex?.code || "";
+    const message =
+      code === "owner_contact_missing"
+        ? "برای این روش، ایمیل تأییدشده یا شمارهٔ مالک باید اول روی سرور تنظیم شود."
+        : code === "code_cooldown"
+          ? "کمی صبر کن؛ تا ارسال کد بعدی چند ثانیه مانده."
+          : code === "mail_failed" || code === "sms_failed"
+            ? "ارسال کد ناموفق بود؛ تنظیمات ایمیل/پیامک را در تنظیمات سرور بررسی کن."
+            : ex?.message || "ارسال کد ممکن نشد.";
+    if (stateEl) stateEl.textContent = message;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "ارسال کد";
+    }
+  }
 }
 async function changePass(e) {
   e.preventDefault();
   const err = $("#passErr");
-  if (err) err.textContent = "رمز مالک در این نسخه ثابت است و تغییر نمی‌کند.";
-  return;
-  const cred = readCred();
-  if (!cred) { err.textContent = "رمز محلی وجود ندارد."; return; }
-  const cur = $("#curPass").value;
+  if (err) err.textContent = "";
+  if (!getOwnerJwt()) { if (err) err.textContent = "نشست مالک نیست؛ دوباره وارد شو."; return; }
+  const channel = $("#codeChannel")?.value === "sms" ? "sms" : "email";
+  const code = $("#verifyCode").value.replace(/\D/g, "");
   const next = $("#nextPass").value;
   const next2 = $("#nextPass2").value;
-  if (next.length < 10) { err.textContent = "رمز جدید حداقل ۱۰ کاراکتر باشد."; return; }
-  if (next !== next2) { err.textContent = "تکرار رمز جدید یکسان نیست."; return; }
-  try {
-    const hash = await pbkdf2(cur, cred.salt);
-    if (hash !== cred.hash) { err.textContent = "رمز فعلی اشتباه است."; return; }
-    await writeCred(next, ownerLogin());
-    $("#curPass").value = $("#nextPass").value = $("#nextPass2").value = "";
-    logModeration("passChange", "رمز مالک عوض شد");
-    toast("رمز مالک به‌روز شد.", "success");
-  } catch {
-    err.textContent = "تغییر رمز ممکن نشد.";
+  if (next.length < 12) { if (err) err.textContent = "رمز جدید باید حداقل ۱۲ کاراکتر باشد."; return; }
+  if (next !== next2) { if (err) err.textContent = "تکرار رمز جدید یکسان نیست."; return; }
+  if (!/^\d{8}$/.test(code)) {
+    if (err) err.textContent = "کد ۸ رقمی ایمیل یا پیامک را وارد کن.";
+    return;
   }
-}
-async function verifySessionToken(e) {
-  e.preventDefault();
-  const stateNode = $("#tokenState");
-  if (stateNode) { stateNode.textContent = "اتصال توکن گیت‌هاب غیرفعال شده است."; stateNode.className = "token-state"; }
-  return;
-  const input = $("#sessionToken");
-  const token = input.value.trim();
-  const node = $("#tokenState");
-  if (!token) { node.textContent = "توکن خالی است."; node.className = "token-state bad"; return; }
-  node.textContent = "در حال بررسی توکن…";
-  node.className = "token-state busy";
+  const btn = $("#passForm button[type=submit]");
+  if (btn) { btn.disabled = true; btn.textContent = "در حال ذخیره…"; }
   try {
-    const tok = await verifyOwnerToken(token);
-    verifiedToken = tok;
-    sessionStorage.setItem(TOKEN_KEY, tok);
-    node.textContent = "توکن معتبر است و برای انتشار آماده است.";
-    node.className = "token-state ok";
-    const pubInput = $("#publishToken");
-    if (pubInput) pubInput.value = tok;
-    toast("توکن تأیید شد.", "success");
+    const res = await ownerApi("/auth/owner/password/confirm", {
+      method: "POST",
+      timeoutMs: 20000,
+      body: { channel, code, password: next }
+    });
+    if (res?.token) setOwnerJwt(res.token);
+    $("#verifyCode").value = "";
+    $("#nextPass").value = $("#nextPass2").value = "";
+    if (err) err.textContent = "";
+    logModeration("passChange", "رمز مالک با یک کد تأیید عوض شد");
+    logAudit({ kind: "security", action: "تغییر رمز مالک با کد", target: channel });
+    toast("رمز مالک عوض شد و نشست‌های قبلی بسته شدند.", "success");
+    await refreshOwnerIdentity();
   } catch (ex) {
-    verifiedToken = "";
-    try { sessionStorage.removeItem(TOKEN_KEY); } catch {}
-    node.textContent = ex.message || "توکن معتبر نیست.";
-    node.className = "token-state bad";
+    const codeName = ex?.code || "";
+    const message =
+      codeName === "password_unchanged"
+        ? "رمز جدید نباید با رمز فعلی یکی باشد."
+        : codeName === "code_expired"
+          ? "کد منقضی شده؛ دوباره کد بگیر."
+          : codeName === "invalid_code"
+            ? "کد واردشده اشتباه است."
+            : codeName === "too_many_attempts"
+              ? "تلاش‌های اشتباه زیاد شد؛ کد تازه بگیر."
+              : codeName === "owner_contact_missing"
+                ? "ایمیل تأییدشده یا شمارهٔ مالک روی سرور تنظیم نشده است."
+                : ex?.message || "تغییر رمز ممکن نشد.";
+    if (err) err.textContent = message;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "ذخیرهٔ رمز جدید"; }
   }
 }
 
@@ -684,88 +649,6 @@ function previewSite() {
   logAudit({ kind: "action", action: "بازکردن پیش‌نمایش سایت" });
   toast("پیش‌نمایش در تب تازه باز شد (فقط برای مالک).", "success");
 }
-function setPubState(text, cls = "") {
-  const node = $("#pubState");
-  if (!node) return;
-  node.textContent = text;
-  node.className = `pub-state ${cls}`.trim();
-}
-async function publishConfig(e) {
-  e?.preventDefault();
-  setPubState("انتشار خودکار با توکن گیت‌هاب غیرفعال است. تنظیمات را با دانلود JSON ذخیره کن.", "bad");
-  return;
-  const input = $("#publishToken");
-  const token = (verifiedToken || input.value || "").trim();
-  if (!token) {
-    setPubState("برای انتشار، توکن گیت‌هاب را وارد کن.", "bad");
-    goto("publish");
-    return;
-  }
-  const btn = $("#publishBtn");
-  btn.disabled = true;
-  btn.textContent = "در حال انتشار…";
-  setPubState("در حال تأیید توکن و ارسال به GitHub…", "busy");
-  try {
-    const tok = verifiedToken || await verifyOwnerToken(token);
-    verifiedToken = tok;
-    try { sessionStorage.setItem(TOKEN_KEY, tok); } catch {}
-    const next = normalizeSiteConfig({ ...draft, updatedAt: new Date().toISOString() });
-    let sha = "";
-    try {
-      const meta = await gh(`/repos/${repoSlug()}/contents/${CONFIG_PATH}?ref=${encodeURIComponent(branchName())}`, tok);
-      sha = meta?.sha || "";
-    } catch (ex) {
-      if (ex.status !== 404) throw ex;
-    }
-    const body = {
-      message: `Publish site config ${new Date().toISOString()}`,
-      content: b64utf8(JSON.stringify(next, null, 2) + "\n"),
-      branch: branchName()
-    };
-    if (sha) body.sha = sha;
-    const res = await gh(`/repos/${repoSlug()}/contents/${CONFIG_PATH}`, tok, {
-      method: "PUT",
-      body: JSON.stringify(body)
-    });
-    draft = next;
-    published = clone(next);
-    store.set(DRAFT_KEY, draft);
-    markDirty();
-    logModeration("publish", `کامیت ${String(res?.commit?.sha || "").slice(0, 7)}`);
-    setPubState(`منتشر شد. GitHub Pages در حال ساخت نسخهٔ تازه است…`, "ok");
-    toast("تنظیمات با موفقیت کامیت شد.", "success");
-    watchBuild(res?.commit?.sha || "", tok);
-  } catch (ex) {
-    setPubState(ex.message || "انتشار ناموفق بود.", "bad");
-    toast(ex.message || "انتشار ناموفق بود.", "error");
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "انتشار تغییرات";
-  }
-}
-async function watchBuild(sha, token) {
-  for (let i = 0; i < 12; i++) {
-    await sleep(6000);
-    try {
-      const build = await gh(`/repos/${repoSlug()}/pages/builds/latest`, token);
-      if (build?.status === "built") {
-        if (!sha || String(build.commit || "").startsWith(sha.slice(0, 7)) || i >= 2) {
-          setPubState(`ساخت Pages تمام شد (${new Date().toLocaleTimeString("fa-IR")}). سایت تازه منتشر شد.`, "ok");
-          return;
-        }
-      }
-      if (build?.status === "errored") {
-        setPubState("کامیت انجام شد اما ساخت GitHub Pages خطا داد. Actions را بررسی کن.", "bad");
-        return;
-      }
-      setPubState(`کامیت شد؛ GitHub Pages در حال ساخت است (${i + 1}/12)…`, "busy");
-    } catch {
-      setPubState("کامیت انجام شد. وضعیت ساخت از GitHub Actions قابل بررسی است.", "ok");
-      return;
-    }
-  }
-  setPubState("کامیت انجام شد؛ ساخت Pages هنوز در حال انجام است. چند دقیقه بعد سایت را ببین.", "ok");
-}
 
 /* ---------- boot / bind ---------- */
 function bindInputs() {
@@ -800,18 +683,14 @@ function bindInputs() {
   });
 }
 function bindChrome() {
-  $("#gateTabLogin").addEventListener("click", () => setGateTab("login"));
-  $("#gateTabGithub").addEventListener("click", () => setGateTab("github"));
   $("#loginForm").addEventListener("submit", onceAsync(doPasswordLogin));
-  $("#githubForm").addEventListener("submit", doGithubActivate);
 
   $$("[data-nav]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.nav)));
   $$("[data-goto]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.goto)));
   $("#lockBtn").addEventListener("click", lockConsole);
 
   $("#passForm").addEventListener("submit", changePass);
-  $("#tokenForm").addEventListener("submit", verifySessionToken);
-  $("#publishForm").addEventListener("submit", publishConfig);
+  $("#sendCodeBtn")?.addEventListener("click", sendOwnerCode);
   $("#publishTop").addEventListener("click", () => { showView("publish"); });
   $("#previewBtn").addEventListener("click", previewSite);
   $("#previewBtn2").addEventListener("click", previewSite);
@@ -859,9 +738,7 @@ function applyFeatureSnapshot(payload = {}) {
 function lockConsole() {
   if (!confirm("کنسول قفل شود؟ برای ورود دوباره رمز مالک لازم است.")) return;
   setOwnerSession(false);
-  try { sessionStorage.removeItem(TOKEN_KEY); } catch {}
-  try { sessionStorage.removeItem(OWNER_JWT_KEY); } catch {}
-  verifiedToken = "";
+  setOwnerJwt("");
   logAudit({ kind: "security", action: "قفل کنسول" });
   safeReload();
 }
@@ -895,7 +772,7 @@ function renderAll() {
   renderInputs();
   renderUsers();
   renderLog();
-  refreshTokenState();
+  refreshOwnerIdentity();
   markDirty();
   center.ensureExtras();
   center.refreshAll();
@@ -914,16 +791,21 @@ function refreshSystemView() {
 }
 
 async function backendOwnerValid() {
-  let token = "";
-  try { token = sessionStorage.getItem(OWNER_JWT_KEY) || ""; } catch {}
+  const token = getOwnerJwt();
   if (!token) return null;
   try {
     const res = await apiFetch("/auth/me", { token, auth: false, timeoutMs: 6000 });
     const role = res?.user?.role;
-    return role === "owner" || role === "super_owner";
+    if (role !== "owner" && role !== "super_owner") return false;
+    const identity = await apiFetch("/auth/owner/identity", { token, auth: false, timeoutMs: 8000 });
+    if (!identity?.canAccess) {
+      setOwnerJwt("");
+      return false;
+    }
+    return true;
   } catch (err) {
     if (err?.status === 401 || err?.status === 403) {
-      try { sessionStorage.removeItem(OWNER_JWT_KEY); } catch {}
+      setOwnerJwt("");
       return false;
     }
     return null;
@@ -936,7 +818,7 @@ async function validOwnerAccess() {
     await setOwnerSession(true);
     return true;
   }
-  return verifyOwnerSession();
+  return false;
 }
 
 (async function bootOwner() {
@@ -951,18 +833,14 @@ async function validOwnerAccess() {
   bindInputs();
   configureGate();
 
-  try { sessionStorage.removeItem(TOKEN_KEY); } catch {}
-  verifiedToken = "";
-
   let allowed = false;
   try { allowed = await validOwnerAccess(); } catch { allowed = false; }
   if (allowed) {
     $("#ownerGate").classList.add("hidden");
     $("#ownerApp").classList.remove("hidden");
     renderAll();
+    refreshOwnerIdentity();
   } else {
-    setGateTab("login");
     renderInputs();
-    refreshTokenState();
   }
 })();

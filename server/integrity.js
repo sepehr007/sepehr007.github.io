@@ -7,6 +7,8 @@ const EXPECTED_INDEXES = [
   "idx_notifications_user_unread",
   "idx_dm_messages_conversation",
   "idx_moderation_actions_created",
+  "idx_users_active_created",
+  "idx_rooms_last_activity",
   "uq_media_library_item",
   "uq_lobbies_active_owner"
 ];
