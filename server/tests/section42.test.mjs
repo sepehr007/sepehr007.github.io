@@ -277,6 +277,88 @@ await step("accounts", "private messaging is limited to participants", async () 
   assert.ok([403, 404].includes(intruder.status), `intruder got ${intruder.status}`);
 });
 
+await step("accounts", "conversation requests gate replies until accepted", async () => {
+  const open = await api("POST", "/api/social/dm", { token: carol.token, body: { username: "qaeve" } });
+  assert.equal(open.status, 201, open.text);
+  const conversation = open.json.conversation;
+  assert.equal(conversation.status, "pending");
+  assert.equal(conversation.pendingIncoming, false);
+  assert.equal(conversation.canReply, true);
+
+  const first = await api("POST", `/api/social/dm/${conversation.id}/messages`, {
+    token: carol.token,
+    body: { body: "سلام، می‌تونیم صحبت کنیم؟", clientId: "qa-client-1" }
+  });
+  assert.equal(first.status, 201, first.text);
+  const duplicate = await api("POST", `/api/social/dm/${conversation.id}/messages`, {
+    token: carol.token,
+    body: { body: "سلام، می‌تونیم صحبت کنیم؟", clientId: "qa-client-1" }
+  });
+  assert.equal(duplicate.status, 200, "duplicate clientId must not insert twice");
+  assert.equal(duplicate.json.message.id, first.json.message.id);
+
+  const eveList = await api("GET", "/api/social/dm", { token: eve.token });
+  const pending = eveList.json.conversations.find((item) => item.id === conversation.id);
+  assert.ok(pending, "recipient must see the pending conversation");
+  assert.equal(pending.pendingIncoming, true);
+  assert.equal(pending.canReply, false);
+
+  const blocked = await api("POST", `/api/social/dm/${conversation.id}/messages`, {
+    token: eve.token,
+    body: { body: "پاسخ قبل از پذیرش" }
+  });
+  assert.equal(blocked.status, 403, blocked.text);
+  assert.equal(blocked.json.error, "request_pending");
+
+  const accepted = await api("POST", `/api/social/dm/${conversation.id}/respond`, {
+    token: eve.token,
+    body: { accept: true }
+  });
+  assert.equal(accepted.status, 200, accepted.text);
+  assert.equal(accepted.json.conversation.status, "accepted");
+
+  const reply = await api("POST", `/api/social/dm/${conversation.id}/messages`, {
+    token: eve.token,
+    body: { body: "پاسخ بعد از پذیرش", replyToId: first.json.message.id }
+  });
+  assert.equal(reply.status, 201, reply.text);
+  assert.equal(reply.json.message.replyToId, first.json.message.id);
+  assert.equal(reply.json.message.replyTo.body.slice(0, 4), "سلام");
+
+  const friends = await api("GET", "/api/social/friends", { token: carol.token });
+  assert.ok(friends.json.friends.some((item) => item.username === "qaeve"), "accepting a request creates a friendship");
+
+  const read = await api("POST", `/api/social/dm/${conversation.id}/read`, {
+    token: eve.token,
+    body: { seq: reply.json.message.seq }
+  });
+  assert.equal(read.status, 200, read.text);
+  assert.equal(read.json.lastReadSeq, reply.json.message.seq);
+
+  const carolView = await api("GET", `/api/social/dm/${conversation.id}/messages`, { token: carol.token });
+  assert.equal(carolView.status, 200);
+  assert.equal(carolView.json.conversation.peerLastReadSeq, reply.json.message.seq);
+  assert.ok(carolView.json.conversation.unread >= 1);
+  const seqs = carolView.json.messages.map((item) => item.seq);
+  assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), "history must be ordered by insertion sequence");
+
+  const openRejected = await api("POST", "/api/social/dm", { token: carol.token, body: { username: "qadave" } });
+  assert.equal(openRejected.status, 201, openRejected.text);
+  assert.equal(openRejected.json.conversation.status, "pending");
+  const rejected = await api("POST", `/api/social/dm/${openRejected.json.conversation.id}/respond`, {
+    token: dave.token,
+    body: { accept: false }
+  });
+  assert.equal(rejected.status, 200, rejected.text);
+  assert.equal(rejected.json.conversation.status, "rejected");
+  const afterReject = await api("POST", `/api/social/dm/${openRejected.json.conversation.id}/messages`, {
+    token: carol.token,
+    body: { body: "بعد از رد شدن" }
+  });
+  assert.equal(afterReject.status, 403, afterReject.text);
+  assert.equal(afterReject.json.error, "request_rejected");
+});
+
 /* ========================================================== communities */
 let roomCode;
 

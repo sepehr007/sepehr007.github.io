@@ -8,7 +8,7 @@ import {
 } from "./core.js";
 import {
   currentUser, getProfile, saveProfile, changeUsername, changePassword,
-  setAvatar, addFriend, removeFriend, logout, passwordScore, isPassword,
+  setAvatar, logout, passwordScore, isPassword,
   isLocallyBanned, syncRemoteSession, rotateRecoveryCode
 } from "./auth.js";
 import { AVATAR_PRESETS, avatarId, avatarSrc, presetValue } from "./avatars.js";
@@ -96,6 +96,7 @@ async function boot(me) {
   paintAvatar();
   renderAvatarGallery();
   renderFriends();
+  loadFriends();
   renderActivity();
   renderPlan();
   renderDeviceCard();
@@ -736,50 +737,80 @@ function wireAvatar() {
   }
 }
 
-/* ---------- friends ---------- */
+/* ---------- friends (server-backed) ---------- */
+let friendItems = [];
+
+async function loadFriends() {
+  try {
+    const data = await apiFetch("/social/friends", { timeoutMs: 8000 });
+    friendItems = Array.isArray(data.friends) ? data.friends : [];
+  } catch (err) {
+    if (err?.status === 401) return;
+    friendItems = [];
+  }
+  renderFriends();
+}
+
 function wireFriends() {
-  $("#friendForm").addEventListener("submit", (e) => {
+  $("#friendForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!allow("account.friends")) return;
     const out = $("#friendMsg");
     clearMsg(out);
-    const val = $("#friendInput").value.trim();
-    if (!val) return;
+    const input = $("#friendInput");
+    const username = input.value.trim();
+    if (!username) return;
+    const submit = e.target.querySelector('button[type="submit"]');
+    submit?.setAttribute("disabled", "disabled");
     try {
-      const res = addFriend(val);
-      if (!res.ok) {
-        const key = {
-          self: "profile.friendSelf",
-          missing: "profile.friendMissing",
-          exists: "profile.friendExists",
-          username: "profile.invalidUsername"
-        }[res.error] || "profile.saveFailed";
-        return msg(out, t(key));
-      }
-      $("#friendInput").value = "";
-      toast(t("profile.friendAdded"), "success");
-      renderFriends();
-    } catch { msg(out, t("profile.session")); }
+      await apiFetch("/social/friends/request", { method: "POST", body: { username }, timeoutMs: 8000 });
+      input.value = "";
+      msg(out, t("profile.friendRequestSent"));
+    } catch (err) {
+      const key = {
+        user_not_found: "profile.friendMissing",
+        invalid_target: "profile.friendSelf",
+        already_friends: "profile.friendExists",
+        request_pending: "profile.friendPending",
+        private_profile: "social.err.private_profile",
+        invalid_username: "profile.invalidUsername",
+        rate_limited: "social.err.rate_limited"
+      }[err?.code];
+      msg(out, t(key || "profile.saveFailed"));
+    } finally {
+      submit?.removeAttribute("disabled");
+    }
   });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") loadFriends();
+  });
+}
+
+async function removeFriendRemote(friend) {
+  if (!allow("account.friends")) return;
+  try {
+    await apiFetch(`/social/friends/${encodeURIComponent(friend.username)}`, { method: "DELETE", timeoutMs: 8000 });
+    friendItems = friendItems.filter((item) => String(item.id) !== String(friend.id));
+    renderFriends();
+    toast(t("profile.friendRemoved"), "success");
+  } catch {
+    toast(t("profile.saveFailed"), "error");
+  }
 }
 
 function renderFriends() {
   const list = $("#friendList");
-  const friends = (getProfile(profile.username)?.friends) || [];
-  profile.friends = friends;
+  if (!list) return;
   list.innerHTML = "";
-  if (!friends.length) {
+  if (!friendItems.length) {
     list.append(el("li", { class: "friend-empty", text: t("profile.noFriends") }));
     return;
   }
-  for (const name of friends) {
-    const rec = getProfile(name);
-    if (!rec) continue;
+  for (const friend of friendItems) {
     const li = el("li", { class: "friend-item" });
     const av = el("span", { class: "avatar" });
-    const src = avatarSrc(rec.avatar);
-    av.textContent = src ? "" : initials(rec.nick);
-    av.style.background = rec.color;
+    const src = avatarSrc(friend.avatar);
+    av.textContent = src ? "" : initials(friend.nick || friend.username || "?");
     if (src) {
       av.style.backgroundImage = `url("${src}")`;
       av.style.backgroundSize = "cover";
@@ -787,25 +818,17 @@ function renderFriends() {
     }
     const info = el("div", { class: "friend-info" });
     info.append(
-      el("strong", { text: rec.nick }),
-      el("span", { class: "friend-user", text: `@${rec.username}`, dir: "ltr" })
+      el("strong", { text: friend.nick || friend.username || "—" }),
+      el("span", { class: "friend-user", text: `@${friend.username || ""}`, dir: "ltr" })
     );
     const rm = el("button", {
       class: "friend-remove", type: "button", title: t("profile.remove")
     });
     rm.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>';
-    rm.addEventListener("click", () => {
-      if (!allow("account.friends")) return;
-      try {
-        removeFriend(name);
-        toast(t("profile.friendRemoved"), "success");
-        renderFriends();
-      } catch {}
-    });
+    rm.addEventListener("click", () => removeFriendRemote(friend));
     li.append(av, info, rm);
     list.append(li);
   }
-  if (!list.children.length) list.append(el("li", { class: "friend-empty", text: t("profile.noFriends") }));
 }
 
 /* ---------- appearance ---------- */

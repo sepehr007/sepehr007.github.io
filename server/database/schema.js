@@ -1204,5 +1204,32 @@ export const MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_room_members_room ON room_memberships(room_id, left_at);
       `);
     }
+  },
+  {
+    version: 21,
+    name: "dm-reliability-and-requests",
+    up(db) {
+      addColumn(db, "dm_messages", "client_id", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "dm_messages", "reply_to_id", "TEXT");
+      addColumn(db, "dm_reads", "last_read_seq", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "dm_conversations", "status", "TEXT NOT NULL DEFAULT 'accepted'");
+      addColumn(db, "dm_conversations", "requested_by", "TEXT");
+      addColumn(db, "dm_conversations", "requested_at", "INTEGER");
+      addColumn(db, "dm_conversations", "responded_at", "INTEGER");
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dm_client
+          ON dm_messages(sender_id, client_id) WHERE client_id <> '';
+        CREATE INDEX IF NOT EXISTS idx_dm_messages_conv_created
+          ON dm_messages(conversation_id, created_at, id);
+        CREATE INDEX IF NOT EXISTS idx_dm_requests
+          ON dm_conversations(status, requested_at DESC);
+      `);
+      db.prepare(
+        `UPDATE dm_conversations SET status = 'accepted',
+           requested_at = COALESCE(requested_at, created_at),
+           responded_at = COALESCE(responded_at, created_at)
+         WHERE status = 'accepted'`
+      ).run();
+    }
   }
 ];

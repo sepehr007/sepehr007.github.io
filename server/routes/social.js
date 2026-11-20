@@ -19,6 +19,8 @@ import {
   sqlUnblockUser,
   sqlListConversations,
   sqlOpenConversation,
+  sqlConversationView,
+  sqlRespondConversationRequest,
   sqlListDmMessages,
   sqlSendDmMessage,
   sqlEditDmMessage,
@@ -223,12 +225,18 @@ export default async function socialRoutes(app) {
 
   app.delete("/friends/request/:id", { preHandler: AUTH }, handle(async (req) => {
     const request = await sqlCancelFriendRequest(req.auth.userId, req.params.id);
+    if (request.to?.id) notify(req, request.to.id, "friend_request_update", request);
     return { ok: true, request };
   }));
 
   app.delete("/friends/:username", { preHandler: AUTH }, handle(async (req) => {
     const username = cleanText(req.params.username, 24);
     const result = await sqlRemoveFriend(req.auth.userId, username);
+    const target = await sqlFindUserByUsername(username);
+    if (target) {
+      notify(req, target.id, "friend_removed", { userId: req.auth.userId, username });
+      notify(req, target.id, "friend_request_update", { removed: true, from: { id: req.auth.userId } });
+    }
     await audit("friend.remove", req, { targetType: "user", targetId: username });
     return result;
   }));
@@ -259,42 +267,86 @@ export default async function socialRoutes(app) {
     const username = cleanText(body(req).username, 24);
     if (!username) return fail(reply, 400, "invalid_username", "Username is required.");
     const conversation = await sqlOpenConversation(req.auth.userId, username);
+    if (conversation.requestCreated && conversation.status === "pending") {
+      notify(req, conversation.peer.id, "dm_request", conversation);
+      await deliverNotice(req.server, conversation.peer.id, {
+        kind: "dm_request",
+        title: `${req.auth.username || "کاربر"} می‌خواهد گفتگو را آغاز کند`,
+        body: "",
+        link: "social.html#messages",
+        dedupeKey: `dm_request:${conversation.id}`,
+        dedupeWindowMs: 30 * 60_000
+      });
+    }
     return reply.code(201).send({ ok: true, conversation });
   }));
 
+  app.post("/dm/:id/respond", { preHandler: AUTH }, handle(async (req) => {
+    const payload = body(req);
+    const accept = payload.accept === true || payload.accept === "true" || payload.accept === 1;
+    const conversation = await sqlRespondConversationRequest(req.auth.userId, req.params.id, accept);
+    const peerId = conversation.peer?.id;
+    if (peerId) {
+      notify(req, peerId, "dm_request_update", conversation);
+      await deliverNotice(req.server, peerId, {
+        kind: accept ? "dm_request_accepted" : "dm_request_rejected",
+        title: accept
+          ? `${req.auth.username || "کاربر"} درخواست گفتگو را پذیرفت`
+          : `${req.auth.username || "کاربر"} درخواست گفتگو را رد کرد`,
+        body: "",
+        link: "social.html#messages",
+        dedupeKey: `dm_request_update:${conversation.id}:${accept ? "accepted" : "rejected"}`,
+        dedupeWindowMs: 30 * 60_000
+      });
+      if (accept) notify(req, peerId, "friend_added", { user: { id: req.auth.userId, username: req.auth.username } });
+    }
+    return { ok: true, conversation };
+  }));
+
   app.get("/dm/:id/messages", { preHandler: AUTH }, handle(async (req) => {
-    const messages = await sqlListDmMessages(
+    const page = await sqlListDmMessages(
       req.auth.userId,
       req.params.id,
       req.query?.before,
       req.query?.limit
     );
-    return { ok: true, messages };
+    const conversation = await sqlConversationView(req.auth.userId, req.params.id);
+    return { ok: true, messages: page.messages, hasMore: page.hasMore, oldestSeq: page.oldestSeq, conversation };
   }));
 
   app.post("/dm/:id/messages", { preHandler: AUTH }, handle(async (req, reply) => {
     const payload = body(req);
-    const message = await sqlSendDmMessage(req.auth.userId, req.params.id, payload.body, payload.attachment);
-    const peerId = await sqlConversationPeerId(req.auth.userId, req.params.id);
-    const text = String(message.body || "");
-    const handles = [...new Set([...text.matchAll(/@([\p{L}\p{N}_-]{3,24})/gu)].map((m) => m[1].toLowerCase()))].slice(0, 5);
-    let mentionedPeer = false;
-    for (const handle of handles) {
-      const user = await sqlFindUserByUsername(handle);
-      if (user && String(user.id) === String(peerId)) mentionedPeer = true;
-    }
-    notify(req, peerId, "dm_message", message);
-    await deliverNotice(req.server, peerId, {
-      kind: mentionedPeer ? "mention" : "dm_message",
-      title: mentionedPeer
-        ? `${req.auth.username || "کاربر"} در پیام خصوصی به تو منشن داد`
-        : `پیام تازه از ${req.auth.username || "کاربر"}`,
-      body: text.slice(0, 120),
-      link: "social.html#messages",
-      dedupeKey: `dm:${message.id}`,
-      dedupeWindowMs: 10 * 60_000
+    const message = await sqlSendDmMessage(req.auth.userId, req.params.id, payload.body, payload.attachment, {
+      clientId: payload.clientId,
+      replyToId: payload.replyToId
     });
-    return reply.code(201).send({ ok: true, message });
+    const peerId = await sqlConversationPeerId(req.auth.userId, req.params.id);
+    const conversation = await sqlConversationView(req.auth.userId, req.params.id);
+    if (!message.duplicate) {
+      const peerConversation = await sqlConversationView(peerId, req.params.id);
+      const text = String(message.body || "");
+      const handles = [...new Set([...text.matchAll(/@([\p{L}\p{N}_-]{3,24})/gu)].map((m) => m[1].toLowerCase()))].slice(0, 5);
+      let mentionedPeer = false;
+      for (const handle of handles) {
+        const user = await sqlFindUserByUsername(handle);
+        if (user && String(user.id) === String(peerId)) mentionedPeer = true;
+      }
+      notify(req, peerId, "dm_message", { ...message, conversation: peerConversation });
+      if (String(req.auth.userId) !== String(peerId)) {
+        notify(req, req.auth.userId, "dm_message", { ...message, conversation });
+      }
+      await deliverNotice(req.server, peerId, {
+        kind: mentionedPeer ? "mention" : "dm_message",
+        title: mentionedPeer
+          ? `${req.auth.username || "کاربر"} در پیام خصوصی به تو منشن داد`
+          : `پیام تازه از ${req.auth.username || "کاربر"}`,
+        body: text.slice(0, 120),
+        link: "social.html#messages",
+        dedupeKey: `dm:${message.id}`,
+        dedupeWindowMs: 10 * 60_000
+      });
+    }
+    return reply.code(message.duplicate ? 200 : 201).send({ ok: true, message, conversation });
   }));
 
   app.patch("/dm/messages/:messageId", { preHandler: AUTH }, handle(async (req) => {
@@ -312,7 +364,7 @@ export default async function socialRoutes(app) {
   app.delete("/dm/messages/:messageId", { preHandler: AUTH }, handle(async (req) => {
     const peerId = await sqlDmMessagePeerId(req.auth.userId, req.params.messageId);
     const result = await sqlDeleteDmMessage(req.auth.userId, req.params.messageId);
-    notify(req, peerId, "dm_message_deleted", { id: String(req.params.messageId) });
+    notify(req, peerId, "dm_message_deleted", { id: String(req.params.messageId), conversationId: result.conversationId });
     return result;
   }));
 
@@ -339,9 +391,15 @@ export default async function socialRoutes(app) {
   }));
 
   app.post("/dm/:id/read", { preHandler: AUTH }, handle(async (req) => {
-    const result = await sqlMarkConversationRead(req.auth.userId, req.params.id);
+    const seq = Number(body(req).seq || 0);
+    const result = await sqlMarkConversationRead(req.auth.userId, req.params.id, seq);
     const peerId = await sqlConversationPeerId(req.auth.userId, req.params.id);
-    notify(req, peerId, "dm_read", { conversationId: req.params.id, readerId: req.auth.userId, lastReadAt: result.lastReadAt });
+    notify(req, peerId, "dm_read", {
+      conversationId: req.params.id,
+      readerId: req.auth.userId,
+      lastReadAt: result.lastReadAt,
+      lastReadSeq: result.lastReadSeq
+    });
     return result;
   }));
 

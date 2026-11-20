@@ -23,8 +23,22 @@ const state = {
   requests: { incoming: [], outgoing: [] },
   blocks: [],
   convs: [],
+  convsLoading: false,
+  dmTab: "all",
+  dmQuery: "",
   activeConv: null,
   messages: [],
+  threadToken: 0,
+  threadLoading: false,
+  threadPaging: false,
+  threadHasMore: false,
+  threadOldestSeq: 0,
+  newDividerSeq: 0,
+  newCount: 0,
+  scrollBottom: true,
+  replyTo: null,
+  readTimer: 0,
+  readSentSeq: 0,
   notifs: [],
   notifPrefs: {},
   notifUnread: 0,
@@ -52,7 +66,9 @@ const state = {
   ws: null,
   wsReady: false,
   wsClosedByUs: false,
-  wsRetry: 0
+  wsRetry: 0,
+  wsDropped: false,
+  friendsTimer: 0
 };
 
 applyUIPrefs();
@@ -239,6 +255,7 @@ document.title = `${t("social.title")} — هم‌تماشا`;
   switchPane(PANES.includes(requested) ? requested : "people");
   refreshBadges();
   connectWs();
+  syncMessagingViewport();
 })();
 
 function showGate(kind) {
@@ -286,6 +303,7 @@ function wireStatic() {
 function switchPane(pane, push = false) {
   if (!PANES.includes(pane)) pane = "people";
   state.pane = pane;
+  document.body.classList.toggle("social-msg", pane === "messages");
   $$("#socialNav button").forEach((node) => node.classList.toggle("active", node.dataset.pane === pane));
   $$(".social-pane").forEach((node) => { node.hidden = node.dataset.pane !== pane; });
   document.title = `${t(`social.nav.${pane}`)} — هم‌تماشا`;
@@ -293,6 +311,7 @@ function switchPane(pane, push = false) {
     try { history.replaceState(null, "", `#${pane}`); } catch {}
   }
   loadPane(pane);
+  if (pane === "messages") requestAnimationFrame(syncMessagingViewport);
 }
 
 async function loadPane(pane) {
@@ -596,9 +615,25 @@ function openReport(target) {
 
 /* ---------------------------------------------------------------------- DM */
 
-$("#dmSearch")?.addEventListener("input", renderConvs);
+$("#dmSearch")?.addEventListener("input", () => {
+  state.dmQuery = $("#dmSearch")?.value || "";
+  renderConvs();
+});
 $("#dmShowArchived")?.addEventListener("change", renderConvs);
+$$("[data-dm-tab]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.dmTab = btn.dataset.dmTab || "all";
+    paintDmTabs();
+    renderConvs();
+  });
+});
 $("#dmBack")?.addEventListener("click", closeThread);
+$("#dmNewBtn")?.addEventListener("click", () => switchPane("people", true));
+$("#dmEmptyNew")?.addEventListener("click", () => switchPane("people", true));
+$("#dmAcceptBtn")?.addEventListener("click", () => respondConv(true));
+$("#dmRejectBtn")?.addEventListener("click", () => respondConv(false));
+$("#dmScrollBtn")?.addEventListener("click", jumpToLatest);
+$("#dmReplyCancel")?.addEventListener("click", clearReply);
 $("#dmInput")?.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
@@ -608,7 +643,13 @@ $("#dmInput")?.addEventListener("keydown", (event) => {
 $("#dmInput")?.addEventListener("input", (event) => {
   const area = event.target;
   area.style.height = "auto";
-  area.style.height = `${Math.min(120, area.scrollHeight)}px`;
+  area.style.height = `${Math.min(132, area.scrollHeight)}px`;
+});
+$("#dmInput")?.addEventListener("focus", () => {
+  setTimeout(() => {
+    $("#dmInput")?.scrollIntoView({ block: "nearest" });
+    if (state.scrollBottom) jumpToLatest(true);
+  }, 240);
 });
 $("#dmForm")?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -616,62 +657,156 @@ $("#dmForm")?.addEventListener("submit", (event) => {
 });
 $("#dmMuteBtn")?.addEventListener("click", () => toggleConvPref("muted"));
 $("#dmArchiveBtn")?.addEventListener("click", () => toggleConvPref("archived"));
+$("#dmStream")?.addEventListener("scroll", onThreadScroll);
+window.visualViewport?.addEventListener("resize", syncMessagingViewport);
+window.visualViewport?.addEventListener("scroll", syncMessagingViewport);
+window.addEventListener("resize", syncMessagingViewport);
 
-async function loadConversations() {
-  const data = await api("/social/dm", { quiet: true });
-  state.convs = data.conversations || [];
-  renderConvs();
-  if (state.activeConv) {
-    const fresh = state.convs.find((item) => item.id === state.activeConv.id);
-    if (fresh) {
-      state.activeConv = fresh;
+function syncMessagingViewport() {
+  const app = $("#dmLayout");
+  const vv = window.visualViewport;
+  if (!app || !vv) return;
+  if (!app.offsetParent || !app.getBoundingClientRect().width) return;
+  const keyboard = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  const top = Math.max(0, Math.round(app.getBoundingClientRect().top - vv.offsetTop));
+  const docTop = Math.round(app.getBoundingClientRect().top + window.scrollY);
+  app.style.setProperty("--msg-vvh", `${Math.round(vv.height)}px`);
+  app.style.setProperty("--msg-top", `${top}px`);
+  app.style.setProperty("--msg-avail", `${Math.max(320, Math.round(window.innerHeight - docTop - 16))}px`);
+  app.classList.toggle("kb-open", keyboard > 90);
+  if (keyboard > 90 && state.scrollBottom) {
+    requestAnimationFrame(() => {
+      const stream = $("#dmStream");
+      if (stream) stream.scrollTop = stream.scrollHeight;
+    });
+  }
+}
+
+function paintDmTabs() {
+  $$("[data-dm-tab]").forEach((btn) => btn.classList.toggle("active", btn.dataset.dmTab === state.dmTab));
+}
+
+function convById(id) {
+  return state.convs.find((conv) => String(conv.id) === String(id)) || null;
+}
+
+function upsertConv(conv) {
+  if (!conv?.id) return null;
+  const index = state.convs.findIndex((item) => String(item.id) === String(conv.id));
+  if (index >= 0) state.convs[index] = { ...state.convs[index], ...conv };
+  else state.convs.unshift(conv);
+  return convById(conv.id);
+}
+
+function updateRequestCount() {
+  const count = state.convs.filter((conv) => conv.pendingIncoming).length;
+  const chip = $("#dmRequestCount");
+  if (chip) {
+    chip.textContent = count > 0 ? String(count) : "";
+    chip.hidden = count <= 0;
+  }
+  const unread = state.convs.filter((conv) => !conv.archived).reduce((sum, conv) => sum + (conv.unread || 0), 0);
+  paintCount("countMessages", unread);
+}
+
+async function loadConversations(quiet = true) {
+  if (!state.convs.length) {
+    state.convsLoading = true;
+    renderConvs();
+  }
+  try {
+    const data = await api("/social/dm", { quiet });
+    const list = Array.isArray(data.conversations) ? data.conversations : [];
+    state.convs = list;
+    state.convsLoading = false;
+    const active = state.activeConv ? convById(state.activeConv.id) : null;
+    if (active) {
+      state.activeConv = active;
       paintConvHead();
+      paintRequestBar();
     }
+    renderConvs();
+    updateRequestCount();
+  } catch {
+    state.convsLoading = false;
+    renderConvs();
   }
 }
 
 async function openDmWith(user) {
   try {
     const data = await api("/social/dm", { method: "POST", body: { username: user.username } });
-    const conv = data.conversation;
-    const existing = state.convs.find((item) => item.id === conv.id);
-    if (!existing) state.convs.unshift(conv);
+    const conv = upsertConv(data.conversation) || data.conversation;
     switchPane("messages");
-    await selectConv(existing || conv);
-  } catch {}
+    if (state.pane === "messages") await selectConv(conv);
+  } catch (err) {
+    if (err?.code === "private_profile") toast(errorText(err), "error");
+  }
 }
 
 async function selectConv(conv) {
-  state.activeConv = conv;
-  $("#dmLayout").classList.add("has-thread");
-  $("#dmHead").hidden = false;
-  $("#dmEmpty").hidden = true;
-  $("#dmForm").hidden = false;
+  if (!conv?.id) return;
+  const token = ++state.threadToken;
+  state.activeConv = convById(conv.id) || conv;
+  state.messages = [];
+  state.threadHasMore = false;
+  state.threadOldestSeq = 0;
+  state.newDividerSeq = 0;
+  state.newCount = 0;
+  state.threadLoading = true;
+  state.scrollBottom = true;
+  clearReply();
+  $("#dmLayout")?.classList.add("has-thread");
+  const head = $("#dmHead");
+  if (head) head.hidden = false;
+  const empty = $("#dmEmpty");
+  if (empty) empty.hidden = true;
   paintConvHead();
+  paintRequestBar();
   renderConvs();
-  try {
-    const data = await api(`/social/dm/${enc(conv.id)}/messages?limit=50`);
-    state.messages = data.messages || [];
-  } catch {
-    state.messages = [];
-  }
   renderMessages();
-  if ((conv.unread || 0) > 0) {
-    conv.unread = 0;
-    renderConvs();
-    paintCount("countMessages", state.convs.filter((item) => !item.archived).reduce((n, item) => n + (item.unread || 0), 0));
-    api(`/social/dm/${enc(conv.id)}/read`, { method: "POST", body: {}, quiet: true }).catch(() => {});
+  updateJump();
+  try {
+    const data = await api(`/social/dm/${enc(conv.id)}/messages?limit=50`, { quiet: true });
+    if (token !== state.threadToken || String(state.activeConv?.id) !== String(conv.id)) return;
+    if (data.conversation) {
+      upsertConv(data.conversation);
+      state.activeConv = convById(conv.id) || state.activeConv;
+      paintConvHead();
+      paintRequestBar();
+    }
+    state.threadHasMore = Boolean(data.hasMore);
+    state.threadOldestSeq = Number(data.oldestSeq || 0);
+    state.messages = Array.isArray(data.messages) ? data.messages : [];
+    state.threadLoading = false;
+    renderMessages();
+    jumpToLatest(true);
+    markReadSoon();
+  } catch (err) {
+    if (token !== state.threadToken) return;
+    state.threadLoading = false;
+    renderMessages();
+    toast(errorText(err), "error");
   }
 }
 
 function closeThread() {
+  state.threadToken += 1;
   state.activeConv = null;
   state.messages = [];
-  $("#dmLayout").classList.remove("has-thread");
-  $("#dmHead").hidden = true;
-  $("#dmForm").hidden = true;
-  $("#dmStream").replaceChildren();
-  $("#dmEmpty").hidden = false;
+  state.replyTo = null;
+  state.threadLoading = false;
+  $("#dmLayout")?.classList.remove("has-thread");
+  const head = $("#dmHead");
+  if (head) head.hidden = true;
+  const form = $("#dmForm");
+  if (form) form.hidden = true;
+  const bar = $("#dmRequestBar");
+  if (bar) bar.hidden = true;
+  const stream = $("#dmStream");
+  if (stream) stream.replaceChildren();
+  const empty = $("#dmEmpty");
+  if (empty) empty.hidden = false;
   renderConvs();
 }
 
@@ -684,8 +819,19 @@ function paintConvHead() {
     next.id = "dmPeerAvatar";
     box.replaceWith(next);
   }
+  const dot = $("#dmPeerDot");
+  const online = isOnline(conv.peer);
+  if (dot) dot.classList.toggle("on", online);
   const name = $("#dmPeerName");
   if (name) name.textContent = displayName(conv.peer);
+  const status = $("#dmPeerStatus");
+  if (status) {
+    status.textContent = online
+      ? t("social.online")
+      : conv.peer?.lastSeenAt
+        ? t("social.seenAgo", { when: ago(conv.peer.lastSeenAt) })
+        : t("social.offline");
+  }
   const user = $("#dmPeerUser");
   if (user) user.textContent = `@${conv.peer?.username || ""}`;
   const mute = $("#dmMuteBtn");
@@ -694,63 +840,289 @@ function paintConvHead() {
   if (archive) archive.textContent = conv.archived ? t("social.dmUnarchive") : t("social.dmArchive");
 }
 
+function paintRequestBar() {
+  const conv = state.activeConv;
+  const bar = $("#dmRequestBar");
+  const text = $("#dmRequestText");
+  const actions = $("#dmRequestActions");
+  const form = $("#dmForm");
+  if (!conv || !bar || !text || !actions || !form) return;
+  const pending = conv.status === "pending";
+  const rejected = conv.status === "rejected";
+  actions.hidden = !conv.pendingIncoming;
+  if (conv.pendingIncoming) {
+    text.textContent = t("social.dmRequestIncoming", { name: displayName(conv.peer) });
+    bar.hidden = false;
+  } else if (pending) {
+    text.textContent = t("social.dmRequestWaiting");
+    bar.hidden = false;
+  } else if (rejected) {
+    text.textContent = t("social.dmRequestRejected");
+    bar.hidden = false;
+  } else {
+    bar.hidden = true;
+  }
+  const canReply = Boolean(conv.canReply);
+  form.hidden = !canReply;
+  const hint = $("#dmComposeHint");
+  if (hint) hint.textContent = canReply ? t("social.dmSendHint") : t("social.dmLocked");
+  const input = $("#dmInput");
+  if (input) input.placeholder = canReply ? t("social.dmPlaceholder") : t("social.dmLocked");
+}
+
+async function respondConv(accept) {
+  const conv = state.activeConv;
+  if (!conv?.pendingIncoming) return;
+  const buttons = [$("#dmAcceptBtn"), $("#dmRejectBtn")];
+  for (const button of buttons) if (button) button.disabled = true;
+  try {
+    const data = await api(`/social/dm/${enc(conv.id)}/respond`, {
+      method: "POST",
+      body: { accept }
+    });
+    upsertConv(data.conversation);
+    state.activeConv = convById(conv.id) || state.activeConv;
+    toast(accept ? t("social.dmRequestAcceptedToast") : t("social.dmRequestRejectedToast"), accept ? "success" : "info");
+    paintConvHead();
+    paintRequestBar();
+    renderConvs();
+    updateRequestCount();
+    if (accept) {
+      await Promise.allSettled([loadFriends(), loadPeople(true)]);
+      $("#dmInput")?.focus();
+      if (state.messages.length) markReadSoon();
+    }
+  } catch (err) {
+    toast(errorText(err), "error");
+  } finally {
+    for (const button of buttons) if (button) button.disabled = false;
+  }
+}
+
 function renderConvs() {
   const list = $("#convList");
   if (!list) return;
-  const query = ($("#dmSearch")?.value || "").trim().toLowerCase();
+  const loading = $("#convLoading");
+  if (loading) loading.hidden = !state.convsLoading;
+  const query = String(state.dmQuery || "").trim().toLowerCase();
   const showArchived = Boolean($("#dmShowArchived")?.checked);
-  const items = state.convs.filter((conv) => {
-    if (!showArchived && conv.archived) return false;
-    if (!query) return true;
-    const hay = `${conv.peer?.nick || ""} ${conv.peer?.username || ""} ${conv.lastMessage?.body || ""}`.toLowerCase();
-    return hay.includes(query);
-  });
+  let items = state.convs.filter((conv) => showArchived || !conv.archived);
+  if (state.dmTab === "unread") items = items.filter((conv) => (conv.unread || 0) > 0 || conv.pendingIncoming);
+  else if (state.dmTab === "requests") items = items.filter((conv) => conv.pendingIncoming);
+  if (query) {
+    items = items.filter((conv) => {
+      const hay = `${conv.peer?.nick || ""} ${conv.peer?.username || ""} ${conv.lastMessage?.body || ""}`.toLowerCase();
+      return hay.includes(query);
+    });
+  }
   list.replaceChildren(...items.map((conv) => convRow(conv)));
-  emptyState("convEmpty", items.length > 0);
+  const empty = $("#convEmpty");
+  if (empty) empty.hidden = items.length > 0 || state.convsLoading;
+  updateRequestCount();
 }
 
 function convRow(conv) {
   const li = el("li");
-  const node = el("button", {
-    type: "button",
-    class: `conv-row${state.activeConv?.id === conv.id ? " active" : ""}`,
+  const row = el("div", {
+    class: [
+      "conv-row msg-conv",
+      state.activeConv?.id === conv.id ? "active" : "",
+      conv.unread ? "unread" : "",
+      conv.pendingIncoming ? "pending" : ""
+    ].filter(Boolean).join(" "),
+    role: "button",
+    tabindex: "0",
     onClick: () => selectConv(conv)
   });
-  node.append(avatarEl(conv.peer));
+  row.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectConv(conv);
+    }
+  });
+
+  const avatarWrap = el("span", { class: "avatar-wrap" });
+  avatarWrap.append(avatarEl(conv.peer));
+  avatarWrap.append(el("span", { class: `presence-dot${isOnline(conv.peer) ? " on" : ""}`, "aria-hidden": "true" }));
+  row.append(avatarWrap);
+
   const main = el("div", { class: "conv-main" });
   const title = el("strong");
   title.append(document.createTextNode(displayName(conv.peer)));
-  if (conv.muted) title.append(el("span", { class: "badge off", text: t("social.dmMutedBadge") }));
-  if (conv.archived && $("#dmShowArchived")?.checked) title.append(el("span", { class: "badge off", text: t("social.dmArchivedBadge") }));
+  if (conv.pendingIncoming) title.append(el("span", { class: "msg-badge", text: t("social.dmRequestBadge") }));
+  if (conv.muted) title.append(el("span", { class: "msg-badge muted", text: t("social.dmMutedBadge") }));
+  if (conv.archived) title.append(el("span", { class: "msg-badge muted", text: t("social.dmArchivedBadge") }));
   main.append(title);
-  const preview = el("small");
+
+  const preview = el("small", { class: "conv-preview" });
   const last = conv.lastMessage;
-  preview.textContent = last ? (last.deleted ? t("social.dmDeleted") : String(last.body || "").slice(0, 80)) : "";
+  if (conv.pendingIncoming) {
+    preview.textContent = t("social.dmRequestFrom", { name: displayName(conv.peer) });
+  } else {
+    const mineLast = last && String(last.senderId) === String(state.me?.id);
+    const text = last
+      ? last.deleted
+        ? t("social.dmDeleted")
+        : String(last.body || "").trim() || t("social.dmAttachment")
+      : "";
+    if (mineLast && text) preview.append(el("span", { class: "conv-you", text: `${t("social.you")}:` }));
+    preview.append(el("span", { class: "conv-preview-text", text }));
+  }
   main.append(preview);
-  node.append(main);
+
+  if (conv.pendingIncoming) {
+    const actions = el("div", { class: "conv-request-actions" });
+    for (const [label, accept] of [[t("social.dmAccept"), true], [t("social.dmReject"), false]]) {
+      actions.append(el("button", {
+        type: "button",
+        class: `btn ${accept ? "btn-primary" : "btn-ghost"} btn-sm`,
+        text: label,
+        onClick: (event) => {
+          event.stopPropagation();
+          respondConvFromRow(conv, accept);
+        }
+      }));
+    }
+    main.append(actions);
+  }
+  row.append(main);
+
   const side = el("div", { class: "conv-side" });
-  side.append(el("span", { class: "conv-time", text: last ? fmtTime(last.createdAt) : fmtTime(conv.updatedAt) }));
+  side.append(el("span", {
+    class: "conv-time",
+    text: last ? shortStamp(last.createdAt) : shortStamp(conv.updatedAt)
+  }));
   if ((conv.unread || 0) > 0) side.append(el("span", { class: "conv-unread", text: String(conv.unread) }));
-  node.append(side);
-  li.append(node);
+  row.append(side);
+  li.append(row);
   return li;
+}
+
+function shortStamp(ts) {
+  if (!ts) return "";
+  const diff = Math.max(0, Date.now() - Number(ts));
+  if (diff < 24 * 3600 * 1000) return fmtTime(ts);
+  if (diff < 7 * 24 * 3600 * 1000) {
+    try {
+      return new Date(Number(ts)).toLocaleDateString(getLang() === "fa" ? "fa-IR" : "en-US", { weekday: "short" });
+    } catch {
+      return "";
+    }
+  }
+  return fmtDate(ts);
+}
+
+async function respondConvFromRow(conv, accept) {
+  try {
+    const data = await api(`/social/dm/${enc(conv.id)}/respond`, {
+      method: "POST",
+      body: { accept }
+    });
+    upsertConv(data.conversation);
+    if (state.activeConv?.id === conv.id) {
+      state.activeConv = convById(conv.id);
+      paintConvHead();
+      paintRequestBar();
+    }
+    toast(accept ? t("social.dmRequestAcceptedToast") : t("social.dmRequestRejectedToast"), accept ? "success" : "info");
+    renderConvs();
+    updateRequestCount();
+    if (accept) {
+      await Promise.allSettled([loadFriends(), loadPeople(true)]);
+      if (state.activeConv?.id === conv.id && state.scrollBottom) markReadSoon();
+    }
+  } catch (err) {
+    toast(errorText(err), "error");
+  }
 }
 
 function renderMessages(keepScroll = false) {
   const stream = $("#dmStream");
   if (!stream) return;
   const top = stream.scrollTop;
-  stream.replaceChildren(...state.messages.map((message) => messageNode(message)));
+  const frag = document.createDocumentFragment();
+  if (state.threadLoading) frag.append(skeletons());
+  else if (!state.messages.length) {
+    frag.append(el("div", { class: "msg-thread-hint", text: t("social.dmNoMessages") }));
+  } else {
+    let lastDay = "";
+    let dividerDone = false;
+    for (const message of state.messages) {
+      const day = dayKey(message.createdAt);
+      if (day !== lastDay) {
+        lastDay = day;
+        frag.append(el("div", { class: "msg-day" }, [el("span", { text: dayLabel(message.createdAt) })]));
+      }
+      if (!dividerDone && state.newDividerSeq && Number(message.seq || 0) >= state.newDividerSeq) {
+        dividerDone = true;
+        frag.append(el("div", { class: "msg-divider", text: t("social.dmNewMessages") }));
+      }
+      frag.append(messageNode(message));
+    }
+    if (!dividerDone && state.newDividerSeq) {
+      frag.append(el("div", { class: "msg-divider", text: t("social.dmNewMessages") }));
+    }
+  }
+  stream.replaceChildren(frag);
   if (keepScroll) stream.scrollTop = top;
   else stream.scrollTop = stream.scrollHeight;
+  state.scrollBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 90;
+  updateJump();
+}
+
+function skeletons() {
+  const box = el("div", { class: "msg-skeleton", "aria-hidden": "true" });
+  for (const [side, width] of [["theirs", "62%"], ["mine", "48%"], ["theirs", "70%"], ["mine", "40%"]]) {
+    const line = el("div", { class: `msg-skel ${side}` });
+    line.style.width = width;
+    box.append(line);
+  }
+  return box;
+}
+
+function dayKey(ts) {
+  try {
+    const d = new Date(Number(ts));
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  } catch {
+    return "";
+  }
+}
+
+function dayLabel(ts) {
+  try {
+    const d = new Date(Number(ts));
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const day = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const diff = Math.round((start - day) / 86400000);
+    if (diff === 0) return t("social.dmToday");
+    if (diff === 1) return t("social.dmYesterday");
+  } catch {}
+  return fmtDate(ts);
 }
 
 function messageNode(message) {
   const mine = String(message.senderId) === String(state.me?.id);
-  const bubble = el("article", { class: `dm-bubble${mine ? " mine" : ""}` });
-  const body = el("div", { class: `dm-body${message.deletedAt ? " dm-deleted" : ""}` });
-  body.textContent = message.deletedAt ? t("social.dmDeleted") : message.body;
+  const pending = Boolean(message.pending);
+  const failed = Boolean(message.failed);
+  const row = el("div", {
+    class: `msg-row ${mine ? "mine" : "theirs"}`,
+    "data-mid": String(message.id || "")
+  });
+  if (!mine) row.append(avatarEl(state.activeConv?.peer, "person-avatar msg-avatar"));
+
+  const col = el("div", { class: "msg-col" });
+  const bubble = el("article", {
+    class: `dm-bubble msg-bubble${mine ? " mine" : ""}${pending ? " is-pending" : ""}${failed ? " is-failed" : ""}`
+  });
+
+  if (message.replyTo) bubble.append(quoteNode(message));
+
+  const body = el("div", { class: `dm-body${message.deletedAt ? " dm-deleted" : ""}`, dir: "auto" });
+  body.textContent = message.deletedAt ? t("social.dmDeleted") : message.body || "";
   bubble.append(body);
+
   if (message.attachment?.url) {
     bubble.append(el("a", {
       class: "attach-note",
@@ -762,31 +1134,76 @@ function messageNode(message) {
     }));
   }
 
+  if (Array.isArray(message.reactions) && message.reactions.length) {
+    const row2 = el("div", { class: "dm-reactions" });
+    for (const reaction of message.reactions) {
+      row2.append(el("button", {
+        type: "button",
+        class: `dm-reaction${reaction.mine ? " mine" : ""}`,
+        text: `${reaction.emoji} ${reaction.count}`,
+        onClick: () => toggleReaction(message, reaction)
+      }));
+    }
+    bubble.append(row2);
+  }
+
   const meta = el("div", { class: "dm-meta" });
-  meta.append(el("span", { text: fmtTime(message.createdAt) }));
+  meta.append(el("span", { class: "msg-time", text: fmtTime(message.createdAt) }));
   if (message.editedAt) meta.append(el("span", { text: t("social.dmEdited") }));
-  if (!message.deletedAt) {
+  if (mine) {
+    if (pending) {
+      meta.append(el("span", { class: "msg-state pending", text: "●", title: t("social.dmPending") }));
+    } else if (failed) {
+      meta.append(el("button", {
+        type: "button",
+        class: "msg-retry",
+        text: t("social.dmRetry"),
+        onClick: () => retryMessage(message)
+      }));
+    } else {
+      const read = message.seq !== null && message.seq !== undefined
+        && Number(message.seq) <= Number(state.activeConv?.peerLastReadSeq || 0);
+      meta.append(el("span", {
+        class: `msg-state ${read ? "read" : "sent"}`,
+        text: read ? "✓✓" : "✓",
+        title: read ? t("social.dmRead") : t("social.dmSent")
+      }));
+    }
+  }
+
+  if (!message.deletedAt && !pending && !failed) {
+    const actions = el("span", { class: "msg-actions" });
+    if (!String(message.id).startsWith("local:")) {
+      actions.append(el("button", {
+        type: "button",
+        class: "dm-react-toggle",
+        text: "↩",
+        title: t("social.dmReply"),
+        onClick: () => startReply(message)
+      }));
+    }
     const reactBtn = el("button", {
       type: "button",
       class: "dm-react-toggle",
-      title: t("social.react"),
-      text: "☺"
+      text: "☺",
+      title: t("social.react")
     });
-    meta.append(reactBtn);
+    actions.append(reactBtn);
     if (mine) {
-      meta.append(el("button", {
+      actions.append(el("button", {
         type: "button",
         class: "dm-react-toggle",
         text: t("social.edit"),
         onClick: () => startMessageEdit(message, bubble)
       }));
-      meta.append(el("button", {
+      actions.append(el("button", {
         type: "button",
         class: "dm-react-toggle",
         text: t("social.delete"),
         onClick: () => deleteMessage(message)
       }));
     }
+    meta.append(actions);
     const quick = el("div", { class: "dm-quick" });
     for (const emoji of REACTIONS) {
       quick.append(el("button", {
@@ -795,50 +1212,288 @@ function messageNode(message) {
         onClick: () => addReaction(message, emoji)
       }));
     }
-    reactBtn.addEventListener("click", () => quick.classList.toggle("open"));
-    bubble.append(quick);
+    reactBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      quick.classList.toggle("open");
+    });
+    bubble.append(meta, quick);
+  } else {
+    bubble.append(meta);
   }
-  bubble.append(meta);
 
-  if (Array.isArray(message.reactions) && message.reactions.length) {
-    const row = el("div", { class: "dm-reactions" });
-    for (const reaction of message.reactions) {
-      row.append(el("button", {
-        type: "button",
-        class: `dm-reaction${reaction.mine ? " mine" : ""}`,
-        text: `${reaction.emoji} ${reaction.count}`,
-        onClick: () => toggleReaction(message, reaction)
-      }));
-    }
-    bubble.append(row);
+  col.append(bubble);
+  row.append(col);
+  return row;
+}
+
+function quoteNode(message) {
+  const reply = message.replyTo;
+  const peerName = String(reply.senderId) === String(state.me?.id)
+    ? t("social.you")
+    : displayName(state.activeConv?.peer);
+  const quote = el("button", {
+    type: "button",
+    class: "msg-quote",
+    onClick: () => scrollToMessage(message.replyToId)
+  });
+  quote.append(el("strong", { text: peerName }));
+  quote.append(el("span", {
+    text: reply.deleted ? t("social.dmDeleted") : reply.body || t("social.dmAttachment")
+  }));
+  return quote;
+}
+
+function startReply(message) {
+  state.replyTo = {
+    id: message.id,
+    senderId: message.senderId,
+    body: message.deletedAt ? "" : message.body || "",
+    deleted: Boolean(message.deletedAt)
+  };
+  const preview = $("#dmReplyPreview");
+  const text = $("#dmReplyText");
+  const peerName = String(message.senderId) === String(state.me?.id) ? t("social.you") : displayName(state.activeConv?.peer);
+  if (text) text.textContent = `${peerName}: ${state.replyTo.deleted ? t("social.dmDeleted") : state.replyTo.body}`;
+  if (preview) preview.hidden = false;
+  $("#dmInput")?.focus();
+}
+
+function clearReply() {
+  state.replyTo = null;
+  const preview = $("#dmReplyPreview");
+  if (preview) preview.hidden = true;
+  const text = $("#dmReplyText");
+  if (text) text.textContent = "";
+}
+
+function scrollToMessage(id, attempt = 0) {
+  const stream = $("#dmStream");
+  if (!stream || !id) return;
+  const target = [...stream.querySelectorAll(".msg-row")].find((node) => node.dataset.mid === String(id));
+  if (target) {
+    target.scrollIntoView({ block: "center" });
+    target.classList.add("msg-hit");
+    setTimeout(() => target.classList.remove("msg-hit"), 1200);
+    return;
   }
-  return bubble;
+  if (state.threadHasMore && attempt < 3) {
+    loadOlder().finally(() => setTimeout(() => scrollToMessage(id, attempt + 1), 120));
+  }
+}
+
+function updateJump() {
+  const button = $("#dmScrollBtn");
+  if (!button) return;
+  const show = state.newCount > 0 || !state.scrollBottom;
+  button.hidden = !show;
+  const count = $("#dmScrollCount");
+  if (count) count.textContent = state.newCount > 0 ? String(state.newCount) : "";
+}
+
+function onThreadScroll() {
+  const stream = $("#dmStream");
+  if (!stream) return;
+  const nearBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 90;
+  const wasBottom = state.scrollBottom;
+  state.scrollBottom = nearBottom;
+  if (nearBottom && state.newDividerSeq) {
+    state.newDividerSeq = 0;
+    state.newCount = 0;
+    renderMessages();
+    return;
+  }
+  if (!wasBottom && nearBottom) markReadSoon();
+  updateJump();
+  if (stream.scrollTop < 48 && state.threadHasMore && !state.threadPaging) loadOlder();
+}
+
+function jumpToLatest(silent = false) {
+  const stream = $("#dmStream");
+  if (!stream) return;
+  state.newDividerSeq = 0;
+  state.newCount = 0;
+  if (!silent) renderMessages();
+  else stream.scrollTop = stream.scrollHeight;
+  stream.scrollTop = stream.scrollHeight;
+  state.scrollBottom = true;
+  updateJump();
+  if (!silent) markReadSoon();
+}
+
+async function loadOlder() {
+  const conv = state.activeConv;
+  if (!conv || state.threadPaging || !state.threadHasMore || !state.threadOldestSeq) return;
+  const token = state.threadToken;
+  const stream = $("#dmStream");
+  const prevHeight = stream?.scrollHeight || 0;
+  const prevTop = stream?.scrollTop || 0;
+  state.threadPaging = true;
+  stream?.classList.add("is-paging");
+  try {
+    const data = await api(`/social/dm/${enc(conv.id)}/messages?limit=50&before=${state.threadOldestSeq}`, { quiet: true });
+    if (token !== state.threadToken || String(state.activeConv?.id) !== String(conv.id)) return;
+    const known = new Set(state.messages.map((item) => item.id));
+    const older = (data.messages || []).filter((item) => !known.has(item.id));
+    state.messages = [...older, ...state.messages];
+    state.threadHasMore = Boolean(data.hasMore);
+    state.threadOldestSeq = Number(data.oldestSeq || state.threadOldestSeq);
+    if (data.conversation) {
+      upsertConv(data.conversation);
+      state.activeConv = convById(conv.id) || state.activeConv;
+      paintConvHead();
+    }
+    renderMessages(true);
+    if (stream) stream.scrollTop = stream.scrollHeight - prevHeight + prevTop;
+  } catch {} finally {
+    state.threadPaging = false;
+    stream?.classList.remove("is-paging");
+  }
+}
+
+function markReadSoon() {
+  clearTimeout(state.readTimer);
+  state.readTimer = setTimeout(markReadNow, 700);
+}
+
+function markReadNow() {
+  const conv = state.activeConv;
+  if (!conv || document.visibilityState === "hidden") return;
+  const last = state.messages.reduce((max, message) => Math.max(max, Number(message.seq || 0)), 0);
+  if (!last) return;
+  if (last <= Number(conv.myLastReadSeq || 0) && !conv.unread) return;
+  conv.myLastReadSeq = last;
+  conv.unread = 0;
+  renderConvs();
+  if (state.readSentSeq !== last) {
+    state.readSentSeq = last;
+    api(`/social/dm/${enc(conv.id)}/read`, { method: "POST", body: { seq: last }, quiet: true }).catch(() => {
+      state.readSentSeq = 0;
+    });
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && state.activeConv && state.scrollBottom) markReadSoon();
+});
+window.addEventListener("offline", () => {
+  if (state.wsReady) state.wsDropped = true;
+  disconnectWs();
+});
+window.addEventListener("online", () => {
+  if (state.wsClosedByUs) return;
+  state.wsRetry = 0;
+  connectWs();
+});
+
+function newClientId() {
+  try {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  } catch {}
+  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 async function sendDm() {
   const input = $("#dmInput");
   const conv = state.activeConv;
   if (!input || !conv) return;
+  if (!conv.canReply) {
+    toast(t("social.dmLocked"), "info");
+    return;
+  }
   const text = input.value.trim();
   if (!text) return;
+  const reply = state.replyTo;
+  const clientId = newClientId();
+  const message = {
+    id: `local:${clientId}`,
+    clientId,
+    conversationId: conv.id,
+    senderId: state.me?.id,
+    body: text,
+    attachment: null,
+    replyToId: reply?.id || null,
+    replyTo: reply
+      ? { id: reply.id, senderId: reply.senderId, body: reply.body, deleted: Boolean(reply.deleted) }
+      : null,
+    reactions: [],
+    createdAt: Date.now(),
+    pending: true,
+    failed: false,
+    seq: null
+  };
+  state.messages.push(message);
+  state.newDividerSeq = 0;
+  state.newCount = 0;
+  conv.lastMessage = {
+    id: message.id,
+    senderId: message.senderId,
+    body: message.body,
+    deleted: false,
+    clientId,
+    createdAt: message.createdAt
+  };
+  conv.updatedAt = message.createdAt;
   input.value = "";
   input.style.height = "auto";
+  clearReply();
+  renderMessages();
+  jumpToLatest(true);
+  renderConvs();
+  await postDmMessage(message, conv);
+}
+
+async function postDmMessage(message, conv) {
+  message.pending = true;
+  message.failed = false;
   try {
-    const data = await api(`/social/dm/${enc(conv.id)}/messages`, { method: "POST", body: { body: text } });
-    if (!state.messages.some((item) => item.id === data.message.id)) state.messages.push(data.message);
-    conv.lastMessage = {
-      id: data.message.id,
-      senderId: data.message.senderId,
-      body: data.message.body,
-      deleted: false,
-      createdAt: data.message.createdAt
-    };
-    conv.updatedAt = data.message.createdAt;
-    renderMessages();
+    const data = await api(`/social/dm/${enc(conv.id)}/messages`, {
+      method: "POST",
+      body: { body: message.body, clientId: message.clientId, replyToId: message.replyToId },
+      quiet: true
+    });
+    const saved = data.message;
+    const index = state.messages.findIndex((item) =>
+      item.id === message.id || (saved.clientId && item.clientId === saved.clientId)
+    );
+    if (index >= 0) state.messages[index] = saved;
+    else if (!state.messages.some((item) => item.id === saved.id)) state.messages.push(saved);
+    if (data.conversation) {
+      upsertConv(data.conversation);
+      if (state.activeConv?.id === conv.id) {
+        state.activeConv = convById(conv.id) || state.activeConv;
+        paintConvHead();
+        paintRequestBar();
+      }
+    }
+    if (conv.lastMessage?.id === message.id || (saved.clientId && conv.lastMessage?.clientId === saved.clientId)) {
+      conv.lastMessage = {
+        id: saved.id,
+        seq: saved.seq,
+        senderId: saved.senderId,
+        body: saved.body,
+        deleted: false,
+        clientId: saved.clientId,
+        createdAt: saved.createdAt
+      };
+      conv.updatedAt = saved.createdAt;
+    }
+    if (state.activeConv?.id === conv.id) renderMessages(true);
     renderConvs();
-  } catch {
-    input.value = text;
+  } catch (err) {
+    message.pending = false;
+    message.failed = true;
+    message.error = errorText(err);
+    if (state.activeConv?.id === conv.id) renderMessages(true);
+    toast(errorText(err), "error");
+    if (err?.code === "request_pending" || err?.code === "request_rejected" || err?.code === "blocked") {
+      loadConversations().catch(() => {});
+    }
   }
+}
+
+async function retryMessage(message) {
+  if (!message.failed || !state.activeConv) return;
+  await postDmMessage(message, state.activeConv);
 }
 
 async function addReaction(message, emoji) {
@@ -864,16 +1519,20 @@ async function toggleReaction(message, reaction) {
 }
 
 async function deleteMessage(message) {
+  if (String(message.id).startsWith("local:")) return;
   const ok = await confirmDialog({ title: t("social.delete"), text: t("social.confirmDeleteMessage"), okLabel: t("social.delete") });
   if (!ok) return;
   try {
-    await api(`/social/dm/messages/${enc(message.id)}`, { method: "DELETE" });
+    const data = await api(`/social/dm/messages/${enc(message.id)}`, { method: "DELETE" });
     message.deletedAt = Date.now();
-    if (state.activeConv?.lastMessage?.id === message.id) {
-      state.activeConv.lastMessage = { ...state.activeConv.lastMessage, body: "", deleted: true };
-      renderConvs();
+    message.body = "";
+    message.reactions = [];
+    const conv = convById(message.conversationId || data.conversationId);
+    if (conv?.lastMessage?.id === message.id) {
+      conv.lastMessage = { ...conv.lastMessage, body: "", deleted: true };
     }
     renderMessages(true);
+    renderConvs();
   } catch {}
 }
 
@@ -2118,15 +2777,19 @@ function connectWs() {
       },
       onMessage(data) {
         if (data?.type === "identified") {
+          const dropped = state.wsDropped;
           state.wsReady = true;
           state.wsRetry = 0;
+          state.wsDropped = false;
           paintWs();
+          if (dropped) resyncMessaging();
           return;
         }
         if (data?.type === "social") handleSocialEvent(data);
       },
       onClose() {
         if (state.ws === socket) {
+          if (state.wsReady) state.wsDropped = true;
           state.ws = null;
           state.wsReady = false;
           paintWs();
@@ -2168,16 +2831,88 @@ function paintWs() {
   }
 }
 
+function refreshFriendsSoon() {
+  clearTimeout(state.friendsTimer);
+  state.friendsTimer = setTimeout(() => {
+    if (state.pane === "people") loadPeoplePane().catch(() => {});
+    else loadFriends().catch(() => {});
+    refreshBadges();
+  }, 150);
+}
+
+async function refreshThread(conv = state.activeConv) {
+  if (!conv?.id) return;
+  const token = state.threadToken;
+  try {
+    const data = await api(`/social/dm/${enc(conv.id)}/messages?limit=50`, { quiet: true });
+    if (token !== state.threadToken || String(state.activeConv?.id) !== String(conv.id)) return;
+    if (data.conversation) {
+      upsertConv(data.conversation);
+      state.activeConv = convById(conv.id) || state.activeConv;
+      paintConvHead();
+      paintRequestBar();
+    }
+    const latest = Array.isArray(data.messages) ? data.messages : [];
+    const oldest = Number(data.oldestSeq || 0);
+    const known = new Set(latest.map((item) => item.id));
+    const older = state.messages.filter((item) =>
+      Number(item.seq || 0) > 0 && Number(item.seq) < oldest && !known.has(item.id)
+    );
+    const pending = state.messages.filter((item) =>
+      (item.pending || item.failed) && !latest.some((saved) => saved.clientId && saved.clientId === item.clientId)
+    );
+    state.messages = [...older, ...latest, ...pending];
+    state.threadHasMore = older.length ? true : Boolean(data.hasMore);
+    if (!older.length) state.threadOldestSeq = oldest;
+    state.threadLoading = false;
+    renderMessages(true);
+    if (state.scrollBottom) {
+      const stream = $("#dmStream");
+      if (stream) stream.scrollTop = stream.scrollHeight;
+      markReadSoon();
+    }
+    renderConvs();
+  } catch {}
+}
+
+async function resyncMessaging() {
+  if (!apiGetToken()) return;
+  await Promise.allSettled([loadConversations(), refreshBadges()]);
+  if (state.pane === "messages" && state.activeConv) await refreshThread(state.activeConv);
+  if (state.pane === "people") refreshFriendsSoon();
+}
+
+function mergeMessage(message) {
+  const index = state.messages.findIndex((item) =>
+    item.id === message.id || (message.clientId && item.clientId === message.clientId)
+  );
+  if (index >= 0) {
+    state.messages[index] = {
+      ...state.messages[index],
+      ...message,
+      pending: false,
+      failed: false,
+      error: undefined
+    };
+    return true;
+  }
+  state.messages.push(message);
+  return false;
+}
+
 function handleSocialEvent(payload) {
   const event = payload.event;
   const data = payload.data;
   if (event === "dm_message_updated") {
     if (!data?.id) return;
-    const conv = state.convs.find((item) => item.id === data.conversationId);
+    const conv = convById(data.conversationId);
     const message = state.messages.find((item) => item.id === data.id);
     if (message) {
       message.body = data.body;
       message.editedAt = data.editedAt;
+    }
+    for (const item of state.messages) {
+      if (item.replyTo?.id === data.id) item.replyTo = { ...item.replyTo, body: data.body };
     }
     if (conv?.lastMessage?.id === data.id) {
       conv.lastMessage = { ...conv.lastMessage, body: data.body };
@@ -2195,6 +2930,10 @@ function handleSocialEvent(payload) {
     if (message) {
       message.deletedAt = message.deletedAt || Date.now();
       message.body = "";
+      message.attachments = null;
+    }
+    for (const item of state.messages) {
+      if (item.replyTo?.id === id) item.replyTo = { ...item.replyTo, body: "", deleted: true };
     }
     for (const conv of state.convs) {
       if (conv.lastMessage?.id === id) conv.lastMessage = { ...conv.lastMessage, body: "", deleted: true };
@@ -2215,48 +2954,113 @@ function handleSocialEvent(payload) {
   }
   if (event === "dm_message") {
     const message = data;
-    if (!message?.conversationId) return;
-    const conv = state.convs.find((item) => item.id === message.conversationId);
-    if (conv) {
-      conv.lastMessage = {
-        id: message.id,
-        senderId: message.senderId,
-        body: message.body,
-        deleted: Boolean(message.deletedAt),
-        createdAt: message.createdAt
-      };
-      conv.updatedAt = message.createdAt;
-      const mine = String(message.senderId) === String(state.me?.id);
-      if (state.activeConv?.id === conv.id) {
-        if (!state.messages.some((item) => item.id === message.id)) {
-          state.messages.push(message);
-          if (state.pane === "messages") renderMessages();
-          api(`/social/dm/${enc(conv.id)}/read`, { method: "POST", body: {}, quiet: true }).catch(() => {});
+    if (!message?.id) return;
+    const conv = convById(message.conversationId);
+    if (!conv) {
+      loadConversations().catch(() => {});
+      return;
+    }
+    if (data.conversation?.status) conv.status = data.conversation.status;
+    const mine = String(message.senderId) === String(state.me?.id);
+    const active = String(state.activeConv?.id) === String(conv.id);
+    conv.lastMessage = {
+      id: message.id,
+      seq: message.seq,
+      senderId: message.senderId,
+      body: message.body,
+      hasAttachment: Boolean(message.attachment?.url),
+      deleted: Boolean(message.deletedAt),
+      clientId: message.clientId || "",
+      createdAt: message.createdAt
+    };
+    conv.updatedAt = message.createdAt;
+    if (active) {
+      const maxSeq = state.messages.reduce(
+        (max, item) => Math.max(max, item.pending || item.failed ? 0 : Number(item.seq || 0)),
+        0
+      );
+      if (!mine && maxSeq && Number(message.seq || 0) > maxSeq + 1) {
+        refreshThread(conv).catch(() => {});
+      } else {
+        const seen = mergeMessage(message);
+        state.messages.sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0));
+        if (!seen) {
+          if (state.scrollBottom) {
+            renderMessages();
+            jumpToLatest(true);
+            markReadSoon();
+          } else {
+            if (!state.newDividerSeq) state.newDividerSeq = Number(message.seq || 0);
+            state.newCount += 1;
+            renderMessages(true);
+            updateJump();
+          }
+        } else {
+          renderMessages(true);
         }
+      }
+      if (state.scrollBottom) {
         conv.unread = 0;
+        markReadSoon();
       } else if (!mine) {
         conv.unread = (conv.unread || 0) + 1;
       }
-      if (!mine && !conv.muted) {
-        toast(`${displayName(conv.peer)}: ${String(message.body || "").slice(0, 70)}`, "info");
-      }
-      if (state.pane === "messages") renderConvs();
-    } else {
-      loadConversations().catch(() => {});
+    } else if (!mine) {
+      conv.unread = (conv.unread || 0) + 1;
+    }
+    if (!mine && (!active || document.visibilityState === "hidden") && !conv.muted) {
+      toast(`${displayName(conv.peer)}: ${String(message.body || "").slice(0, 70)}`, "info");
+    }
+    if (state.pane === "messages") {
+      renderConvs();
+      updateRequestCount();
     }
     refreshBadges();
     return;
   }
-  if (event === "friend_request") {
-    toast(t("social.kind.friend_request"), "info");
-    loadPeoplePane().catch(() => {});
+  if (event === "dm_request") {
+    loadConversations().catch(() => {});
     refreshBadges();
     return;
   }
-  if (event === "friend_accept") {
-    toast(t("social.kind.friend_accept"), "success");
-    loadPeoplePane().catch(() => {});
+  if (event === "dm_request_update") {
+    const conv = convById(data?.id);
+    if (conv) {
+      conv.status = data.status;
+      conv.requestedBy = data.requestedBy || conv.requestedBy;
+      conv.respondedAt = data.respondedAt || conv.respondedAt;
+    }
+    loadConversations().catch(() => {});
+    if (state.activeConv && String(state.activeConv.id) === String(data?.id)) {
+      if (data?.status === "accepted") refreshThread(state.activeConv).catch(() => {});
+      else {
+        paintRequestBar();
+        paintConvHead();
+      }
+    }
     refreshBadges();
+    return;
+  }
+  if (event === "dm_read") {
+    const conv = convById(data?.conversationId);
+    if (!conv) return;
+    conv.peerLastReadSeq = Math.max(Number(conv.peerLastReadSeq || 0), Number(data.lastReadSeq || 0));
+    conv.peerLastReadAt = data.lastReadAt || conv.peerLastReadAt;
+    if (state.activeConv?.id === conv.id) renderMessages(true);
+    return;
+  }
+  if (event === "friend_request") {
+    toast(t("social.kind.friend_request"), "info");
+    refreshFriendsSoon();
+    return;
+  }
+  if (event === "friend_accept" || event === "friend_added") {
+    toast(t("social.kind.friend_accept"), "success");
+    refreshFriendsSoon();
+    return;
+  }
+  if (event === "friend_removed" || event === "friend_request_update") {
+    refreshFriendsSoon();
     return;
   }
   if (event === "poll_update") {
@@ -2278,7 +3082,8 @@ function handleSocialEvent(payload) {
   }
   if (event === "notification") {
     const notif = data && typeof data === "object" ? data : {};
-    if (notif.title) toast(notif.title, "info");
+    const dedicated = ["dm_message", "friend_request", "friend_accept"].includes(notif.kind);
+    if (notif.title && !dedicated) toast(notif.title, "info");
     browserPush(notif.title, notif.body, notif.link);
     if (state.pane === "notifications") loadNotifications(true).catch(() => {});
     refreshBadges();

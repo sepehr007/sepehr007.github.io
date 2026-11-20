@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import Redis from "ioredis";
 
 const state = {
@@ -353,18 +354,35 @@ export function createRateLimiter({
   max = 50,
   windowMs = 60000,
   prefix = "wt:rl:",
-  skip = () => false
+  skip = () => false,
+  keyFor = null
 } = {}) {
   const limit = Math.max(1, Number(max) || 50);
   const window = Math.max(1000, Number(windowMs) || 60000);
+
+  function identity(req) {
+    if (typeof keyFor === "function") {
+      try {
+        const custom = keyFor(req);
+        if (custom) return String(custom);
+      } catch {}
+    }
+    const header = String(req.headers?.authorization || "");
+    const token = header.match(/^Bearer\s+(.+)$/i)?.[1];
+    if (token && token.length >= 16) {
+      const digest = crypto.createHash("sha256").update(token).digest("hex").slice(0, 24);
+      return `user:${digest}`;
+    }
+    const ip = req.ip || req.socket?.remoteAddress || "unknown";
+    return `ip:${ip}`;
+  }
 
   return async function rateLimitHook(req, reply) {
     try {
       if (skip(req)) return;
 
-      const ip = req.ip || req.socket?.remoteAddress || "unknown";
       const bucket = Math.floor(Date.now() / window);
-      const key = `${prefix}${ip}:${bucket}`;
+      const key = `${prefix}${identity(req)}:${bucket}`;
 
       let count = 0;
       let resetMs = window;

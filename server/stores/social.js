@@ -313,7 +313,12 @@ export async function sqlCancelFriendRequest(userId, requestId) {
   if (String(request.from_user) !== String(userId)) fail(403, "forbidden", "Only the sender can cancel this request.");
   if (request.status !== "pending") fail(409, "request_not_pending", "This request is no longer pending.");
   db.prepare("UPDATE friend_requests SET status = 'cancelled' WHERE id = ? AND status = 'pending'").run(String(requestId));
-  return { id: requestId, status: "cancelled" };
+  return {
+    id: request.id,
+    status: "cancelled",
+    to: mapUser(userRowById(db, request.to_user)),
+    from: mapUser(userRowById(db, request.from_user))
+  };
 }
 
 export async function sqlRemoveFriend(userId, username) {
@@ -410,10 +415,13 @@ function mapDmMessage(row, userId, reactions = []) {
   const attachment = safeJson(row.attachment_json, null);
   return {
     id: row.id,
+    seq: row.seq === undefined || row.seq === null ? null : Number(row.seq),
     conversationId: row.conversation_id,
     senderId: row.sender_id,
     body: row.body || "",
     attachment: attachment || null,
+    clientId: row.client_id || "",
+    replyToId: row.reply_to_id || null,
     editedAt: row.edited_at ? Number(row.edited_at) : null,
     deletedAt: row.deleted_at ? Number(row.deleted_at) : null,
     createdAt: Number(row.created_at || 0),
@@ -424,18 +432,25 @@ function mapDmMessage(row, userId, reactions = []) {
 function lastMessageFor(db, conversationId) {
   const row = db
     .prepare(
-      `SELECT id, sender_id, body, deleted_at, created_at FROM dm_messages
-       WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`
+      `SELECT id, rowid AS seq, sender_id, body, attachment_json, client_id, deleted_at, created_at FROM dm_messages
+       WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1`
     )
     .get(String(conversationId));
   if (!row) return null;
   return {
     id: row.id,
+    seq: Number(row.seq || 0),
     senderId: row.sender_id,
     body: row.deleted_at ? "" : row.body || "",
+    hasAttachment: Boolean(row.attachment_json),
     deleted: Boolean(row.deleted_at),
+    clientId: row.client_id || "",
     createdAt: Number(row.created_at || 0)
   };
+}
+
+function conversationStatus(row) {
+  return row.status === "pending" || row.status === "rejected" ? row.status : "accepted";
 }
 
 function mapConversation(db, row, userId, peerRow = null) {
@@ -443,24 +458,41 @@ function mapConversation(db, row, userId, peerRow = null) {
   const pref = db
     .prepare("SELECT muted, archived FROM dm_prefs WHERE conversation_id = ? AND user_id = ?")
     .get(row.id, String(userId));
-  const read = db
-    .prepare("SELECT last_read_at FROM dm_reads WHERE conversation_id = ? AND user_id = ?")
+  const mine = db
+    .prepare("SELECT last_read_at, last_read_seq FROM dm_reads WHERE conversation_id = ? AND user_id = ?")
     .get(row.id, String(userId));
+  const theirs = db
+    .prepare("SELECT last_read_at, last_read_seq FROM dm_reads WHERE conversation_id = ? AND user_id = ?")
+    .get(row.id, String(peer?.id || ""));
+  const myLastReadSeq = Number(mine?.last_read_seq || 0);
   const unread = Number(
     db
       .prepare(
         `SELECT COUNT(*) AS n FROM dm_messages
-         WHERE conversation_id = ? AND sender_id <> ? AND created_at > ?`
+         WHERE conversation_id = ? AND sender_id <> ? AND rowid > ?`
       )
-      .get(row.id, String(userId), Number(read?.last_read_at || 0))?.n || 0
+      .get(row.id, String(userId), myLastReadSeq)?.n || 0
   );
+  const status = conversationStatus(row);
+  const requestedBy = row.requested_by || null;
+  const minePending = status === "pending" && String(requestedBy || "") === String(userId);
   return {
     id: row.id,
     peer,
+    status,
+    requestedBy,
+    requestedAt: row.requested_at ? Number(row.requested_at) : null,
+    respondedAt: row.responded_at ? Number(row.responded_at) : null,
+    pendingIncoming: status === "pending" && !minePending,
+    canReply: status === "accepted" || minePending,
     lastMessage: lastMessageFor(db, row.id),
     unread,
     muted: Boolean(pref?.muted),
     archived: Boolean(pref?.archived),
+    myLastReadSeq,
+    myLastReadAt: mine?.last_read_at ? Number(mine.last_read_at) : 0,
+    peerLastReadSeq: Number(theirs?.last_read_seq || 0),
+    peerLastReadAt: theirs?.last_read_at ? Number(theirs.last_read_at) : 0,
     updatedAt: Number(row.updated_at || row.created_at || 0),
     createdAt: Number(row.created_at || 0)
   };
@@ -483,63 +515,155 @@ export async function sqlOpenConversation(userId, username) {
   const db = await conn();
   const target = requireTargetUser(db, username, userId);
   assertNotBlocked(db, userId, target.id);
+  const friends = isFriend(db, userId, target.id);
+  const privacy = db.prepare("SELECT visibility FROM profiles WHERE user_id = ?").get(String(target.id));
+  if (!friends && privacy?.visibility === "private") {
+    fail(403, "private_profile", "This user only accepts messages from friends.");
+  }
   const [a, b] = pair(userId, target.id);
   let row = db.prepare("SELECT * FROM dm_conversations WHERE user_a = ? AND user_b = ?").get(a, b);
+  let requestCreated = false;
   if (!row) {
     const now = nowMs();
     const id = crypto.randomUUID();
-    db.prepare("INSERT INTO dm_conversations (id, user_a, user_b, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
-      id,
-      a,
-      b,
-      now,
-      now
-    );
+    const status = friends ? "accepted" : "pending";
+    db.prepare(
+      `INSERT INTO dm_conversations
+         (id, user_a, user_b, status, requested_by, requested_at, responded_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, a, b, status, friends ? null : String(userId), now, friends ? now : null, now, now);
     row = conversationRow(db, id);
+    requestCreated = status === "pending";
+  } else if (!friends && row.status === "rejected") {
+    const now = nowMs();
+    db.prepare(
+      "UPDATE dm_conversations SET status = 'pending', requested_by = ?, requested_at = ?, responded_at = NULL WHERE id = ?"
+    ).run(String(userId), now, row.id);
+    row = conversationRow(db, row.id);
+    requestCreated = true;
   }
-  return mapConversation(db, row, userId, target);
+  const conversation = mapConversation(db, row, userId, target);
+  conversation.requestCreated = requestCreated;
+  return conversation;
+}
+
+export async function sqlConversationView(userId, conversationId) {
+  const db = await conn();
+  const row = conversationFor(db, userId, conversationId);
+  return mapConversation(db, row, userId);
+}
+
+export async function sqlRespondConversationRequest(userId, conversationId, accept) {
+  const db = await conn();
+  const row = conversationFor(db, userId, conversationId);
+  if (conversationStatus(row) !== "pending") fail(409, "request_not_pending", "This conversation request is no longer pending.");
+  if (String(row.requested_by || "") === String(userId)) {
+    fail(403, "forbidden", "Only the recipient can answer this conversation request.");
+  }
+  const now = nowMs();
+  transaction((connection) => {
+    connection
+      .prepare(
+        `UPDATE dm_conversations SET status = ?, responded_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'pending'`
+      )
+      .run(accept ? "accepted" : "rejected", now, now, row.id);
+    if (accept) {
+      const [a, b] = pair(row.user_a, row.user_b);
+      connection
+        .prepare("INSERT OR IGNORE INTO friendships (id, user_a, user_b, created_at) VALUES (?, ?, ?, ?)")
+        .run(crypto.randomUUID(), a, b, now);
+    }
+  });
+  return mapConversation(db, conversationRow(db, conversationId), userId);
 }
 
 export async function sqlListDmMessages(userId, conversationId, before = 0, limit = 30) {
   const db = await conn();
   conversationFor(db, userId, conversationId);
   const size = pageLimit(limit, 30, DM_PAGE_MAX);
-  let beforeAt = 0;
+  let beforeSeq = 0;
   if (before) {
     const numeric = Number(before);
-    if (Number.isFinite(numeric) && numeric > 0) beforeAt = numeric;
+    if (Number.isFinite(numeric) && numeric > 0) beforeSeq = Math.floor(numeric);
     else {
-      const ref = db.prepare("SELECT created_at FROM dm_messages WHERE id = ?").get(String(before));
-      beforeAt = ref ? Number(ref.created_at || 0) : 0;
+      const ref = db.prepare("SELECT rowid AS seq FROM dm_messages WHERE id = ?").get(String(before));
+      beforeSeq = ref ? Number(ref.seq || 0) : 0;
     }
   }
-  const rows = beforeAt
+  const rows = beforeSeq
     ? db
         .prepare(
-          `SELECT * FROM dm_messages WHERE conversation_id = ? AND created_at < ?
-           ORDER BY created_at DESC, id DESC LIMIT ?`
+          `SELECT *, rowid AS seq FROM dm_messages WHERE conversation_id = ? AND rowid < ?
+           ORDER BY rowid DESC LIMIT ?`
         )
-        .all(String(conversationId), beforeAt, size)
+        .all(String(conversationId), beforeSeq, size + 1)
     : db
         .prepare(
-          `SELECT * FROM dm_messages WHERE conversation_id = ?
-           ORDER BY created_at DESC, id DESC LIMIT ?`
+          `SELECT *, rowid AS seq FROM dm_messages WHERE conversation_id = ?
+           ORDER BY rowid DESC LIMIT ?`
         )
-        .all(String(conversationId), size);
-  const ordered = rows.reverse();
+        .all(String(conversationId), size + 1);
+  const hasMore = rows.length > size;
+  const ordered = rows.slice(0, size).reverse();
   const reactions = reactionMap(
     db,
     ordered.map((row) => row.id),
     userId
   );
-  return ordered.map((row) => mapDmMessage(row, userId, reactions.get(row.id) || []));
+  const replyPreviews = replyPreviewMap(db, ordered);
+  return {
+    messages: ordered.map((row) => {
+      const message = mapDmMessage(row, userId, reactions.get(row.id) || []);
+      if (message.replyToId) message.replyTo = replyPreviews.get(message.replyToId) || null;
+      return message;
+    }),
+    hasMore,
+    oldestSeq: ordered.length ? ordered[0].seq : null
+  };
 }
 
-export async function sqlSendDmMessage(userId, conversationId, body, attachment) {
+function replyPreviewMap(db, rows) {
+  const ids = [...new Set(rows.map((row) => row.reply_to_id).filter(Boolean))];
+  const map = new Map();
+  if (!ids.length) return map;
+  const placeholders = ids.map(() => "?").join(",");
+  const found = db
+    .prepare(
+      `SELECT id, sender_id, body, attachment_json, deleted_at FROM dm_messages WHERE id IN (${placeholders})`
+    )
+    .all(...ids);
+  for (const row of found) {
+    map.set(row.id, {
+      id: row.id,
+      senderId: row.sender_id,
+      body: row.deleted_at ? "" : row.body || "",
+      hasAttachment: Boolean(row.attachment_json),
+      deleted: Boolean(row.deleted_at)
+    });
+  }
+  return map;
+}
+
+export async function sqlOpenDmMessage(db, userId, messageId) {
+  const row = db.prepare("SELECT *, rowid AS seq FROM dm_messages WHERE id = ?").get(String(messageId));
+  if (!row) return null;
+  conversationFor(db, userId, row.conversation_id);
+  const message = mapDmMessage(row, userId, reactionMap(db, [row.id], userId).get(row.id) || []);
+  if (message.replyToId) message.replyTo = replyPreviewMap(db, [row]).get(message.replyToId) || null;
+  return message;
+}
+
+export async function sqlSendDmMessage(userId, conversationId, body, attachment, options = {}) {
   const db = await conn();
   const conversation = conversationFor(db, userId, conversationId);
   const peerId = conversationPeer(conversation, userId);
   assertNotBlocked(db, userId, peerId);
+  const status = conversationStatus(conversation);
+  if (status === "pending" && String(conversation.requested_by || "") !== String(userId)) {
+    fail(403, "request_pending", "Accept this conversation request before replying.");
+  }
+  if (status === "rejected") fail(403, "request_rejected", "This conversation request was rejected.");
   const text = cleanText(body, 4000);
   let attachmentJson = "";
   if (attachment !== undefined && attachment !== null && attachment !== "") {
@@ -549,18 +673,41 @@ export async function sqlSendDmMessage(userId, conversationId, body, attachment)
     attachmentJson = serialized;
   }
   if (!text && !attachmentJson) fail(400, "empty_message", "Message body cannot be empty.");
+  const clientId = cleanText(options.clientId, 64);
+  if (clientId) {
+    const existing = db
+      .prepare("SELECT id FROM dm_messages WHERE sender_id = ? AND client_id = ?")
+      .get(String(userId), clientId);
+    if (existing) {
+      const message = await sqlOpenDmMessage(db, userId, existing.id);
+      if (message && String(message.conversationId) === String(conversationId)) {
+        message.duplicate = true;
+        return message;
+      }
+    }
+  }
+  let replyToId = null;
+  if (options.replyToId) {
+    const reply = db
+      .prepare("SELECT id, conversation_id FROM dm_messages WHERE id = ?")
+      .get(String(options.replyToId));
+    if (!reply || String(reply.conversation_id) !== String(conversationId)) {
+      fail(404, "reply_not_found", "The message you replied to is not in this conversation.");
+    }
+    replyToId = String(reply.id);
+  }
   const id = crypto.randomUUID();
   const now = nowMs();
   transaction((connection) => {
     connection
       .prepare(
-        `INSERT INTO dm_messages (id, conversation_id, sender_id, body, attachment_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO dm_messages (id, conversation_id, sender_id, body, attachment_json, client_id, reply_to_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, String(conversationId), String(userId), text, attachmentJson, now);
+      .run(id, String(conversationId), String(userId), text, attachmentJson, clientId, replyToId, now);
     connection.prepare("UPDATE dm_conversations SET updated_at = ? WHERE id = ?").run(now, String(conversationId));
   });
-  return mapDmMessage(db.prepare("SELECT * FROM dm_messages WHERE id = ?").get(id), userId, []);
+  return sqlOpenDmMessage(db, userId, id);
 }
 
 function dmMessageWithConversation(db, messageId, userId) {
@@ -579,9 +726,7 @@ export async function sqlEditDmMessage(userId, messageId, body) {
   if (!text) fail(400, "empty_message", "Message body cannot be empty.");
   const now = nowMs();
   db.prepare("UPDATE dm_messages SET body = ?, edited_at = ? WHERE id = ?").run(text, now, String(messageId));
-  const updated = db.prepare("SELECT * FROM dm_messages WHERE id = ?").get(String(messageId));
-  const reactions = reactionMap(db, [updated.id], userId).get(updated.id) || [];
-  return mapDmMessage(updated, userId, reactions);
+  return sqlOpenDmMessage(db, userId, messageId);
 }
 
 export async function sqlDeleteDmMessage(userId, messageId) {
@@ -591,7 +736,7 @@ export async function sqlDeleteDmMessage(userId, messageId) {
   if (!row.deleted_at) {
     db.prepare("UPDATE dm_messages SET deleted_at = ? WHERE id = ?").run(nowMs(), String(messageId));
   }
-  return { ok: true, id: String(messageId) };
+  return { ok: true, id: String(messageId), conversationId: row.conversation_id };
 }
 
 export async function sqlAddDmReaction(userId, messageId, emoji) {
@@ -634,15 +779,23 @@ export async function sqlDmMessageReactions(userId, messageId) {
   return reactionMap(db, [String(messageId)], userId).get(String(messageId)) || [];
 }
 
-export async function sqlMarkConversationRead(userId, conversationId) {
+export async function sqlMarkConversationRead(userId, conversationId, upToSeq = 0) {
   const db = await conn();
   conversationFor(db, userId, conversationId);
   const now = nowMs();
+  const maxRow = db
+    .prepare("SELECT MAX(rowid) AS seq FROM dm_messages WHERE conversation_id = ?")
+    .get(String(conversationId));
+  const maxSeq = Number(maxRow?.seq || 0);
+  const requested = Math.floor(nonNegative(upToSeq, 0));
+  const seq = Math.min(requested > 0 ? requested : maxSeq, maxSeq);
   db.prepare(
-    `INSERT INTO dm_reads (conversation_id, user_id, last_read_at) VALUES (?, ?, ?)
-     ON CONFLICT(conversation_id, user_id) DO UPDATE SET last_read_at = excluded.last_read_at`
-  ).run(String(conversationId), String(userId), now);
-  return { ok: true, lastReadAt: now };
+    `INSERT INTO dm_reads (conversation_id, user_id, last_read_at, last_read_seq) VALUES (?, ?, ?, ?)
+     ON CONFLICT(conversation_id, user_id) DO UPDATE SET
+       last_read_at = excluded.last_read_at,
+       last_read_seq = MAX(dm_reads.last_read_seq, excluded.last_read_seq)`
+  ).run(String(conversationId), String(userId), now, seq);
+  return { ok: true, lastReadAt: now, lastReadSeq: seq };
 }
 
 export async function sqlSetConversationPref(userId, conversationId, { muted, archived }) {
