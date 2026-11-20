@@ -17,6 +17,8 @@ import lobbyRoutes from "./routes/lobbies.js";
 import billingRoutes from "./routes/billing.js";
 import adminRoutes from "./routes/admin.js";
 import platformRoutes from "./routes/platform.js";
+import adminOpsRoutes from "./routes/adminOps.js";
+import adminBillingRoutes from "./routes/adminBilling.js";
 import socialRoutes from "./routes/social.js";
 import roomRoutes from "./routes/rooms.js";
 import { startMaintenance, getDatabase, databaseState, stopMaintenance, closeDatabase } from "./database/index.js";
@@ -505,6 +507,8 @@ export async function buildServer() {
   await app.register(billingRoutes, { prefix: "/api/billing" });
   await app.register(adminRoutes, { prefix: "/api/admin" });
   await app.register(platformRoutes, { prefix: "/api/admin" });
+  await app.register(adminOpsRoutes, { prefix: "/api/admin" });
+  await app.register(adminBillingRoutes, { prefix: "/api/admin" });
   await app.register(socialRoutes, { prefix: "/api/social" });
   await app.register(roomRoutes, { prefix: "/api/rooms" });
 

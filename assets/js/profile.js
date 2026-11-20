@@ -159,14 +159,166 @@ const ACTIVITY_LABEL_KEYS = {
 };
 
 const PLAN_LABEL_KEYS = { monthly: "v8.planMonthly", yearly: "v8.planYearly" };
+const CYCLE_LABEL = { monthly: "ماهانه", yearly: "سالانه", lifetime: "مادام‌العمر" };
+
+function planMoney(amount, currency = "IRT") {
+  const n = Number(amount) || 0;
+  return currency === "USD" ? `$${n.toLocaleString("fa-IR")}` : `${n.toLocaleString("fa-IR")} تومان`;
+}
+
+function planDate(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+async function serverBillingMe() {
+  try {
+    return await apiFetch("/billing/me", { timeoutMs: 6000 });
+  } catch {
+    return null;
+  }
+}
+
+async function renderPlanChoices(refresh) {
+  const box = $("#planChoices");
+  if (!box) return;
+  const fa = document.documentElement.lang === "fa";
+  let data = null;
+  try {
+    data = await apiFetch("/billing/plans", { auth: false, timeoutMs: 6000 });
+  } catch {
+    data = null;
+  }
+  const plans = (Array.isArray(data?.plans) ? data.plans : []).filter((plan) => plan.active !== false && !plan.archived);
+  if (!plans.length) {
+    box.hidden = true;
+    box.replaceChildren();
+    return;
+  }
+  box.hidden = false;
+  box.replaceChildren();
+  const head = el("div", { class: "plan-choices-head" });
+  head.append(el("strong", { text: fa ? "پلن‌ها" : "Plans" }));
+  const coupon = el("input", {
+    type: "text",
+    class: "plan-coupon",
+    placeholder: fa ? "کد تخفیف (اختیاری)" : "Coupon (optional)",
+    dir: "ltr",
+    maxlength: "40"
+  });
+  head.append(coupon);
+  box.append(head);
+  const msg = el("p", { class: "plan-msg", text: "" });
+
+  for (const plan of plans) {
+    const card = el("div", { class: `plan-option${plan.popular ? " popular" : ""}` });
+    const info = el("div", { class: "plan-option-info" });
+    const cycleText = CYCLE_LABEL[plan.cycle] || plan.cycle;
+    const trialText = Number(plan.trialDays) > 0 ? ` · ${plan.trialDays} ${fa ? "روز آزمایشی" : "trial days"}` : "";
+    info.append(
+      el("strong", { text: plan.name }),
+      el("span", { class: "plan-option-price", text: Number(plan.price) > 0 ? planMoney(plan.price, plan.currency) : (fa ? "رایگان" : "Free") }),
+      el("small", { class: "muted", text: `${cycleText} · ${plan.days} ${fa ? "روز" : "days"}${trialText}` })
+    );
+    if (plan.description) info.append(el("small", { class: "muted", text: plan.description }));
+    const actions = el("div", { class: "plan-option-actions" });
+    const buy = el("button", { class: "btn btn-primary btn-sm", type: "button", text: fa ? "خرید / تمدید" : "Subscribe" });
+    buy.addEventListener("click", async () => {
+      buy.disabled = true;
+      try {
+        const res = await apiFetch("/billing/orders", {
+          method: "POST",
+          body: { planId: plan.id, coupon: coupon.value.trim() || undefined }
+        });
+        if (res?.intent?.checkoutUrl) {
+          location.href = res.intent.checkoutUrl;
+          return;
+        }
+        if (res?.intent && res.intent.ok === false) {
+          msg.textContent = fa
+            ? `درگاه پرداخت آماده نیست؛ متغیرهای سرویس لازم است: ${(res.intent.requirements || []).join("، ")}`
+            : "Payment provider is not configured.";
+        } else {
+          const id = res?.order?.id ? ` (${res.order.id})` : "";
+          msg.textContent = fa
+            ? `سفارش${id} ثبت شد. ${res?.intent?.instructions || "فعال‌سازی فقط بعد از تایید سمت سرور انجام می‌شود."}`
+            : "Order created; activation happens after server verification.";
+        }
+        toast(fa ? "سفارش ثبت شد" : "Order created", "success");
+        refresh?.();
+      } catch (err) {
+        msg.textContent = err?.message || (fa ? "ثبت سفارش نشد." : "Order failed.");
+      } finally {
+        buy.disabled = false;
+      }
+    });
+    actions.append(buy);
+    if (Number(plan.trialDays) > 0) {
+      const trial = el("button", { class: "btn btn-secondary btn-sm", type: "button", text: fa ? "دورهٔ آزمایشی" : "Start trial" });
+      trial.addEventListener("click", async () => {
+        trial.disabled = true;
+        try {
+          await apiFetch("/billing/orders", { method: "POST", body: { planId: plan.id, trial: true } });
+          toast(fa ? "دورهٔ آزمایشی فعال شد" : "Trial started", "success");
+          refresh?.();
+        } catch (err) {
+          toast(err?.message || (fa ? "دورهٔ آزمایشی شروع نشد." : "Trial failed"), "error");
+        } finally {
+          trial.disabled = false;
+        }
+      });
+      actions.append(trial);
+    }
+    card.append(info, actions);
+    box.append(card);
+  }
+  box.append(msg);
+}
 
 async function renderPlan() {
   const title = $("#planStatusTitle");
   const meta = $("#planStatusMeta");
   const dot = $("#planStatusDot");
+  const choices = $("#planChoices");
   if (!title || !meta || !dot || !profile) return;
-  const status = await subscriptionStatus(profile.username);
   const fa = document.documentElement.lang === "fa";
+  const server = await serverBillingMe();
+  if (server) {
+    const state = server.state || "none";
+    dot.dataset.state = state === "trial" ? "active" : state;
+    const planName = server.plan?.name || (server.plan ? t(PLAN_LABEL_KEYS[server.plan.id] || "profile.planTitle") : "");
+    const end = planDate(server.subscription?.expiresAt);
+    if (state === "active" || state === "trial") {
+      const days = Number(server.daysLeft);
+      const endText = end ? end.toLocaleDateString(fa ? "fa-IR" : "en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
+      title.textContent = planName || t("profile.planTitle");
+      if (state === "trial") {
+        meta.textContent = fa ? `دورهٔ آزمایشی${endText ? ` تا ${endText}` : ""}${Number.isFinite(days) ? ` · ${days} روز باقی‌مانده` : ""}` : "Trial active";
+      } else if (server.subscription?.cancelAtPeriodEnd) {
+        meta.textContent = fa ? `تا پایان دوره فعال است${endText ? ` (${endText})` : ""} و بعد تمدید نمی‌شود.` : "Active until period end";
+      } else {
+        meta.textContent = fa ? `فعال${endText ? ` تا ${endText}` : ""}${Number.isFinite(days) ? ` · ${days} روز باقی‌مانده` : ""}` : "Active";
+      }
+    } else if (state === "pending") {
+      title.textContent = planName || t("profile.planTitle");
+      meta.textContent = fa ? "سفارش ثبت شده و در انتظار تایید پرداخت سمت سرور است." : "Pending server verification";
+    } else if (state === "expired") {
+      title.textContent = planName || t("profile.planTitle");
+      meta.textContent = fa ? "اشتراک منقضی شده؛ برای ادامه یکی از پلن‌ها را تمدید کن." : "Expired";
+    } else {
+      title.textContent = t("profile.planNone");
+      meta.textContent = t("profile.planNote");
+    }
+    await renderPlanChoices(() => renderPlan());
+    return;
+  }
+
+  if (choices) {
+    choices.hidden = true;
+    choices.replaceChildren();
+  }
+  const status = await subscriptionStatus(profile.username);
   const planName = status.plan ? t(PLAN_LABEL_KEYS[status.plan.id] || "profile.planTitle") : "";
   dot.dataset.state = status.state;
   if (status.state === "active") {

@@ -921,5 +921,77 @@ export const MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_support_tickets_assignee ON support_tickets(assigned_to, status, updated_at DESC);
       `);
     }
+  },
+  {
+    version: 13,
+    name: "plans-coupons-payments",
+    up(db) {
+      addColumn(db, "subscription_plans", "description", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "subscription_plans", "trial_days", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "subscription_plans", "archived", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "subscription_plans", "quota_json", "TEXT NOT NULL DEFAULT '{}'");
+      addColumn(db, "orders", "coupon_code", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "orders", "discount", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "orders", "trial", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "orders", "meta_json", "TEXT NOT NULL DEFAULT '{}'");
+      addColumn(db, "subscriptions", "trial_ends_at", "INTEGER");
+      addColumn(db, "subscriptions", "cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "subscriptions", "renewal_status", "TEXT NOT NULL DEFAULT 'auto'");
+      addColumn(db, "payments", "idempotency_key", "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, "payments", "payload_json", "TEXT NOT NULL DEFAULT '{}'");
+      addColumn(db, "payments", "verified_at", "INTEGER");
+      addColumn(db, "payments", "refunded_at", "INTEGER");
+      addColumn(db, "payments", "refund_reason", "TEXT NOT NULL DEFAULT ''");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS coupons (
+          id TEXT PRIMARY KEY,
+          code TEXT NOT NULL UNIQUE,
+          kind TEXT NOT NULL DEFAULT 'percent' CHECK (kind IN ('percent','fixed')),
+          value INTEGER NOT NULL CHECK (value > 0),
+          plan_id TEXT REFERENCES subscription_plans(id) ON DELETE SET NULL,
+          max_redemptions INTEGER NOT NULL DEFAULT 0,
+          redemptions INTEGER NOT NULL DEFAULT 0,
+          valid_from INTEGER,
+          valid_until INTEGER,
+          active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+          created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS coupon_redemptions (
+          id TEXT PRIMARY KEY,
+          coupon_id TEXT NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          order_id TEXT NOT NULL,
+          amount INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          UNIQUE (coupon_id, order_id)
+        );
+        CREATE TABLE IF NOT EXISTS subscription_events (
+          id TEXT PRIMARY KEY,
+          subscription_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          type TEXT NOT NULL,
+          meta_json TEXT NOT NULL DEFAULT '{}',
+          actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS payment_events (
+          id TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          event_id TEXT NOT NULL,
+          payment_id TEXT,
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          UNIQUE (provider, event_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons(code);
+        CREATE INDEX IF NOT EXISTS idx_coupons_active ON coupons(active, valid_until);
+        CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_user ON coupon_redemptions(user_id, coupon_id);
+        CREATE INDEX IF NOT EXISTS idx_subscription_events_sub ON subscription_events(subscription_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_payment_events_payment ON payment_events(payment_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_idempotency ON payments(idempotency_key) WHERE idempotency_key <> '';
+      `);
+    }
   }
 ];

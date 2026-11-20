@@ -338,3 +338,16 @@ html[data-theme="light"] .cap-pill.no{color:#b91c1c}
   .saved-theme{flex-wrap:wrap}
   .saved-theme .saved-del{margin-inline-start:auto}
 }
+
+.plan-choices{margin-top:16px;display:grid;gap:10px}
+.plan-choices-head{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.plan-coupon{flex:1;min-width:160px;padding:8px 12px;border-radius:11px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.03);color:inherit;font:inherit}
+.plan-option{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.02);flex-wrap:wrap}
+.plan-option.popular{border-color:rgba(var(--brand-rgb,79,70,229),.45);box-shadow:0 0 0 1px rgba(var(--brand-rgb,79,70,229),.15) inset}
+.plan-option-info{display:grid;gap:2px;min-width:0}
+.plan-option-price{font-weight:700;color:#dfe4f2}
+.plan-option-actions{display:flex;gap:6px;flex-wrap:wrap}
+.plan-msg{margin:0;font-size:12px;color:#9aa3b8}
+html[data-theme="light"] .plan-option{border-color:rgba(15,23,42,.1);background:rgba(15,23,42,.02)}
+html[data-theme="light"] .plan-option-price{color:#1e293b}
+html[data-theme="light"] .plan-coupon{border-color:rgba(15,23,42,.14);background:#fff}

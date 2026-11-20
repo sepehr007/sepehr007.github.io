@@ -1,8 +1,9 @@
 import { dbReady } from "../db.js";
-import { getDatabase } from "../database/index.js";
+import { getDatabase, get } from "../database/index.js";
 import { requireAuth } from "./auth.js";
 import { audit } from "../audit.js";
 import { resolveFeatureState, isEnabled } from "../features.js";
+import { sqlPlanQuota } from "../stores/billing.js";
 import {
   RoomError,
   createRoom,
@@ -122,6 +123,13 @@ export default async function roomRoutes(app) {
     }
     if (!wantsPrivate && !isEnabled(state, "features.roomPublic")) {
       return fail(reply, 403, "public_rooms_closed", "Public rooms are disabled by the site owner.");
+    }
+    const quota = await sqlPlanQuota(req.auth.userId, "rooms.max");
+    if (quota != null) {
+      const used = get("SELECT COUNT(*) AS n FROM rooms WHERE host_id = ? AND is_active = 1 AND deleted_at IS NULL", req.auth.userId);
+      if (Number(used?.n || 0) >= quota) {
+        return fail(reply, 403, "quota_rooms", `پلن فعلی اجازهٔ ${quota} اتاق فعال می‌دهد؛ اول یکی از اتاق‌ها را ببند.`);
+      }
     }
     const room = await createRoom(req.auth.userId, req.auth.role, payload);
     await audit("room.create", req, {

@@ -14,10 +14,10 @@
 | دامنه | جدول‌ها |
 | --- | --- |
 | هویت و دسترسی | `users`، `profiles`، `sessions`، `roles`، `permissions`، `role_permissions`، `user_roles`، `app_settings`، `email_tokens` |
-| اجتماع و اتاق | `servers`، `categories`، `channels`، `rooms`، `room_settings`، `room_memberships`، `invitations`، `lobbies` |
-| پیام و پخش | `messages`، `message_reactions`، `message_reports`، `playback_states`، `playback_history`، `subtitle_preferences` |
-| ظاهر و اطلاع‌رسانی | `user_themes`، `notifications`، `announcements` |
-| مالی | `subscription_plans`، `orders`، `subscriptions`، `entitlements`، `payments`، `transactions` |
+| اجتماع و اتاق | `servers`، `categories`، `channels`، `rooms`، `room_settings`، `room_memberships`، `invitations`، `lobbies`، `room_visits` |
+| پیام و پخش | `messages`، `message_reactions`، `message_reports`، `dm_conversations`، `dm_messages`، `dm_reads`، `dm_prefs`، `dm_reactions`، `friendships`، `friend_requests`، `blocks`، `reports`، `moderation_notes`، `room_polls`، `poll_options`، `poll_votes`، `playback_states`، `playback_history`، `subtitle_preferences` |
+| ظاهر و اطلاع‌رسانی | `user_themes`، `notifications`، `notification_prefs`، `announcements`، `support_tickets`، `support_messages`، `media_library` |
+| مالی | `subscription_plans`، `orders`، `subscriptions`، `subscription_events`، `coupons`، `coupon_redemptions`، `entitlements`، `payments`، `payment_events`، `transactions` |
 | عملیات | `feature_flags`، `feature_overrides`، `feature_schedule`، `feature_history`، `audit_logs`، `website_pages`، `analytics_events`، `automation_workflows`، `media_objects`، `backup_runs` |
 
 قاعدهٔ مالکیت: هر جدول فقط از ماژول خودش نوشته و خوانده می‌شود؛ ماژول‌های دیگر با شناسه و کوئری محدود سراغش می‌روند. رسانهٔ سنگین هرگز داخل جدول نیست و فقط در `media_objects` ثبت می‌شود.
@@ -35,7 +35,7 @@
 
 - مهاجرت‌ها نسخه‌دارند (`schema_migrations`) و چک‌سام هر مهاجرت ذخیره می‌شود؛ تغییر متن مهاجرتِ اجراشده هشدار می‌دهد و دوباره اجرا نمی‌شود.
 - هر مهاجرت داخل تراکنش است؛ خطا یعنی برگشت کامل، نه دیتابیس نیمه‌کاره.
-- مهاجرت روی دیتابیس‌های قدیمی تست شده: ستون‌های قدیمی حفظ می‌شوند، کاربران دست‌نخورده می‌مانند و نسخه به ۸ می‌رسد.
+- مهاجرت روی دیتابیس‌های قدیمی تست شده: ستون‌های قدیمی حفظ می‌شوند، کاربران دست‌نخورده می‌مانند و نسخه به ۱۳ می‌رسد (v11 اتاق تماشا و پاپ‌آپ، v12 تحویل اعلان و صف پشتیبانی، v13 پلن/کوپن/پرداخت).
 - بررسی سلامت: `PRAGMA integrity_check`، `foreign_key_check` و شمارش جدول‌ها از طریق `GET /api/admin/database`.
 
 ## پشتیبان، بازیابی و خروجی
@@ -73,12 +73,23 @@
 - `PATCH /api/admin/users/:id` — تغییر نقش و وضعیت با محافظت از آخرین مالک ارشد.
 - `GET/PUT /api/admin/settings` — خواندن رجیستری و ذخیرهٔ امن تنظیمات.
 - `GET/PUT/DELETE /api/admin/features*` و `POST /api/admin/features/schedule` — کنترل دامنه‌دار قابلیت‌ها، زمان‌بندی و تاریخچه.
+- `GET/POST/PATCH/DELETE /api/admin/billing/plans*` — پلن‌ها، تکثیر، ترتیب، آرشیو و حذف ایمن (پلن استفاده‌شده آرشیو می‌شود، نه حذف).
+- `GET/POST /api/admin/billing/coupons` — کوپن درصدی/ثابتی، محدود به پلن یا آزاد، سقف استفاده و پنجرهٔ اعتبار.
+- `GET /api/admin/billing/payments|subscriptions`، `POST .../payments/:id/verify|refund` و `POST .../subscriptions/:id/adjust` — تایید دستی، برگشت وجه، تمدید/لغو/تغییر پلن با ثبت در `subscription_events`.
+- `GET /api/admin/support` و `GET/PATCH /api/admin/support/:id` — صف پشتیبانی با وضعیت، اولویت، مسئول و نتیجه.
+- `GET/POST/PATCH/DELETE /api/admin/pages` — مدیریت صفحه‌های سایت با وضعیت‌های پیش‌نویس/منتشر/آرشیو.
+- `GET/POST/PATCH/DELETE /api/admin/automation` — ساخت و فعال/غیرفعال‌سازی گردش‌کار (اجرای خودکار فعلاً فعال نیست).
+- `POST /api/admin/notifications/broadcast` — اعلان همگانی/نقش‌محور با `confirm: true` و شمارش تحویل.
+- `GET /api/admin/roles` و `PUT /api/admin/roles/:role/permissions` — فهرست نقش‌ها و مجوزها و ذخیرهٔ مجوزهای نقش (نقش‌های سیستمی مالک قفل‌اند).
+- `GET /api/admin/restrictions`، `DELETE /api/admin/restrictions/blocks/:id` و `GET/PATCH /api/admin/reports/social` — مسدودی‌ها و صف گزارش‌های اجتماعی.
+- `POST /api/admin/users/bulk`، `PATCH /api/admin/rooms/:id` — اقدام گروهی روی کاربران (با `confirm: true`) و بستن/بازکردن اتاق.
 
-همه فقط با نقش `owner` یا `super_owner` و با محدودیت نرخ.
+همه فقط با نقش `owner`/`super_owner` یا مجوز مشخصِ همان دامنه، با محدودیت نرخ؛ عملیات حساس بدون `confirm: true` با 428 رد می‌شود.
 
 ## شکاف‌های صادقانه
 
 - آداپتور PostgreSQL و S3/فضای ابری برای فایل‌ها هنوز نوشته نشده؛ `media_objects` فعلاً دفتر ثبت است.
-- جدول‌های `website_pages` و `automation_workflows` ساخته شده‌اند اما تا آمدن رابط کاربری مربوطه فقط ساختارند.
+- `automation_workflows` رابط ساخت/فعال‌سازی دارد اما موتور اجرای گردش‌کار نوشته نشده؛ اعلان‌ها فقط دستی/سیستمی هستند.
+- درگاه پرداخت واقعی وصل نیست: مرزِ اتصال (`manual` و `hmac` با وب‌هوک امضاشده) آماده است اما تا وقتی `PAYMENT_PROVIDER=hmac` و اعتبارنامه‌های درگاه ست نشوند، پرداخت دستی است.
 - مسیر MongoDB مهاجرت داده‌ای به SQLite ندارد؛ نصب فعلی که Mongo ندارد مستقیم روی SQLite است.
 - کنترل دامنه‌ای قابلیت‌ها روی HTTP و مسیرهای اتاق کاملاً اعمال می‌شود؛ جریان‌های WebRTC که مستقیم بین مرورگرها باز شده‌اند از سمت سرور قابل قطع نیستند و فقط از لایهٔ رابط و توکن‌های اتصال بسته می‌شوند.

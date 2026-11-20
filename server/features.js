@@ -305,6 +305,23 @@ export async function activePlanFor(userId) {
   }
 }
 
+async function planFeatureKeys(planId) {
+  if (!planId) return [];
+  try {
+    if (!(await getDatabase())) return [];
+    const row = get("SELECT features_json FROM subscription_plans WHERE id = ?", String(planId));
+    if (!row) return [];
+    const parsed = JSON.parse(row.features_json || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => (typeof item === "string" ? item : item?.key))
+      .filter((key) => typeof key === "string" && key.trim())
+      .map((key) => key.trim());
+  } catch {
+    return [];
+  }
+}
+
 async function roomServerFor(roomCode) {
   if (!roomCode) return "";
   try {
@@ -362,6 +379,15 @@ export async function resolveFeatureState(ctx = {}) {
     }
   }
   const roomBlocks = await roomSettingBlocks(room);
+  const planFeatures = await planFeatureKeys(plan);
+  if (planFeatures.length) {
+    const planMap = scoped.get("plan");
+    const known = new Set(FEATURE_CATALOG.map((item) => item.key));
+    for (const key of planFeatures) {
+      if (!known.has(key) || planMap.has(key)) continue;
+      planMap.set(key, { feature_key: key, enabled: 1, scope_type: "plan", scope_id: plan });
+    }
+  }
   const state = {
     ...base,
     flags: buildFlags(base, scoped, now, roomBlocks),

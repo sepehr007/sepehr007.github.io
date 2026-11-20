@@ -237,7 +237,7 @@ export default async function platformRoutes(app) {
       createdAt: row.created_at,
       expiresAt: row.expires_at
     }));
-    const rooms = all("SELECT room_code, name, is_active, member_count, last_activity_at FROM rooms ORDER BY last_activity_at DESC LIMIT 50");
+    const rooms = all("SELECT id, room_code, name, host_id, is_active, member_count, last_activity_at FROM rooms ORDER BY last_activity_at DESC LIMIT 50");
     return { ok: true, lobbies, rooms };
   });
 

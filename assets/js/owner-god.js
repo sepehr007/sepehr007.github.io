@@ -95,6 +95,50 @@ function fmtMoney(amount, currency = "IRT") {
   return currency === "USD" ? `$${text}` : `${text} تومان`;
 }
 
+function mkBtn(label, onClick, cls = "mini-btn") {
+  const node = el("button", { class: cls, type: "button", text: label });
+  node.addEventListener("click", onClick);
+  return node;
+}
+
+function field(labelText, control, cls = "") {
+  const wrap = el("label", { class: `ofield ${cls}`.trim() }, [el("span", { text: labelText })]);
+  wrap.append(control);
+  return wrap;
+}
+
+function textInput(props = {}) {
+  return el("input", { type: "text", ...props });
+}
+
+function optionsSelect(entries, value) {
+  const select = el("select");
+  for (const [id, label] of entries) select.append(el("option", { value: id, text: label }));
+  if (value !== undefined) select.value = value;
+  return select;
+}
+
+function confirmThen(center, { title, text, label = "تایید و اجرا", danger = false }, run) {
+  const ok = el("button", { class: danger ? "mini-btn danger" : "btn btn-primary btn-sm", type: "button", text: label });
+  ok.addEventListener("click", async () => {
+    ok.disabled = true;
+    try {
+      await run();
+      center.closeModal();
+    } catch (err) {
+      toast(err.message || "انجام نشد.", "error");
+      ok.disabled = false;
+    }
+  });
+  center.showModal(title, [el("p", { class: "ohint", text })], [mkBtn("انصراف", () => center.closeModal()), ok]);
+}
+
+function formGrid(...nodes) {
+  const grid = el("div", { class: "form-grid" });
+  for (const node of nodes) if (node) grid.append(node);
+  return grid;
+}
+
 function table(headers, rows) {
   const wrap = el("div", { class: "table-wrap" });
   const tbl = el("table", { class: "otable" });
@@ -230,10 +274,11 @@ function renderPlatform(section, center) {
 
 /* ---------------- accounts ---------------- */
 
-const accountsState = { q: "", role: "", status: "", before: 0, users: [], more: true };
+const accountsState = { q: "", role: "", status: "", before: 0, users: [], more: true, selected: new Set() };
 
-function renderAccounts(section) {
+function renderAccounts(section, center) {
   section.replaceChildren();
+  let bodyEl = null;
   const paint = () => {
     section.replaceChildren();
     const view = el("div", { class: "og-page" });
@@ -256,11 +301,43 @@ function renderAccounts(section) {
       accountsState.before = 0;
       accountsState.users = [];
       accountsState.more = true;
+      accountsState.selected.clear();
       load();
     });
     bar.append(q, role, status, apply);
 
+    const bulkBar = el("div", { class: "ow-toolbar" });
+    const bulkAction = optionsSelect([["role", "تغییر نقش"], ["status", "تغییر وضعیت"]], "role");
+    const bulkValue = el("select", { class: "ow-input" });
+    const syncBulk = () => {
+      bulkValue.replaceChildren();
+      for (const [id, label] of Object.entries(bulkAction.value === "role" ? ROLE_LABELS : STATUS_LABELS)) {
+        bulkValue.append(el("option", { value: id, text: label }));
+      }
+    };
+    syncBulk();
+    bulkAction.addEventListener("change", syncBulk);
+    const bulkApply = mkBtn("اجرای گروهی", () => {
+      const ids = [...accountsState.selected];
+      if (!ids.length) return toast("اول دست‌کم یک حساب را انتخاب کن.", "error");
+      confirmThen(center, {
+        title: "اجرای گروهی",
+        text: `${ids.length} حساب تغییر می‌کنند؛ این اقدام در گزارش رویدادها ثبت می‌شود.`,
+        danger: true
+      }, async () => {
+        const res = await api("/admin/users/bulk", {
+          method: "POST",
+          body: { ids, action: bulkAction.value, [bulkAction.value]: bulkValue.value, confirm: true }
+        });
+        toast(`${res.updated.length} حساب به‌روز شد${res.skipped.length ? `، ${res.skipped.length} مورد رد شد` : ""}.`);
+        accountsState.selected.clear();
+        load();
+      });
+    });
+    bulkBar.append(el("span", { class: "hint-s", text: "انتخاب گروهی:" }), bulkAction, bulkValue, bulkApply);
+
     const body = el("div");
+    bodyEl = body;
     const moreWrap = el("div", { class: "ow-toolbar" });
     const more = el("button", { class: "mini-btn", type: "button", text: "نمایش بیشتر" });
     more.addEventListener("click", loadMore);
@@ -269,6 +346,7 @@ function renderAccounts(section) {
     view.append(
       card("حساب‌های سرور", "نقش و وضعیت را مستقیم عوض کن؛ تغییرها فوری روی دسترسی همان لحظه اثر می‌گذارند."),
       bar,
+      bulkBar,
       body,
       moreWrap
     );
@@ -277,11 +355,16 @@ function renderAccounts(section) {
   };
 
   const paintTable = () => {
-    const body = section.querySelector(".og-page > div:nth-of-type(2)");
-    if (!body) return;
-    body.replaceChildren(table(
-      ["کاربر", "نقش", "وضعیت", "آخرین ورود", "عضویت"],
+    if (!bodyEl) return;
+    bodyEl.replaceChildren(table(
+      ["", "کاربر", "نقش", "وضعیت", "آخرین ورود", "عضویت"],
       accountsState.users.map((u) => {
+        const pick = el("input", { type: "checkbox" });
+        pick.checked = accountsState.selected.has(u.id);
+        pick.addEventListener("change", () => {
+          if (pick.checked) accountsState.selected.add(u.id);
+          else accountsState.selected.delete(u.id);
+        });
         const roleSel = el("select", { class: "ow-perm-select" });
         for (const [id, label] of Object.entries(ROLE_LABELS)) roleSel.append(el("option", { value: id, text: label }));
         roleSel.value = u.role;
@@ -291,6 +374,7 @@ function renderAccounts(section) {
         statusSel.value = u.status || "active";
         statusSel.addEventListener("change", () => patchUser(u, { status: statusSel.value }, statusSel));
         return [
+          pick,
           el("span", {}, [el("b", { text: `@${u.username}` }), el("small", { text: u.email || "" })]),
           roleSel,
           statusSel,
@@ -359,7 +443,7 @@ function renderAccounts(section) {
 
 /* ---------------- rooms / messages / reports ---------------- */
 
-function renderServerRooms(section) {
+function renderServerRooms(section, center) {
   const reload = async () => {
     section.replaceChildren(loading());
     try {
@@ -385,8 +469,22 @@ function renderServerRooms(section) {
       ));
       view.append(el("h3", { class: "ow-h3", text: "اتاق‌های پیام‌رسانی" }));
       view.append(table(
-        ["کد اتاق", "نام", "اعضا", "فعال", "آخرین فعالیت"],
-        (data.rooms || []).map((r) => [r.room_code || r.roomCode, r.name, String(r.member_count ?? 0), r.is_active ? "بله" : "خیر", fmtDate(r.last_activity_at)])
+        ["کد اتاق", "نام", "اعضا", "فعال", "آخرین فعالیت", "اقدام"],
+        (data.rooms || []).map((r) => {
+          const act = mkBtn(r.is_active ? "بستن اتاق" : "بازکردن اتاق", () => {
+            const action = r.is_active ? "close" : "reopen";
+            confirmThen(center, {
+              title: action === "close" ? "بستن اتاق" : "بازکردن اتاق",
+              text: `${action === "close" ? "اتاق" : "اتاق"} «${r.name || r.room_code}» ${action === "close" ? "برای کاربران بسته می‌شود." : "دوباره باز می‌شود."}`,
+              danger: action === "close"
+            }, async () => {
+              await api(`/admin/rooms/${encodeURIComponent(r.id)}`, { method: "PATCH", body: { action, confirm: true } });
+              toast(action === "close" ? "اتاق بسته شد." : "اتاق باز شد.");
+              reload();
+            });
+          }, r.is_active ? "mini-btn danger" : "mini-btn");
+          return [r.room_code || r.roomCode, r.name, String(r.member_count ?? 0), r.is_active ? "بله" : "خیر", fmtDate(r.last_activity_at), act];
+        })
       ));
       section.replaceChildren(view);
     } catch (err) {
@@ -464,11 +562,14 @@ function renderServerMessages(section) {
   load();
 }
 
-function renderServerReports(section) {
+function renderServerReports(section, center) {
   const reload = async () => {
     section.replaceChildren(loading());
     try {
-      const data = await api("/admin/reports");
+      const [data, social] = await Promise.all([
+        api("/admin/reports"),
+        api("/admin/reports/social?limit=25").catch(() => ({ reports: [] }))
+      ]);
       const view = el("div", { class: "og-page" });
       const bar = el("div", { class: "ow-toolbar" });
       const refresh = el("button", { class: "mini-btn", type: "button", text: "تازه‌سازی" });
@@ -476,15 +577,54 @@ function renderServerReports(section) {
       bar.append(refresh);
       view.append(card("گزارش‌های کاربران", "پیام‌های گزارش‌شده به‌همراه وضعیت رسیدگی."), bar);
       view.append(table(
-        ["وضعیت", "دلیل", "پیام", "گزارش‌دهنده", "اتاق", "زمان"],
-        (data.reports || []).map((r) => [
-          r.status === "open" ? tag("باز", "warn") : tag(r.status === "reviewed" ? "بررسی‌شده" : "رد‌شده"),
-          r.reason || "—",
-          String(r.message || "").slice(0, 120),
-          r.reporter || "—",
-          r.room || "—",
-          fmtDate(r.createdAt)
-        ])
+        ["وضعیت", "دلیل", "پیام", "گزارش‌دهنده", "اتاق", "زمان", "اقدام"],
+        (data.reports || []).map((r) => {
+          const act = r.status === "open"
+            ? mkBtn("بررسی شد", async () => {
+                try {
+                  await api(`/admin/reports/message/${encodeURIComponent(r.id)}`, { method: "PATCH", body: { status: "reviewed" } });
+                  toast("گزارش بررسی شد.");
+                  reload();
+                } catch (err) { toast(err.message || "ثبت نشد.", "error"); }
+              })
+            : el("span", { class: "hint-s", text: "—" });
+          return [
+            r.status === "open" ? tag("باز", "warn") : tag(r.status === "reviewed" ? "بررسی‌شده" : "رد‌شده"),
+            r.reason || "—",
+            String(r.message || "").slice(0, 120),
+            r.reporter || "—",
+            r.room || "—",
+            fmtDate(r.createdAt),
+            act
+          ];
+        })
+      ));
+      view.append(el("h3", { class: "ow-h3", text: "گزارش‌های اجتماعی" }));
+      view.append(table(
+        ["وضعیت", "نوع", "هدف", "دسته", "گزارش‌دهنده", "زمان", "اقدام"],
+        (social.reports || []).map((r) => {
+          const resolve = (status) => async () => {
+            try {
+              await api(`/admin/reports/social/${encodeURIComponent(r.id)}`, { method: "PATCH", body: { status } });
+              toast("گزارش به‌روز شد.");
+              reload();
+            } catch (err) { toast(err.message || "ثبت نشد.", "error"); }
+          };
+          const actions = el("div", { class: "og-actions" }, [
+            mkBtn("رسیدگی", resolve("reviewing")),
+            mkBtn("حل شد", resolve("resolved")),
+            mkBtn("رد", resolve("dismissed"), "mini-btn danger")
+          ]);
+          return [
+            tag(r.status === "open" ? "باز" : r.status === "reviewing" ? "در بررسی" : r.status === "resolved" ? "حل شد" : "رد شد", r.status === "open" ? "warn" : "ok"),
+            r.targetType || "—",
+            String(r.targetId || "").slice(0, 18),
+            r.category || "—",
+            r.reporter || "—",
+            fmtDate(r.createdAt),
+            actions
+          ];
+        })
       ));
       section.replaceChildren(view);
     } catch (err) {
@@ -1036,6 +1176,819 @@ function renderServerAudit(section) {
   reload();
 }
 
+/* ---------------- roles & restrictions ---------------- */
+
+const PERM_GROUP_FA = {
+  rooms: "اتاق‌ها",
+  chat: "گفتگو",
+  billing: "مالی",
+  users: "کاربران",
+  site: "سایت",
+  features: "قابلیت‌ها",
+  content: "محتوا",
+  audit: "رویدادها",
+  backups: "پشتیبان",
+  general: "عمومی"
+};
+
+function renderRoles(section, center) {
+  const reload = async () => {
+    section.replaceChildren(loading());
+    try {
+      const [data, restrictions] = await Promise.all([
+        api("/admin/roles"),
+        api("/admin/restrictions").catch((err) => ({ error: err }))
+      ]);
+      const view = el("div", { class: "og-page" });
+      view.append(card("نقش‌ها و مجوزها", "هر نقش مجموعه‌ای از مجوزها دارد؛ ذخیرهٔ تغییر با تایید انجام و در رویدادها ثبت می‌شود."));
+
+      const groups = new Map();
+      for (const perm of data.permissions || []) {
+        const key = perm.group || "general";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(perm);
+      }
+
+      for (const role of data.roles || []) {
+        const box = card(role.name, role.description || "");
+        const head = el("div", { class: "ow-toolbar" });
+        head.append(tag(`${role.users} کاربر`), role.locked ? tag("قفل‌شده", "warn") : tag(role.system ? "سیستمی" : "سفارشی", "ok"));
+        box.append(head);
+        const grid = el("div", { class: "og-perm-grid" });
+        const checks = new Map();
+        for (const [group, perms] of groups) {
+          const groupBox = el("div", { class: "og-perm-group" });
+          groupBox.append(el("b", { class: "ow-h3", text: PERM_GROUP_FA[group] || group }));
+          for (const perm of perms) {
+            const row = el("label", { class: "ow-chip" });
+            const cb = el("input", { type: "checkbox" });
+            cb.checked = (role.permissions || []).includes(perm.id);
+            cb.disabled = Boolean(role.locked);
+            checks.set(perm.id, cb);
+            row.append(cb, el("span", { text: perm.id }));
+            groupBox.append(row);
+          }
+          grid.append(groupBox);
+        }
+        box.append(grid);
+        if (!role.locked) {
+          box.append(mkBtn("ذخیرهٔ مجوزها", () => {
+            const wanted = [...checks.entries()].filter(([, cb]) => cb.checked).map(([id]) => id);
+            confirmThen(center, {
+              title: `مجوزهای ${role.name}`,
+              text: `مجموعهٔ جدید شامل ${wanted.length} مجوز است؛ دسترسی همهٔ کاربران این نقش فوراً تغییر می‌کند.`,
+              danger: true
+            }, async () => {
+              await api(`/admin/roles/${encodeURIComponent(role.id)}/permissions`, {
+                method: "PUT",
+                body: { permissions: wanted, confirm: true }
+              });
+              toast("مجوزها ذخیره شد.");
+              reload();
+            });
+          }));
+        }
+        view.append(box);
+      }
+
+      const rest = card("محدودیت‌ها و مسدودی‌ها", "رفع مسدودی بین کاربران و فعال‌کردن دوبارهٔ حساب‌های تعلیق‌شده.");
+      if (restrictions?.error) {
+        rest.append(el("p", { class: "ohint", text: restrictions.error.message || "برای دیدن این بخش به مجوز مدیریت کاربران نیاز است." }));
+      } else {
+        rest.append(table(
+          ["کاربر محدود", "وضعیت", "آخرین تغییر", "اقدام"],
+          (restrictions.restricted || []).map((u) => [
+            `@${u.username}`,
+            STATUS_LABELS[u.status] || u.status,
+            fmtDate(u.updatedAt),
+            mkBtn("فعال‌سازی دوباره", () => {
+              confirmThen(center, { title: "فعال‌سازی حساب", text: `حساب @${u.username} دوباره فعال شود؟` }, async () => {
+                await api(`/admin/users/${encodeURIComponent(u.id)}`, { method: "PATCH", body: { status: "active" } });
+                toast("حساب فعال شد.");
+                reload();
+              });
+            })
+          ])
+        ));
+        rest.append(el("h3", { class: "ow-h3", text: "مسدودی بین کاربران" }), table(
+          ["مسدودکننده", "مسدودشده", "زمان", "اقدام"],
+          (restrictions.blocks || []).map((b) => [
+            `@${b.username || "—"}`,
+            `@${b.blockedName || "—"}`,
+            fmtDate(b.createdAt),
+            mkBtn("رفع مسدودی", () => {
+              confirmThen(center, {
+                title: "رفع مسدودی",
+                text: `@${b.username} دوباره می‌تواند برای @${b.blockedName} پیام بفرستد.`,
+                danger: true
+              }, async () => {
+                await api(`/admin/restrictions/blocks/${encodeURIComponent(b.id)}`, { method: "DELETE", body: { confirm: true } });
+                toast("مسدودی برداشته شد.");
+                reload();
+              });
+            }, "mini-btn danger")
+          ])
+        ));
+      }
+      view.append(rest);
+      section.replaceChildren(view);
+    } catch (err) {
+      failure(section, err, reload);
+    }
+  };
+  reload();
+}
+
+/* ---------------- billing admin ---------------- */
+
+const CYCLE_FA = { monthly: "ماهانه", yearly: "سالانه", lifetime: "مادام‌العمر" };
+const SUB_STATUS_FA = { active: "فعال", pending: "در انتظار", expired: "منقضی", cancelled: "لغو‌شده" };
+const PAY_STATUS_FA = { pending: "در انتظار", paid: "پرداخت‌شده", failed: "ناموفق", refunded: "بازگشت‌خورده", cancelled: "لغو" };
+
+function renderBillingAdmin(section, center) {
+  const state = { plans: [], coupons: [], payments: [], subs: [], overview: null };
+
+  const reload = async () => {
+    section.replaceChildren(loading());
+    try {
+      const [overview, plans, coupons, payments, subs] = await Promise.all([
+        api("/admin/billing/overview"),
+        api("/admin/billing/plans"),
+        api("/admin/billing/coupons"),
+        api("/admin/billing/payments?limit=25"),
+        api("/admin/billing/subscriptions?limit=25")
+      ]);
+      state.overview = overview;
+      state.plans = plans.plans || [];
+      state.coupons = coupons.coupons || [];
+      state.payments = payments.payments || [];
+      state.subs = subs.subscriptions || [];
+      paint();
+    } catch (err) {
+      failure(section, err, reload);
+    }
+  };
+
+  const openPlanModal = (plan) => {
+    const id = textInput({ placeholder: "pro-yearly", dir: "ltr" });
+    id.value = plan?.id || "";
+    id.disabled = Boolean(plan);
+    const name = textInput({ maxlength: "80" });
+    name.value = plan?.name || "";
+    const desc = el("textarea", { rows: "2", maxlength: "500" });
+    desc.value = plan?.description || "";
+    const cycle = optionsSelect(Object.entries(CYCLE_FA), plan?.cycle || "monthly");
+    const price = el("input", { type: "number", min: "0" });
+    price.value = String(plan?.price ?? 0);
+    const currency = textInput({ dir: "ltr" });
+    currency.value = plan?.currency || "IRT";
+    const days = el("input", { type: "number", min: "1" });
+    days.value = String(plan?.days ?? 30);
+    const trial = el("input", { type: "number", min: "0" });
+    trial.value = String(plan?.trialDays ?? 0);
+    const rooms = el("input", { type: "number", min: "0", placeholder: "نامحدود" });
+    rooms.value = plan?.quota?.["rooms.max"] != null ? String(plan.quota["rooms.max"]) : "";
+    const features = el("textarea", { rows: "4", dir: "ltr", placeholder: "features.chat\nfeatures.realtimeEnabled" });
+    features.value = (plan?.features || []).join("\n");
+    const active = el("input", { type: "checkbox" });
+    active.checked = plan?.active !== false;
+    const popular = el("input", { type: "checkbox" });
+    popular.checked = Boolean(plan?.popular);
+
+    const body = el("div");
+    body.append(
+      el("p", { class: "ohint", text: "شناسه فقط لاتین/عدد/خط تیره است و بعد از ساخت تغییر نمی‌کند. کلید سهمیهٔ rooms.max روی ساخت اتاق اعمال می‌شود." }),
+      formGrid(
+        field("شناسه", id),
+        field("نام", name),
+        field("چرخه", cycle),
+        field("قیمت", price),
+        field("واحد پول", currency),
+        field("مدت (روز)", days),
+        field("روز آزمایشی", trial),
+        field("سقف اتاق فعال", rooms),
+        field("توضیح", desc, "span2"),
+        field("ویژگی‌ها (هر خط یک کلید)", features, "span2"),
+        field("فعال", active),
+        field("پیشنهاد ویژه", popular)
+      )
+    );
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: plan ? "ذخیرهٔ تغییرها" : "ساخت پلن" });
+    save.addEventListener("click", async () => {
+      const payload = {
+        name: name.value.trim(),
+        description: desc.value.trim(),
+        cycle: cycle.value,
+        price: Number(price.value) || 0,
+        currency: currency.value.trim() || "IRT",
+        days: Number(days.value) || 30,
+        trialDays: Number(trial.value) || 0,
+        features: features.value.split("\n").map((line) => line.trim()).filter(Boolean),
+        quota: Number(rooms.value) > 0 ? { "rooms.max": Number(rooms.value) } : {},
+        active: active.checked,
+        popular: popular.checked
+      };
+      if (!plan) payload.id = id.value.trim().toLowerCase();
+      if (!payload.name) return toast("نام پلن لازم است.", "error");
+      save.disabled = true;
+      try {
+        if (plan) await api(`/admin/billing/plans/${encodeURIComponent(plan.id)}`, { method: "PATCH", body: payload });
+        else await api("/admin/billing/plans", { method: "POST", body: payload });
+        toast("پلن ذخیره شد.");
+        center.closeModal();
+        reload();
+      } catch (err) {
+        toast(err.message || "ذخیره نشد.", "error");
+        save.disabled = false;
+      }
+    });
+    center.showModal(plan ? `ویرایش ${plan.name}` : "پلن جدید", [body], [mkBtn("انصراف", () => center.closeModal()), save]);
+  };
+
+  const openCouponModal = () => {
+    const code = textInput({ placeholder: "YALDA1405", dir: "ltr" });
+    const kind = optionsSelect([["percent", "درصدی"], ["fixed", "مبلغ ثابت"]], "percent");
+    const value = el("input", { type: "number", min: "1" });
+    value.value = "20";
+    const planSel = optionsSelect([["", "همهٔ پلن‌ها"], ...state.plans.map((p) => [p.id, p.name])], "");
+    const maxUses = el("input", { type: "number", min: "0", placeholder: "نامحدود" });
+    const until = el("input", { type: "date" });
+    const body = el("div");
+    body.append(
+      el("p", { class: "ohint", text: "کد تخفیف پس از ساخت قابل ویرایش است؛ هر کاربر فقط یک بار می‌تواند آن را استفاده کند." }),
+      formGrid(
+        field("کد", code),
+        field("نوع", kind),
+        field("مقدار", value),
+        field("پلن", planSel),
+        field("سقف استفاده", maxUses),
+        field("معتبر تا", until)
+      )
+    );
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ساخت کد" });
+    save.addEventListener("click", async () => {
+      const payload = {
+        code: code.value.trim().toUpperCase(),
+        kind: kind.value,
+        value: Number(value.value) || 0,
+        planId: planSel.value || null,
+        maxRedemptions: Number(maxUses.value) || 0,
+        validUntil: until.value ? new Date(`${until.value}T23:59:59`).getTime() : null
+      };
+      if (!payload.code) return toast("کد لازم است.", "error");
+      save.disabled = true;
+      try {
+        await api("/admin/billing/coupons", { method: "POST", body: payload });
+        toast("کد تخفیف ساخته شد.");
+        center.closeModal();
+        reload();
+      } catch (err) {
+        toast(err.message || "ساخته نشد.", "error");
+        save.disabled = false;
+      }
+    });
+    center.showModal("کد تخفیف جدید", [body], [mkBtn("انصراف", () => center.closeModal()), save]);
+  };
+
+  const openVerify = (payment) => {
+    const ref = textInput({ placeholder: "کد رهگیری درگاه (اختیاری)", dir: "ltr" });
+    const go = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "تایید پرداخت" });
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      try {
+        await api(`/admin/billing/payments/${encodeURIComponent(payment.id)}/verify`, {
+          method: "POST",
+          body: { providerRef: ref.value.trim(), confirm: true }
+        });
+        toast("پرداخت تایید و اشتراک فعال شد.");
+        center.closeModal();
+        reload();
+      } catch (err) {
+        toast(err.message || "تایید نشد.", "error");
+        go.disabled = false;
+      }
+    });
+    center.showModal("تایید دستی پرداخت", [
+      el("p", { class: "ohint", text: `${fmtMoney(payment.amount, payment.currency)} برای @${payment.username || payment.user}. فعال‌سازی فقط بعد از این تایید انجام می‌شود.` }),
+      field("کد رهگیری", ref)
+    ], [mkBtn("انصراف", () => center.closeModal()), go]);
+  };
+
+  const openRefund = (payment) => {
+    const reason = el("textarea", { rows: "2", maxlength: "300", placeholder: "دلیل بازگشت" });
+    const go = el("button", { class: "mini-btn danger", type: "button", text: "ثبت بازگشت وجه" });
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      try {
+        await api(`/admin/billing/payments/${encodeURIComponent(payment.id)}/refund`, {
+          method: "POST",
+          body: { reason: reason.value.trim(), confirm: true }
+        });
+        toast("بازگشت وجه ثبت و اشتراک لغو شد.");
+        center.closeModal();
+        reload();
+      } catch (err) {
+        toast(err.message || "ثبت نشد.", "error");
+        go.disabled = false;
+      }
+    });
+    center.showModal("بازگشت وجه", [
+      el("p", { class: "ohint", text: "این اقدام پرداخت را بازگشت‌خورده علامت می‌زند، اشتراک مرتبط را لغو می‌کند و در گزارش رویدادها می‌ماند." }),
+      field("دلیل", reason)
+    ], [mkBtn("انصراف", () => center.closeModal()), go]);
+  };
+
+  const openSubAdjust = (sub) => {
+    const action = optionsSelect([
+      ["extend", "تمدید (روز)"],
+      ["cancel_at_period_end", "لغو در پایان دوره"],
+      ["resume", "فعال‌سازی دوباره"],
+      ["cancel", "لغو فوری"],
+      ["expire", "پایان دادن"],
+      ["change_plan", "تغییر پلن"]
+    ], "extend");
+    const days = el("input", { type: "number", min: "1" });
+    days.value = "30";
+    const planSel = optionsSelect(state.plans.map((p) => [p.id, p.name]));
+    const note = textInput({ maxlength: "300", placeholder: "یادداشت داخلی" });
+    const go = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "اجرا" });
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      try {
+        await api(`/admin/billing/subscriptions/${encodeURIComponent(sub.id)}/adjust`, {
+          method: "POST",
+          body: {
+            action: action.value,
+            days: action.value === "extend" ? Number(days.value) || 0 : undefined,
+            planId: action.value === "change_plan" ? planSel.value : undefined,
+            note: note.value.trim(),
+            confirm: true
+          }
+        });
+        toast("اشتراک به‌روز شد.");
+        center.closeModal();
+        reload();
+      } catch (err) {
+        toast(err.message || "انجام نشد.", "error");
+        go.disabled = false;
+      }
+    });
+    center.showModal(`اشتراک @${sub.username || sub.user}`, [
+      el("p", { class: "ohint", text: `پلن ${sub.planId} · وضعیت ${SUB_STATUS_FA[sub.status] || sub.status}` }),
+      formGrid(field("اقدام", action), field("روز", days), field("پلن جدید", planSel), field("یادداشت", note))
+    ], [mkBtn("انصراف", () => center.closeModal()), go]);
+  };
+
+  const paint = () => {
+    const view = el("div", { class: "og-page" });
+    const totals = state.overview?.totals || {};
+    const provider = state.overview?.provider || {};
+    const grid = el("div", { class: "stat-grid" });
+    grid.append(
+      statCard("درآمد موفق", fmtMoney(totals.paidAmount, "IRT"), `${totals.paidOrders ?? 0} پرداخت`),
+      statCard("بازگشت وجه", fmtMoney(totals.refundedAmount, "IRT"), "جمع بازگشتی‌ها"),
+      statCard("سفارش در انتظار", totals.pendingOrders ?? 0, "پرداخت‌نشده"),
+      statCard("اشتراک فعال", totals.activeSubscriptions ?? 0, "در حال استفاده"),
+      statCard("کد تخفیف فعال", state.overview?.counts?.coupons ?? 0, "قابل استفاده"),
+      statCard("پرداخت معلق", state.overview?.counts?.pendingPayments ?? 0, "نیازمند بررسی")
+    );
+    view.append(grid);
+
+    const providerCard = card("درگاه پرداخت", "فعال‌سازی فقط بعد از تایید سمت سرور انجام می‌شود؛ پیام موفقیت مرورگر ملاک نیست.");
+    providerCard.append(table(
+      ["درگاه", "حالت", "آماده", "خارج از این پروژه لازم است"],
+      [[provider.provider || "manual", provider.mode || "manual", provider.configured ? "بله" : "خیر", (provider.requirements || []).join("، ") || "—"]]
+    ));
+    providerCard.append(el("p", { class: "ohint", text: "برای درگاه واقعی، متغیرهای سروری PAYMENT_WEBHOOK_SECRET و PAYMENT_CHECKOUT_URL (و در صورت نیاز PAYMENT_MERCHANT_ID) باید با قرارداد درگاه هماهنگ شوند." }));
+    view.append(providerCard);
+
+    const plansCard = card("پلن‌ها", "ساخت، ویرایش، کپی، ترتیب، غیرفعال‌سازی و حذف امن بدون تغییر سورس.");
+    plansCard.append(el("div", { class: "ow-toolbar" }, [
+      mkBtn("پلن جدید", () => openPlanModal(null)),
+      mkBtn("تازه‌سازی", reload)
+    ]));
+    plansCard.append(table(
+      ["نام", "شناسه", "چرخه", "قیمت", "مدت", "آزمایشی", "سقف اتاق", "مشترک", "وضعیت", "اقدام"],
+      state.plans.map((p) => {
+        const actions = el("div", { class: "og-actions" }, [
+          mkBtn("ویرایش", () => openPlanModal(p)),
+          mkBtn("کپی", async () => {
+            try {
+              await api(`/admin/billing/plans/${encodeURIComponent(p.id)}/duplicate`, { method: "POST", body: {} });
+              toast("پلن کپی شد.");
+              reload();
+            } catch (err) { toast(err.message || "کپی نشد.", "error"); }
+          }),
+          mkBtn(p.active ? "غیرفعال" : "فعال", async () => {
+            try {
+              await api(`/admin/billing/plans/${encodeURIComponent(p.id)}`, { method: "PATCH", body: { active: !p.active } });
+              toast(p.active ? "پلن غیرفعال شد." : "پلن فعال شد.");
+              reload();
+            } catch (err) { toast(err.message || "تغییر نکرد.", "error"); }
+          }),
+          p.archived
+            ? mkBtn("بازیابی", async () => {
+                try {
+                  await api(`/admin/billing/plans/restore/${encodeURIComponent(p.id)}`, { method: "POST", body: {} });
+                  toast("پلن بازیابی شد.");
+                  reload();
+                } catch (err) { toast(err.message || "بازیابی نشد.", "error"); }
+              })
+            : mkBtn("حذف", () => {
+                confirmThen(center, {
+                  title: "حذف پلن",
+                  text: "اگر پلنی مشترک فعال دارد فقط آرشیو می‌شود؛ در غیر این صورت حذف می‌شود. این اقدام بازگشت‌پذیر نیست.",
+                  danger: true
+                }, async () => {
+                  const res = await api(`/admin/billing/plans/${encodeURIComponent(p.id)}`, { method: "DELETE", body: { confirm: true } });
+                  toast(res.mode === "archived" ? "پلن مشترک دارد؛ آرشیو شد." : "پلن حذف شد.");
+                  reload();
+                });
+              }, "mini-btn danger")
+        ]);
+        return [
+          p.name,
+          el("code", { text: p.id }),
+          CYCLE_FA[p.cycle] || p.cycle,
+          fmtMoney(p.price, p.currency),
+          `${p.days} روز`,
+          p.trialDays ? `${p.trialDays} روز` : "—",
+          p.quota?.["rooms.max"] != null ? String(p.quota["rooms.max"]) : "نامحدود",
+          String(p.subscribers ?? 0),
+          p.archived ? tag("آرشیو", "warn") : p.active ? tag("فعال") : tag("غیرفعال", "warn"),
+          actions
+        ];
+      })
+    ));
+    view.append(plansCard);
+
+    const couponsCard = card("کدهای تخفیف", "درصدی یا مبلغ ثابت، قابل محدودکردن به یک پلن و سقف استفاده.");
+    couponsCard.append(el("div", { class: "ow-toolbar" }, [mkBtn("کد جدید", openCouponModal)]));
+    couponsCard.append(table(
+      ["کد", "نوع", "مقدار", "پلن", "استفاده", "وضعیت", "اقدام"],
+      state.coupons.map((c) => {
+        const deactivate = c.active
+          ? mkBtn("غیرفعال", () => {
+              confirmThen(center, { title: "غیرفعال‌کردن کد", text: `کد ${c.code} دیگر پذیرفته نمی‌شود.`, danger: true }, async () => {
+                await api(`/admin/billing/coupons/${encodeURIComponent(c.id)}`, { method: "DELETE", body: { confirm: true } });
+                toast("کد غیرفعال شد.");
+                reload();
+              });
+            }, "mini-btn danger")
+          : el("span", { class: "hint-s", text: "—" });
+        return [
+          el("code", { text: c.code }),
+          c.kind === "percent" ? "درصدی" : "ثابت",
+          c.kind === "percent" ? `${c.value}%` : fmtMoney(c.value, "IRT"),
+          c.planId || "همه",
+          `${c.redemptions}${c.maxRedemptions ? ` از ${c.maxRedemptions}` : ""}`,
+          c.active ? tag("فعال") : tag("غیرفعال", "warn"),
+          deactivate
+        ];
+      })
+    ));
+    view.append(couponsCard);
+
+    const payCard = card("پرداخت‌ها", "تایید دستی فقط برای پرداخت‌های واقعی و با مسئولیت مدیر؛ هر تایید در رویدادها ثبت می‌شود.");
+    payCard.append(table(
+      ["کاربر", "پلن", "مبلغ", "درگاه", "وضعیت", "زمان", "اقدام"],
+      state.payments.map((p) => {
+        const actions = el("div", { class: "og-actions" }, [
+          p.status === "pending" ? mkBtn("تایید", () => openVerify(p)) : null,
+          p.status === "paid" ? mkBtn("بازگشت وجه", () => openRefund(p), "mini-btn danger") : null
+        ].filter(Boolean));
+        return [
+          `@${p.username || p.user || "—"}`,
+          p.planId || "—",
+          fmtMoney(p.amount, p.currency),
+          p.provider || "manual",
+          PAY_STATUS_FA[p.status] || p.status,
+          fmtDate(p.createdAt),
+          actions
+        ];
+      })
+    ));
+    view.append(payCard);
+
+    const subCard = card("اشتراک‌ها", "تمدید، لغو، تغییر پلن و پایان دستی؛ تغییرها به کاربر اطلاع داده می‌شود.");
+    subCard.append(table(
+      ["کاربر", "پلن", "وضعیت", "تمدید", "شروع", "انقضا", "اقدام"],
+      state.subs.map((s) => [
+        `@${s.username || s.user || "—"}`,
+        s.planId,
+        SUB_STATUS_FA[s.status] || s.status,
+        s.renewalStatus || "—",
+        fmtDate(s.startedAt),
+        fmtDate(s.expiresAt),
+        mkBtn("مدیریت", () => openSubAdjust(s))
+      ])
+    ));
+    view.append(subCard);
+
+    section.replaceChildren(view);
+  };
+
+  reload();
+}
+
+/* ---------------- support queue ---------------- */
+
+const TICKET_STATUS_FA = { open: "باز", pending: "در انتظار پاسخ", resolved: "حل شد", closed: "بسته" };
+const TICKET_PRIORITY_FA = { low: "کم", normal: "عادی", high: "بالا", urgent: "فوری" };
+
+function renderSupport(section, center) {
+  const state = { status: "", priority: "", q: "", tickets: [], agents: [] };
+
+  const openTicket = async (ticket) => {
+    let full = ticket;
+    try {
+      const res = await api(`/admin/support/${encodeURIComponent(ticket.id)}`);
+      full = res.ticket || ticket;
+      state.agents = res.agents || state.agents;
+    } catch {}
+    const status = optionsSelect(Object.entries(TICKET_STATUS_FA), full.status || "open");
+    const priority = optionsSelect(Object.entries(TICKET_PRIORITY_FA), full.priority || "normal");
+    const agentLabel = (a) => (a.role ? `@${a.username} (${a.role})` : `@${a.username}`);
+    const assignee = optionsSelect([["", "بدون مسئول"], ...state.agents.map((a) => [a.id, agentLabel(a)])], full.assignedTo || "");
+    const resolution = el("textarea", { rows: "3", maxlength: "2000", placeholder: "پاسخ یا نتیجه" });
+    resolution.value = full.resolution || "";
+    const messages = el("div", { class: "ow-kv" });
+    const list = full.messages || full.events || [];
+    if (Array.isArray(list) && list.length) {
+      for (const m of list.slice(0, 30)) {
+        const row = el("div");
+        row.append(el("span", { text: m.author || m.username || m.type || "—" }), el("b", { text: String(m.body || m.content || m.text || "").slice(0, 300) }));
+        messages.append(row);
+      }
+    } else {
+      messages.append(el("p", { class: "ohint", text: full.body || full.description || "بدنهٔ تیکت در دسترس نیست." }));
+    }
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیره" });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        await api(`/admin/support/${encodeURIComponent(ticket.id)}`, {
+          method: "PATCH",
+          body: {
+            status: status.value,
+            priority: priority.value,
+            assignedTo: assignee.value || null,
+            resolution: resolution.value.trim()
+          }
+        });
+        toast("تیکت به‌روز شد.");
+        center.closeModal();
+        reload();
+      } catch (err) {
+        toast(err.message || "ثبت نشد.", "error");
+        save.disabled = false;
+      }
+    });
+    center.showModal(`تیکت ${full.subject || ticket.subject}`, [
+      el("p", { class: "ohint", text: `از @${full.username || ticket.username || "—"} · ${full.category || "support"}` }),
+      messages,
+      formGrid(field("وضعیت", status), field("اولویت", priority), field("مسئول", assignee), field("نتیجه", resolution, "span2"))
+    ], [mkBtn("انصراف", () => center.closeModal()), save]);
+  };
+
+  const reload = async () => {
+    section.replaceChildren(loading());
+    try {
+      const qs = new URLSearchParams({ limit: "30" });
+      if (state.status) qs.set("status", state.status);
+      if (state.priority) qs.set("priority", state.priority);
+      if (state.q) qs.set("q", state.q);
+      const data = await api(`/admin/support?${qs.toString()}`);
+      state.tickets = data.tickets || [];
+      state.agents = data.agents || [];
+
+      const view = el("div", { class: "og-page" });
+      const bar = el("div", { class: "ow-toolbar" });
+      const status = optionsSelect([["", "همهٔ وضعیت‌ها"], ...Object.entries(TICKET_STATUS_FA)], state.status);
+      const priority = optionsSelect([["", "همهٔ اولویت‌ها"], ...Object.entries(TICKET_PRIORITY_FA)], state.priority);
+      const q = el("input", { class: "ow-input", type: "search", placeholder: "جستجوی موضوع یا کاربر…" });
+      q.value = state.q;
+      const apply = mkBtn("اعمال", () => {
+        state.status = status.value;
+        state.priority = priority.value;
+        state.q = q.value.trim();
+        reload();
+      });
+      bar.append(status, priority, q, apply);
+      view.append(card("صف پشتیبانی", "اولویت‌بندی، ارجاع و حل تیکت‌ها؛ تغییر وضعیت به کاربر اطلاع داده می‌شود."), bar);
+      view.append(table(
+        ["وضعیت", "اولویت", "موضوع", "کاربر", "مسئول", "آخرین تغییر", "اقدام"],
+        state.tickets.map((t) => [
+          tag(TICKET_STATUS_FA[t.status] || t.status, t.status === "open" ? "warn" : "ok"),
+          TICKET_PRIORITY_FA[t.priority] || t.priority,
+          t.subject,
+          `@${t.username || "—"}`,
+          t.assigneeName ? `@${t.assigneeName}` : "—",
+          fmtDate(t.updatedAt),
+          mkBtn("رسیدگی", () => openTicket(t))
+        ])
+      ));
+      section.replaceChildren(view);
+    } catch (err) {
+      failure(section, err, reload);
+    }
+  };
+  reload();
+}
+
+/* ---------------- website pages & automation & broadcast ---------------- */
+
+function renderPages(section, center) {
+  const openEditor = (page) => {
+    const title = textInput({ maxlength: "160" });
+    title.value = page?.title || "";
+    const slug = textInput({ dir: "ltr", maxlength: "64" });
+    slug.value = page?.slug || "";
+    slug.disabled = Boolean(page);
+    const status = optionsSelect([["draft", "پیش‌نویس"], ["published", "منتشرشده"], ["archived", "آرشیو"]], page?.status || "draft");
+    const locale = optionsSelect([["fa", "فارسی"], ["en", "English"]], page?.locale || "fa");
+    const body = el("textarea", { rows: "10", maxlength: "200000", placeholder: "متن صفحه…" });
+    body.value = page?.body || "";
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیره" });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        const payload = { title: title.value.trim(), body: body.value, status: status.value, locale: locale.value };
+        if (page) await api(`/admin/pages/${encodeURIComponent(page.id)}`, { method: "PATCH", body: payload });
+        else await api("/admin/pages", { method: "POST", body: { ...payload, slug: slug.value.trim().toLowerCase() } });
+        toast("صفحه ذخیره شد.");
+        center.closeModal();
+        reload();
+      } catch (err) {
+        toast(err.message || "ذخیره نشد.", "error");
+        save.disabled = false;
+      }
+    });
+    center.showModal(page ? `ویرایش ${page.title}` : "صفحهٔ جدید", [formGrid(
+      field("عنوان", title),
+      field("نشانی (slug)", slug),
+      field("وضعیت", status),
+      field("زبان", locale),
+      field("متن", body, "span2")
+    )], [mkBtn("انصراف", () => center.closeModal()), save]);
+  };
+
+  const reload = async () => {
+    section.replaceChildren(loading());
+    try {
+      const data = await api("/admin/pages");
+      const view = el("div", { class: "og-page" });
+      const bar = el("div", { class: "ow-toolbar" });
+      bar.append(mkBtn("صفحهٔ جدید", () => openEditor(null)), mkBtn("تازه‌سازی", reload));
+      view.append(card("صفحه‌های سایت", "صفحه‌های محتوایی (قوانین، درباره ما و…) بدون تغییر سورس؛ آرشیو بازگشت‌پذیر است."), bar);
+      view.append(table(
+        ["عنوان", "نشانی", "وضعیت", "زبان", "آخرین ویرایش", "اقدام"],
+        (data.pages || []).map((p) => [
+          p.title,
+          el("code", { text: p.slug }),
+          p.status === "published" ? tag("منتشرشده") : p.status === "archived" ? tag("آرشیو", "warn") : tag("پیش‌نویس", "warn"),
+          p.locale,
+          fmtDate(p.updatedAt),
+          el("div", { class: "og-actions" }, [
+            mkBtn("ویرایش", () => openEditor(p)),
+            p.status !== "archived" ? mkBtn("آرشیو", () => {
+              confirmThen(center, { title: "آرشیو صفحه", text: `صفحهٔ «${p.title}» از حالت فعال خارج می‌شود.`, danger: true }, async () => {
+                await api(`/admin/pages/${encodeURIComponent(p.id)}`, { method: "DELETE", body: { confirm: true } });
+                toast("صفحه آرشیو شد.");
+                reload();
+              });
+            }, "mini-btn danger") : null
+          ].filter(Boolean))
+        ])
+      ));
+      section.replaceChildren(view);
+    } catch (err) {
+      failure(section, err, reload);
+    }
+  };
+  reload();
+}
+
+function renderAutomation(section, center) {
+  const openEditor = () => {
+    const name = textInput({ maxlength: "120", placeholder: "مثلاً: یادآوری تمدید" });
+    const trigger = textInput({ dir: "ltr", placeholder: "subscription.expiring" });
+    const conditions = el("textarea", { rows: "3", dir: "ltr", placeholder: '{"days": 3}' });
+    conditions.value = "{}";
+    const actions = el("textarea", { rows: "3", dir: "ltr", placeholder: '[{"type":"notify","template":"renewal"}]' });
+    actions.value = "[]";
+    const enabled = el("input", { type: "checkbox" });
+    const save = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ذخیره" });
+    save.addEventListener("click", async () => {
+      let conditionsValue = {};
+      let actionsValue = [];
+      try { conditionsValue = JSON.parse(conditions.value || "{}"); } catch { return toast("شرط‌ها JSON معتبر نیست.", "error"); }
+      try { actionsValue = JSON.parse(actions.value || "[]"); } catch { return toast("اقدام‌ها JSON معتبر نیست.", "error"); }
+      save.disabled = true;
+      try {
+        await api("/admin/automation", {
+          method: "POST",
+          body: { name: name.value.trim(), trigger: trigger.value.trim(), conditions: conditionsValue, actions: actionsValue, enabled: enabled.checked }
+        });
+        toast("گردش‌کار ثبت شد.");
+        center.closeModal();
+        reload();
+      } catch (err) {
+        toast(err.message || "ثبت نشد.", "error");
+        save.disabled = false;
+      }
+    });
+    center.showModal("گردش‌کار جدید", [formGrid(
+      field("نام", name),
+      field("رویداد محرک", trigger),
+      field("شرط‌ها (JSON)", conditions),
+      field("اقدام‌ها (JSON)", actions),
+      field("فعال", enabled)
+    )], [mkBtn("انصراف", () => center.closeModal()), save]);
+  };
+
+  const reload = async () => {
+    section.replaceChildren(loading());
+    try {
+      const data = await api("/admin/automation");
+      const view = el("div", { class: "og-page" });
+      const bar = el("div", { class: "ow-toolbar" });
+      bar.append(mkBtn("گردش‌کار جدید", openEditor), mkBtn("تازه‌سازی", reload));
+      view.append(card("خودکارسازی", "تعریف گردش‌کار و فعال‌سازی. اجرای واقعی به سرویس اجراکنندهٔ جداگانه نیاز دارد."), bar);
+      if (data.runner) view.append(el("p", { class: "ohint", text: data.runner.note || "" }));
+      view.append(table(
+        ["نام", "محرک", "فعال", "آخرین تغییر", "اقدام"],
+        (data.workflows || []).map((w) => [
+          w.name,
+          el("code", { text: w.trigger }),
+          w.enabled ? tag("فعال") : tag("خاموش", "warn"),
+          fmtDate(w.updatedAt),
+          mkBtn(w.enabled ? "خاموش" : "روشن", async () => {
+            try {
+              await api(`/admin/automation/${encodeURIComponent(w.id)}`, { method: "PATCH", body: { enabled: !w.enabled } });
+              toast("وضعیت عوض شد.");
+              reload();
+            } catch (err) { toast(err.message || "تغییر نکرد.", "error"); }
+          })
+        ])
+      ));
+      section.replaceChildren(view);
+    } catch (err) {
+      failure(section, err, reload);
+    }
+  };
+  reload();
+}
+
+function renderBroadcast(section, center) {
+  const view = el("div", { class: "og-page" });
+  const title = textInput({ maxlength: "160" });
+  const text = el("textarea", { rows: "4", maxlength: "600" });
+  const audience = optionsSelect([["all", "همهٔ کاربران فعال"], ["role", "یک نقش مشخص"]], "all");
+  const role = optionsSelect(Object.entries(ROLE_LABELS), "member");
+  const link = textInput({ dir: "ltr", placeholder: "profile.html#planCard" });
+  const result = el("p", { class: "ohint", text: "" });
+  role.disabled = true;
+  audience.addEventListener("change", () => { role.disabled = audience.value !== "role"; });
+
+  const send = mkBtn("ارسال اعلان", () => {
+    if (!title.value.trim()) return toast("عنوان لازم است.", "error");
+    const ok = el("button", { class: "btn btn-primary btn-sm", type: "button", text: "ارسال کن" });
+    ok.addEventListener("click", async () => {
+      ok.disabled = true;
+      try {
+        const res = await api("/admin/notifications/broadcast", {
+          method: "POST",
+          body: {
+            title: title.value.trim(),
+            body: text.value.trim(),
+            audience: audience.value,
+            role: audience.value === "role" ? role.value : "",
+            link: link.value.trim(),
+            confirm: true
+          }
+        });
+        result.textContent = `برای ${res.delivered} کاربر ثبت شد. ${res.note || ""}`;
+        toast("اعلان ارسال شد.");
+        center.closeModal();
+      } catch (err) {
+        toast(err.message || "ارسال نشد.", "error");
+        ok.disabled = false;
+        return;
+      }
+      section.querySelector(".ow-modal-back")?.remove();
+    });
+    center.showModal("تایید ارسال اعلان", [
+      el("p", { class: "ohint", text: `اعلان برای ${audience.value === "role" ? ROLE_LABELS[role.value] : "همهٔ کاربران فعال"} ارسال می‌شود و در مرکز اعلان همه دیده می‌شود.` })
+    ], [mkBtn("انصراف", () => center.closeModal()), ok]);
+  });
+
+  view.append(card("اعلان همگانی", "ارسال اعلان داخل‌برنامه‌ای به همه یا یک نقش. ارسال دوبارهٔ متن یکسان در شش ساعت تکرار نمی‌شود."));
+  view.append(formGrid(field("عنوان", title), field("مخاطب", audience), field("نقش", role), field("لینک (اختیاری)", link), field("متن", text, "span2")));
+  view.append(el("div", { class: "ow-toolbar" }, [send]), result);
+  section.replaceChildren(view);
+}
+
 /* ---------------- install ---------------- */
 
 export function installGodPages(center) {
@@ -1046,6 +1999,12 @@ export function installGodPages(center) {
     { id: "serMessages", view: "serMessages", label: "پیام‌های سرور", icon: "✉", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "پیام‌های سرور", sub: "جستجو و مرور پیام‌های ذخیره‌شده.", keywords: "messages پیام" },
     { id: "serReports", view: "serReports", label: "گزارش‌های سرور", icon: "⚑", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "گزارش‌های سرور", sub: "پیام‌های گزارش‌شده و وضعیت رسیدگی.", keywords: "reports گزارش" },
     { id: "serFinance", view: "serFinance", label: "مالی سرور", icon: "₿", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "مالی سرور", sub: "درآمد، سفارش‌ها، اشتراک‌ها و پلن‌های واقعی.", keywords: "payments finance مالی" },
+    { id: "billingAdmin", view: "billingAdmin", label: "اشتراک و پرداخت", icon: "◭", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "پلن، تخفیف و پرداخت", sub: "ساخت پلن، کد تخفیف، تایید پرداخت، بازگشت وجه و مدیریت اشتراک بدون تغییر سورس.", keywords: "plans coupons subscriptions billing پرداخت پلن تخفیف اشتراک" },
+    { id: "godRoles", view: "godRoles", label: "نقش و مجوز", icon: "⛨", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "نقش‌ها و محدودیت‌ها", sub: "مجوزهای هر نقش، تعلیق‌ها و رفع مسدودی با ثبت رویداد.", keywords: "roles permissions restrictions نقش مجوز محدودیت" },
+    { id: "support", view: "support", label: "صف پشتیبانی", icon: "☏", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "صف پشتیبانی", sub: "اولویت‌بندی، ارجاع و حل تیکت‌های پشتیبانی.", keywords: "support tickets پشتیبانی تیکت" },
+    { id: "godPages", view: "godPages", label: "صفحه‌های سایت", icon: "▥", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "صفحه‌های سایت", sub: "ساخت و ویرایش صفحه‌های محتوایی، انتشار و آرشیو.", keywords: "pages cms content صفحه محتوا" },
+    { id: "godAutomation", view: "godAutomation", label: "خودکارسازی", icon: "⟳", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "خودکارسازی", sub: "گردش‌کارها و محرک‌ها؛ اجرای واقعی نیازمند سرویس اجراکنندهٔ جداگانه است.", keywords: "automation workflow خودکار گردش" },
+    { id: "broadcast", view: "broadcast", label: "اعلان همگانی", icon: "◍", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "اعلان همگانی", sub: "ارسال اعلان داخل‌برنامه‌ای به همه یا یک نقش.", keywords: "notifications broadcast اعلان اطلاع" },
     { id: "serAnalytics", view: "serAnalytics", label: "آمار سرور", icon: "◔", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "آمار سرور", sub: "روند ثبت‌نام و پیام ۱۴ روز اخیر از پایگاه داده.", keywords: "analytics آمار" },
     { id: "governance", view: "governance", label: "کنترل قابلیت‌ها", icon: "◧", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "کنترل قابلیت‌ها", sub: "روشن/خاموش با دامنهٔ سراسری، کاربر، نقش، سرور، اتاق و پلن؛ همراه وابستگی، زمان‌بندی و تاریخچه.", keywords: "features flags قابلیت کنترل" },
     { id: "siteSettings", view: "siteSettings", label: "تنظیمات سایت", icon: "⚙", group: GOD_GROUP, groupLabel: "کنترل سرور", title: "تنظیمات سایت", sub: "برندینگ، ظاهر، اتاق، چت، پخش، امنیت و پرداخت؛ ذخیرهٔ مستقیم روی سرور.", keywords: "settings configuration تنظیمات" },
@@ -1055,11 +2014,16 @@ export function installGodPages(center) {
   for (const def of defs) {
     const renderer = {
       platform: (section) => renderPlatform(section, center),
-      accounts: (section) => renderAccounts(section),
-      serRooms: (section) => renderServerRooms(section),
+      accounts: (section) => renderAccounts(section, center),
+      serRooms: (section) => renderServerRooms(section, center),
       serMessages: (section) => renderServerMessages(section),
-      serReports: (section) => renderServerReports(section),
+      serReports: (section) => renderServerReports(section, center),
       serFinance: (section) => renderServerFinance(section),
+      billingAdmin: (section) => renderBillingAdmin(section, center),
+      godRoles: (section) => renderRoles(section, center),
+      support: (section) => renderSupport(section, center),
+      godPages: (section) => renderPages(section, center),
+      godAutomation: (section) => renderAutomation(section, center),      broadcast: (section) => renderBroadcast(section, center),
       serAnalytics: (section) => renderServerAnalytics(section),
       governance: (section) => renderGovernance(section, center),
       siteSettings: (section) => renderSiteSettings(section),
