@@ -170,7 +170,11 @@ const BLOCKED_HOSTS = [
 export function validateMediaUrl(raw) {
   let url;
   try { url = new URL(raw.trim()); } catch { return { ok: false, reason: "invalid" }; }
-  if (url.protocol !== "https:") return { ok: false, reason: "invalid" };
+  const devLocal = ["localhost", "127.0.0.1"].includes(location.hostname);
+  const loopback = ["localhost", "127.0.0.1"].includes(url.hostname);
+  if (url.protocol !== "https:" && !(devLocal && loopback && url.protocol === "http:")) {
+    return { ok: false, reason: "invalid" };
+  }
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
   if (BLOCKED_HOSTS.some((d) => host === d || host.endsWith(`.${d}`))) {
     return { ok: false, reason: "blocked" };

@@ -1643,16 +1643,14 @@ async function loadLocalFile(file) {
   if (!/^video\//.test(file.type) && !/\.(mkv|avi|mov|flv|wmv|ts|m2ts|mpg|mpeg|webm|ogv|mp4|m4v)$/i.test(file.name)) {
     return toast(t("toast.videoInvalid"), "error");
   }
-  const maxMB = Math.max(1, Number(siteCfg?.upload?.maxFileMB) || 50);
-  if (file.size > maxMB * 1024 * 1024) {
-    return toast(t("toast.fileTooLarge", { max: maxMB }), "error", 6000);
-  }
+  const maxConvertBytes = linkMaxMB() * 1024 * 1024;
   showPrep();
   try {
     const { prepareLocalVideo } = await import("./transcode.js");
     const res = await prepareLocalVideo(file, {
       onStatus: setPrepStatus,
-      onProgress: setPrepProgress
+      onProgress: setPrepProgress,
+      maxConvertBytes
     });
     if (res.hls) {
       const packed = await packBundle(res.files);
@@ -1668,7 +1666,12 @@ async function loadLocalFile(file) {
     if (!res.hls) maybeUpgradeLocal(file);
   } catch (err) {
     console.error(err);
-    toast(t(err?.message === "cdn-unavailable" ? "toast.converterOffline" : "toast.convertFailed"), "error");
+    const key = err?.message === "cdn-unavailable"
+      ? "toast.converterOffline"
+      : err?.message === "too-large"
+        ? "toast.convertTooLarge"
+        : "toast.convertFailed";
+    toast(t(key, { max: String(linkMaxMB()) }), "error", 9000);
   } finally {
     hidePrep();
   }
@@ -1736,6 +1739,7 @@ function swapToHls(original, virtual) {
 
 let localUpgradeFile = null;
 function maybeUpgradeLocal(file) {
+  if (file.size > linkMaxMB() * 1024 * 1024) return;
   localUpgradeFile = file;
   setTimeout(async () => {
     if (localUpgradeFile !== file) return;
@@ -1761,7 +1765,13 @@ function maybeUpgradeLocal(file) {
   }, 1200);
 }
 
-async function readCappedBlob(res, maxBytes) {
+function linkMaxMB() {
+  const n = Number(siteCfg?.player?.linkMaxMB);
+  return Number.isFinite(n) && n > 0 ? Math.min(1500, Math.max(50, Math.round(n))) : 600;
+}
+
+async function readCappedBlob(res, maxBytes, onProgress) {
+  const expected = Number(res.headers?.get?.("content-length")) || 0;
   if (!res.body) {
     const blob = await res.blob();
     return blob.size > maxBytes ? null : blob;
@@ -1779,17 +1789,19 @@ async function readCappedBlob(res, maxBytes) {
         return null;
       }
       chunks.push(value);
+      if (expected) onProgress?.(Math.min(0.99, total / expected));
     }
   } catch {
     return null;
   }
+  onProgress?.(1);
   return new Blob(chunks);
 }
 
 /* <video> plays without CORS but fetch() needs it, so many file hosts play
    fine and still refuse to give us the bytes. The API can fetch the link
    server-side and hand the bytes back. */
-async function fetchLinkMedia(url, maxMB) {
+async function fetchLinkMedia(url, maxMB, onProgress) {
   const maxBytes = maxMB * 1024 * 1024;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
@@ -1800,11 +1812,11 @@ async function fetchLinkMedia(url, maxMB) {
       const len = Number(res.headers.get("content-length")) || 0;
       if (len && len > maxBytes) {
         try { await res.body?.cancel(); } catch {}
-        return { reason: "size" };
+        return { reason: "size", sizeBytes: len };
       }
-      const blob = await readCappedBlob(res, maxBytes);
+      const blob = await readCappedBlob(res, maxBytes, onProgress);
       if (blob?.size) return { blob };
-      if (!blob) return { reason: "size" };
+      return { reason: "size", sizeBytes: len || 0 };
     }
   } catch {}
   clearTimeout(timer);
@@ -1814,11 +1826,11 @@ async function fetchLinkMedia(url, maxMB) {
       headers: { Authorization: `Bearer ${apiGetToken()}` },
       cache: "no-store"
     });
-    if (res.status === 413) return { reason: "size" };
+    if (res.status === 413) return { reason: "size", sizeBytes: maxBytes };
     if (!res.ok) return { reason: "blocked" };
-    const blob = await readCappedBlob(res, maxBytes);
+    const blob = await readCappedBlob(res, maxBytes, onProgress);
     if (blob?.size) return { blob };
-    return { reason: blob ? "blocked" : "size" };
+    return { reason: blob ? "blocked" : "size", sizeBytes: 0 };
   } catch {
     return { reason: "blocked" };
   }
@@ -1829,20 +1841,27 @@ async function maybeUpgradeLink(url) {
   if (/\.m3u8($|\?)/i.test(url)) { setTracksHint(null); return; }
   if (!/^https?:/i.test(url)) return;
   linkUpgrades.add(url);
+  const maxMB = linkMaxMB();
   setTracksHint("checking");
-  const maxMB = Math.max(1, Number(siteCfg?.upload?.maxFileMB) || 50);
+  showPrep();
+  $("#prepTitle").textContent = t("room.checkingTracks");
+  setPrepProgress(0);
   try {
-    const media = await fetchLinkMedia(url, maxMB);
+    const media = await fetchLinkMedia(url, maxMB, (p) => setPrepProgress(p));
     if (!media.blob) {
       const reason = media.reason === "size" ? "size" : "blocked";
+      const sizeMB = media.sizeBytes ? Math.ceil(media.sizeBytes / (1024 * 1024)) : 0;
       setTracksHint(reason);
-      toast(t(reason === "size" ? "toast.linkTooLarge" : "toast.linkUnreadable", { max: String(maxMB) }), "error", 8000);
+      const key = reason === "size" ? (sizeMB ? "toast.linkTooLarge" : "toast.linkLargeUnknown") : "toast.linkUnreadable";
+      toast(t(key, { max: String(maxMB), size: String(sizeMB) }), "error", 9000);
       return;
     }
     if (player.state?.url && player.state.url !== url) return;
+    $("#prepSub").textContent = t("room.prepTracks");
+    setPrepProgress(0);
     const raw = url.split("?")[0].split("#")[0].split("/").pop() || "video.mp4";
     const { upgradeLocalVideo } = await import("./transcode.js");
-    const out = await upgradeLocalVideo(media.blob, decodeURIComponent(raw), {});
+    const out = await upgradeLocalVideo(media.blob, decodeURIComponent(raw), { onProgress: setPrepProgress });
     if (!out) { setTracksHint("none"); return; }
     const reg = await registerBundle(out.files);
     if (currentBundleId) releaseBundle(currentBundleId);
@@ -1854,6 +1873,8 @@ async function maybeUpgradeLink(url) {
     console.warn("link track upgrade skipped", err);
     linkUpgrades.delete(url);
     setTracksHint("blocked");
+  } finally {
+    hidePrep();
   }
 }
 
@@ -1862,7 +1883,7 @@ function setTracksHint(kind) {
   if (!hint) return;
   clearTimeout(tracksHintTimer);
   if (!kind) { hint.classList.add("hidden"); return; }
-  const maxMB = Math.max(1, Number(siteCfg?.upload?.maxFileMB) || 50);
+  const maxMB = linkMaxMB();
   const key = {
     checking: "settings.tracksChecking",
     size: "settings.tracksSize",

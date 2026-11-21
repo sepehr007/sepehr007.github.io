@@ -85,7 +85,7 @@ export default async function mediaRoutes(app) {
     if (reply.sent) return undefined;
     const raw = String(req.query?.url || "").trim();
     if (!raw) return reply.code(400).send({ error: "missing_url", message: "A media URL is required." });
-    const ownerMax = Math.max(1, Number(await settingNumber("upload.maxFileMB", 50)) || 50);
+    const ownerMax = Math.max(1, Number(await settingNumber("player.linkMaxMB", 600)) || 600);
     const asked = Number(req.query?.maxMB) || ownerMax;
     const maxMB = Math.min(ownerMax, Math.max(1, asked));
     const maxBytes = maxMB * MB;

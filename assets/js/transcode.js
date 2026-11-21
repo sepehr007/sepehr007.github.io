@@ -387,11 +387,15 @@ export async function upgradeLocalVideo(source, name, { onProgress } = {}) {
  * Fast path: play it natively. Multi-track path: HLS with every audio and
  * subtitle stream. Last resort: single-audio MP4.
  */
-export async function prepareLocalVideo(file, { onStatus, onProgress } = {}) {
+export async function prepareLocalVideo(file, { onStatus, onProgress, maxConvertBytes = 0 } = {}) {
   const nativeUrl = URL.createObjectURL(file);
   onStatus?.("probe");
   if (await canPlayUrl(nativeUrl, 7000)) {
     return { url: nativeUrl, converted: false, hls: false };
+  }
+  if (maxConvertBytes && file.size > maxConvertBytes) {
+    URL.revokeObjectURL(nativeUrl);
+    throw new Error("too-large");
   }
 
   try {

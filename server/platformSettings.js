@@ -51,6 +51,7 @@ export const SETTINGS_REGISTRY = [
 
   { id: "player.autoplay", label: "پخش خودکار", category: "player", ...bool() },
   { id: "player.defaultVolume", label: "صدای پیش‌فرض (۰ تا ۱۰۰)", category: "player", ...number(0, 100) },
+  { id: "player.linkMaxMB", label: "سقف پردازش لینک ویدیو در مرورگر (MB)", category: "player", ...number(50, 1500) },
   { id: "player.syncToleranceMs", label: "تلورانس هم‌گام‌سازی (ms)", category: "player", ...number(200, 5000) },
   { id: "subtitle.fontSize", label: "اندازهٔ زیرنویس", category: "subtitles", ...number(12, 32) },
   { id: "subtitle.background", label: "پس‌زمینهٔ زیرنویس", category: "subtitles", ...pick("none", "shadow", "dark") },
