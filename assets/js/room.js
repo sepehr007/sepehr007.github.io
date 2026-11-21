@@ -307,7 +307,8 @@ async function boot() {
       if (retrySample()) return;
       showPlayerError(kind);
       const job = linkPrep;
-      if ((kind === "format" || kind === "media") && job && !job.done && !job.started && !job.autoTried && job.url === (player?.state?.url || player?.url)) {
+      const fits = !job?.probe?.sizeBytes || job.probe.sizeBytes <= linkMaxMB() * 1024 * 1024;
+      if ((kind === "format" || kind === "media") && fits && job && !job.done && !job.started && !job.autoTried && job.url === (player?.state?.url || player?.url)) {
         job.autoTried = true;
         ensureLinkPrepared();
       }
@@ -1895,8 +1896,13 @@ async function maybeUpgradeLink(url) {
       size: sizeMB ? String(sizeMB) : "?"
     }));
     if (!(await linkPlayable(url))) {
-      linkPrep.autoTried = true;
-      await ensureLinkPrepared();
+      /* Only repair an unplayable container when its size is known to be safe.
+         A big file is never fetched just from pressing Play. */
+      const fits = !probe.sizeBytes || probe.sizeBytes <= linkMaxMB() * 1024 * 1024;
+      if (fits) {
+        linkPrep.autoTried = true;
+        await ensureLinkPrepared();
+      }
     }
     return;
   }
