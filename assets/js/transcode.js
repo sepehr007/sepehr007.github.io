@@ -7,6 +7,9 @@ const CDNS = [
 const FFMPEG_VER = "0.12.10";
 const CORE_VER = "0.12.6";
 const UTIL_VER = "0.12.1";
+/* The engine ships with the site so it works on networks where npm CDNs are
+   blocked; the CDNs stay as a fallback if the local copy is missing. */
+const LOCAL = new URL("../vendor/ffmpeg/", import.meta.url).href;
 
 const VIDEO_OK = new Set(["h264", "vp8", "vp9", "av1"]);
 const AUDIO_OK = new Set(["aac", "mp3", "opus", "vorbis", "flac"]);
@@ -16,52 +19,88 @@ const TEXT_SUB_CODECS = new Set([
 ]);
 
 let ffmpegPromise = null;
-let activeBase = "";
+let activeBase = null;
 let engineQueue = Promise.resolve();
 
-async function resolveBase() {
-  if (activeBase) return activeBase;
-  for (const base of CDNS) {
-    try {
-      const res = await fetch(`${base}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/esm/index.js`, { cache: "force-cache" });
-      if (res.ok) {
-        activeBase = base;
-        return base;
-      }
-    } catch {}
-  }
-  throw new Error("cdn-unavailable");
+function localPaths() {
+  return {
+    ffmpeg: `${LOCAL}ffmpeg/index.js`,
+    util: `${LOCAL}util/index.js`,
+    worker: `${LOCAL}ffmpeg/worker.js`,
+    coreJs: `${LOCAL}core/ffmpeg-core.js`,
+    coreWasm: `${LOCAL}core/ffmpeg-core.wasm`
+  };
 }
 
-async function workerBlobUrl(base) {
-  const baseUrl = `${base}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/esm/`;
-  const src = await (await fetch(`${baseUrl}worker.js`)).text();
-  const patched = src.replace(/(["'])\.\/([^"']+)\1/g, (_m, q, rel) => `${q}${baseUrl}${rel}${q}`);
+function cdnPaths(base) {
+  return {
+    ffmpeg: `${base}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/esm/index.js`,
+    util: `${base}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`,
+    worker: `${base}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/esm/worker.js`,
+    coreJs: `${base}/@ffmpeg/core@${CORE_VER}/dist/esm/ffmpeg-core.js`,
+    coreWasm: `${base}/@ffmpeg/core@${CORE_VER}/dist/esm/ffmpeg-core.wasm`
+  };
+}
+
+async function reachable(url) {
+  try {
+    const res = await fetch(url, { cache: "force-cache" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function workerBlobUrl(paths) {
+  const src = await (await fetch(paths.worker)).text();
+  const dir = paths.worker.replace(/[^/]*$/, "");
+  const patched = src.replace(/(["'])\.\/([^"']+)\1/g, (_m, q, rel) => `${q}${dir}${rel}${q}`);
   return URL.createObjectURL(new Blob([patched], { type: "text/javascript" }));
+}
+
+async function loadEngine(paths, onProgress) {
+  const { FFmpeg } = await import(paths.ffmpeg);
+  const { toBlobURL } = await import(paths.util);
+  const sameOrigin = (u) => u.startsWith(location.origin + "/");
+  const ff = new FFmpeg();
+  ff.on("progress", ({ progress }) => {
+    if (Number.isFinite(progress)) onProgress?.(Math.max(0, Math.min(1, progress)));
+  });
+  const loadTask = (async () => {
+    await ff.load({
+      coreURL: sameOrigin(paths.coreJs) ? paths.coreJs : await toBlobURL(paths.coreJs, "text/javascript"),
+      wasmURL: sameOrigin(paths.coreWasm) ? paths.coreWasm : await toBlobURL(paths.coreWasm, "application/wasm"),
+      classWorkerURL: await workerBlobUrl(paths)
+    });
+  })();
+  const timeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error("converter-timeout")), 300000);
+  });
+  await Promise.race([loadTask, timeout]);
+  return ff;
+}
+
+async function tryLoad(paths, onProgress) {
+  if (!(await reachable(paths.ffmpeg))) return null;
+  try {
+    const ff = await loadEngine(paths, onProgress);
+    activeBase = paths;
+    return ff;
+  } catch (err) {
+    console.warn("ffmpeg engine load failed", paths.ffmpeg, err);
+    return null;
+  }
 }
 
 async function getFFmpeg(onProgress) {
   if (ffmpegPromise) return ffmpegPromise;
   ffmpegPromise = (async () => {
-    const base = await resolveBase();
-    const { FFmpeg } = await import(`${base}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/esm/index.js`);
-    const { toBlobURL } = await import(`${base}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`);
-    const ff = new FFmpeg();
-    ff.on("progress", ({ progress }) => {
-      if (Number.isFinite(progress)) onProgress?.(Math.max(0, Math.min(1, progress)));
-    });
-    const coreBase = `${base}/@ffmpeg/core@${CORE_VER}/dist/esm`;
-    const loadTask = (async () => {
-      await ff.load({
-        coreURL: await toBlobURL(`${coreBase}/ffmpeg-core.js`, "text/javascript"),
-        wasmURL: await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, "application/wasm"),
-        classWorkerURL: await workerBlobUrl(base)
-      });
-    })();
-    const timeout = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("converter-timeout")), 90000);
-    });
-    await Promise.race([loadTask, timeout]);
+    if (activeBase) {
+      try { return await loadEngine(activeBase, onProgress); }
+      catch (err) { console.warn("ffmpeg reload failed", err); activeBase = null; }
+    }
+    const ff = (await tryLoad(localPaths(), onProgress)) || (await tryLoad(cdnPaths(CDNS[0]), onProgress)) || (await tryLoad(cdnPaths(CDNS[1]), onProgress));
+    if (!ff) throw new Error("cdn-unavailable");
     return ff;
   })().catch((err) => { ffmpegPromise = null; throw err; });
   return ffmpegPromise;
@@ -368,7 +407,7 @@ export async function upgradeLocalVideo(source, name, { onProgress } = {}) {
   const inName = `in.${extOf(name)}`;
   return withEngine(async () => {
     const ff = await getFFmpeg(onProgress);
-    const { fetchFile } = await import(`${activeBase}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`);
+    const { fetchFile } = await import(activeBase.util);
     try {
       await ff.writeFile(inName, await fetchFile(source));
       const probe = await probeMedia(ff, inName);
@@ -402,7 +441,7 @@ export async function prepareLocalVideo(file, { onStatus, onProgress, maxConvert
     onStatus?.("loading");
     const { files, audio, subs } = await withEngine(async () => {
       const ff = await getFFmpeg(onProgress);
-      const { fetchFile } = await import(`${activeBase}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`);
+      const { fetchFile } = await import(activeBase.util);
       const inName = `in.${extOf(file.name)}`;
       try {
         await ff.writeFile(inName, await fetchFile(file));
@@ -428,7 +467,7 @@ export async function prepareLocalVideo(file, { onStatus, onProgress, maxConvert
     onStatus?.("transcode");
     const blob = await withEngine(async () => {
       const ff = await getFFmpeg(onProgress);
-      const { fetchFile } = await import(`${activeBase}/@ffmpeg/util@${UTIL_VER}/dist/esm/index.js`);
+      const { fetchFile } = await import(activeBase.util);
       const inName = `in.${extOf(file.name)}`;
       try {
         await ff.writeFile(inName, await fetchFile(file));

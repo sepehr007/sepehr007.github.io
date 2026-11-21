@@ -1842,11 +1842,16 @@ async function maybeUpgradeLink(url) {
   if (/\.m3u8($|\?)/i.test(url)) { setTracksHint(null); return; }
   if (!/^https?:/i.test(url)) return;
   linkUpgrades.add(url);
+  resetTrackPanel();
   const maxMB = linkMaxMB();
   setTracksHint("checking");
   showPrep();
   $("#prepTitle").textContent = t("room.checkingTracks");
   setPrepProgress(0);
+  const progress = (p) => {
+    setPrepProgress(p);
+    setTrackStatus(t("settings.tracksProgress", { p: String(Math.round(Math.max(0, Math.min(1, p)) * 100)) }));
+  };
   try {
     const { probeRemoteTracks } = await import("./media-probe.js");
     const probe = await Promise.race([
@@ -1860,8 +1865,16 @@ async function maybeUpgradeLink(url) {
         s: String(probe.textSubs),
         size: String(sizeMB)
       });
+      if (probe.audio > 0 || probe.textSubs > 0) {
+        showProbedTracks(probe);
+        setTrackStatus(t("settings.tracksProbed", {
+          a: String(probe.audio),
+          s: String(probe.textSubs),
+          size: sizeMB ? String(sizeMB) : "?"
+        }));
+      }
     }
-    const media = await fetchLinkMedia(url, maxMB, (p) => setPrepProgress(p));
+    const media = await fetchLinkMedia(url, maxMB, progress);
     if (!media.blob) {
       const reason = media.reason === "size" ? "size" : "blocked";
       const sizeMB = media.sizeBytes ? Math.ceil(media.sizeBytes / (1024 * 1024)) : 0;
@@ -1872,46 +1885,112 @@ async function maybeUpgradeLink(url) {
     }
     if (player.state?.url && player.state.url !== url) return;
     $("#prepSub").textContent = t("room.prepTracks");
-    setPrepProgress(0);
+    progress(0);
     const raw = url.split("?")[0].split("#")[0].split("/").pop() || "video.mp4";
     const { upgradeLocalVideo } = await import("./transcode.js");
-    const out = await upgradeLocalVideo(media.blob, decodeURIComponent(raw), { onProgress: setPrepProgress });
+    const out = await upgradeLocalVideo(media.blob, decodeURIComponent(raw), { onProgress: progress });
     if (!out) { setTracksHint("none"); return; }
     const reg = await registerBundle(out.files);
     if (currentBundleId) releaseBundle(currentBundleId);
     currentBundleId = reg.id;
     swapToHls(url, reg.url);
     setTracksHint(null);
+    setTrackControlsReady();
     toast(out.fixed ? t("toast.codecFixed") : t("toast.tracksFound", { a: String(out.audio), s: String(out.subs) }), "success");
   } catch (err) {
     console.warn("link track upgrade skipped", err);
     linkUpgrades.delete(url);
-    setTracksHint("failed");
+    const offline = /cdn-unavailable/.test(String(err?.message || err));
+    setTracksHint(offline ? "engine" : "failed");
     const oom = /memory|alloc|rangeerror/i.test(String(err?.message || err));
-    toast(t(oom ? "toast.convertOom" : "toast.linkConvertFailed", { max: String(maxMB) }), "error", 9000);
+    const key = offline ? "toast.converterOffline" : (oom ? "toast.convertOom" : "toast.linkConvertFailed");
+    toast(t(key, { max: String(maxMB) }), "error", 9000);
   } finally {
     hidePrep();
   }
 }
 
-function setTracksHint(kind) {
+function trackLabel(kind, index, lang) {
+  const name = t(kind === "audio" ? "settings.audioN" : "settings.subsN", { n: String(index + 1) });
+  return lang ? `${name} (${lang})` : name;
+}
+
+/* The probe already knows the container's tracks. Show them in the room
+   settings right away (disabled until the HLS bundle is ready) so the panel
+   exists even while the file is still being prepared. */
+function showProbedTracks(probe) {
+  const audioSel = $("#optAudio");
+  const subsSel = $("#optSubsTrack");
+  if (!audioSel || !subsSel || !probe) return;
+  if (probe.audio > 0) {
+    $("#audioRow")?.classList.remove("hidden");
+    audioSel.innerHTML = "";
+    for (let i = 0; i < probe.audio; i++) {
+      audioSel.append(el("option", { value: String(i), text: trackLabel("audio", i, probe.audioLangs?.[i]) }));
+    }
+    audioSel.value = "0";
+    audioSel.disabled = true;
+  }
+  if (probe.textSubs > 0) {
+    $("#subsTrackRow")?.classList.remove("hidden");
+    subsSel.innerHTML = "";
+    subsSel.append(el("option", { value: "-1", text: t("settings.subsTrackOff") }));
+    for (let i = 0; i < probe.textSubs; i++) {
+      subsSel.append(el("option", { value: String(i), text: trackLabel("subs", i, probe.subLangs?.[i]) }));
+    }
+    subsSel.value = "-1";
+    subsSel.disabled = true;
+  }
+}
+
+function setTrackControlsReady() {
+  const audioSel = $("#optAudio");
+  const subsSel = $("#optSubsTrack");
+  if (audioSel) audioSel.disabled = false;
+  if (subsSel) subsSel.disabled = false;
+}
+
+function resetTrackPanel() {
+  const audioSel = $("#optAudio");
+  const subsSel = $("#optSubsTrack");
+  if (audioSel) { audioSel.innerHTML = ""; audioSel.disabled = true; }
+  if (subsSel) { subsSel.innerHTML = ""; subsSel.disabled = true; }
+  $("#audioRow")?.classList.add("hidden");
+  $("#subsTrackRow")?.classList.add("hidden");
+}
+
+function setTrackStatus(text, opts = {}) {
   const hint = $("#tracksHint");
-  if (!hint) return;
+  const retry = $("#tracksRetry");
   clearTimeout(tracksHintTimer);
-  if (!kind) { hint.classList.add("hidden"); return; }
+  if (!text) {
+    hint?.classList.add("hidden");
+    retry?.classList.add("hidden");
+    return;
+  }
+  if (hint) {
+    hint.textContent = text;
+    hint.classList.remove("hidden");
+  }
+  if (retry) retry.classList.toggle("hidden", !opts.retry);
+}
+
+function setTracksHint(kind) {
+  if (!kind) { setTrackStatus(null); return; }
   const maxMB = linkMaxMB();
   const key = {
     checking: "settings.tracksChecking",
     size: "settings.tracksSize",
     blocked: "settings.tracksBlocked",
     failed: "settings.tracksFailed",
+    engine: "settings.tracksEngine",
     none: "settings.tracksNone"
   }[kind] || "settings.tracksNone";
-  hint.textContent = t(key, { max: String(maxMB) });
-  hint.classList.remove("hidden");
+  const retry = kind === "failed" || kind === "blocked" || kind === "engine";
+  setTrackStatus(t(key, { max: String(maxMB) }), { retry });
   if (kind === "checking") {
     tracksHintTimer = setTimeout(() => {
-      if (!hint.classList.contains("hidden")) setTracksHint("none");
+      if (!$("#tracksHint")?.classList.contains("hidden")) setTracksHint("none");
     }, 8 * 60 * 1000);
   }
 }
@@ -3402,6 +3481,13 @@ function wireSettings() {
     player.setTextTrack(Number(e.target.value));
   });
 
+  $("#tracksRetry")?.addEventListener("click", () => {
+    const url = player?.state?.url || player?.url;
+    if (!url) return;
+    linkUpgrades.delete(url);
+    maybeUpgradeLink(url);
+  });
+
   $("#subsPickBtn")?.addEventListener("click", () => {
     if (!allow("watch.subtitles", "زیرنویس غیرفعال شده است.")) return;
     $("#subsFile").click();
@@ -3546,6 +3632,7 @@ function renderAudio(info) {
     sel.append(el("option", { value: String(track.i), text: label }));
   }
   sel.value = String(Math.max(0, info.current));
+  sel.disabled = false;
 }
 
 function renderTextTracks(info) {
@@ -3565,6 +3652,7 @@ function renderTextTracks(info) {
     sel.append(el("option", { value: String(track.i), text: track.name }));
   }
   sel.value = String(info.current >= 0 ? info.current : -1);
+  sel.disabled = false;
 }
 
 function shareActiveSubs() {
