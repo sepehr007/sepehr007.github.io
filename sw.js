@@ -1,4 +1,4 @@
-const CACHE = "wt-v129";
+const CACHE = "wt-v132";
 const SHELL = [
   "./",
   "./index.html",
@@ -50,6 +50,7 @@ const SHELL = [
   "./assets/js/player.js",
   "./assets/js/voice.js",
   "./assets/js/transcode.js",
+  "./assets/js/hls-bundle.js",
   "./assets/js/capabilities.js",
   "./assets/js/notifications.js",
   "./assets/js/social.js",
@@ -81,8 +82,39 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+const HLS_BUNDLES = new Map();
+const HLS_CACHE = (id) => `wt-hls-${id}`;
+
+function hlsKey(id, name) {
+  return new URL(`__hls/${id}/${encodeURIComponent(name)}`, self.registration.scope).href;
+}
+
+async function storeHlsBundle(id, files) {
+  const cache = await caches.open(HLS_CACHE(id));
+  await Promise.all(files.map((f) => cache.put(
+    hlsKey(id, f.name),
+    new Response(f.body, { headers: { "Content-Type": f.type || "application/octet-stream" } })
+  )));
+}
+
 self.addEventListener("message", (event) => {
-  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+  const data = event.data || {};
+  if (data.type === "SKIP_WAITING") { self.skipWaiting(); return; }
+  if (data.type === "hls-bundle") {
+    const files = new Map();
+    for (const f of data.files || []) files.set(f.name, { body: f.buffer, type: f.type || "application/octet-stream" });
+    HLS_BUNDLES.set(data.id, files);
+    event.waitUntil(
+      storeHlsBundle(data.id, [...files].map(([name, f]) => ({ name, ...f })))
+        .then(() => (event.ports?.[0] || data.port)?.postMessage({ ok: true, count: files.size }))
+        .catch((err) => (event.ports?.[0] || data.port)?.postMessage({ ok: false, error: String(err?.message || err) }))
+    );
+    return;
+  }
+  if (data.type === "hls-bundle-release") {
+    HLS_BUNDLES.delete(data.id);
+    event.waitUntil(caches.delete(HLS_CACHE(data.id)));
+  }
 });
 
 self.addEventListener("notificationclick", (event) => {
@@ -116,6 +148,24 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+
+  const hls = url.pathname.match(/\/__hls\/([^/]+)\/(.+)$/);
+  if (hls) {
+    event.respondWith((async () => {
+      const name = decodeURIComponent(hls[2]);
+      const file = HLS_BUNDLES.get(hls[1])?.get(name);
+      if (file) {
+        return new Response(file.body, { headers: { "Content-Type": file.type, "Cache-Control": "no-store" } });
+      }
+      try {
+        const cache = await caches.open(HLS_CACHE(hls[1]));
+        const hit = await cache.match(hlsKey(hls[1], name));
+        if (hit) return hit;
+      } catch {}
+      return new Response("missing", { status: 404 });
+    })());
+    return;
+  }
 
   if (/\/assets\/data\/(?:site-config|runtime-config)\.json$/.test(url.pathname)) {
     event.respondWith(

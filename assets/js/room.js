@@ -16,6 +16,7 @@ import { avatarSrc } from "./avatars.js";
 import { CAPS } from "./capabilities.js";
 import { notifPrefs, notifPermission, setRoomNotif, notifyChat, notifyActivity } from "./notifications.js";
 import { loadSiteConfig, applySiteConfig, applyGlobalTheme, featureOn, accessOn, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
+import { isBundle, unpackBundle, registerBundle, releaseBundle, packBundle } from "./hls-bundle.js";
 import {
   resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, recordFeatureUse, readFeatureCenter
 } from "./feature-flags.js";
@@ -132,6 +133,9 @@ let currentLocalUrl = null;
 let localFileId = "";
 let pendingLocalState = null;
 let fileOfferId = "";
+let currentBundleId = "";
+const linkUpgrades = new Set();
+let tracksHintTimer = 0;
 let siteCfg = null;
 let chatEnabled = true;
 let flagStates = {};
@@ -669,7 +673,7 @@ function wireNet() {
       }
       return;
     }
-    if (state?.url && state.url !== player.url) { localMode = false; }
+    if (state?.url && state.url !== (player.state?.url || player.url)) { localMode = false; }
     localFileId = "";
     fileOfferId = "";
     $("#fileOfferBar").classList.add("hidden");
@@ -679,6 +683,7 @@ function wireNet() {
     updatePlayUI(currentPlayback.playing);
     syncStageEmpty();
     if (currentPlayback.playing) watchAutoplay(currentPlayback);
+    if (currentPlayback.url) maybeUpgradeLink(currentPlayback.url);
   });
 
   net.on("fileOffer", ({ id, name, size }) => {
@@ -1495,7 +1500,34 @@ function fmtBytes(n) {
   return `${v} B`;
 }
 
-function receiveLocalFile({ id, name, size, url }) {
+function receiveLocalFile({ id, name, size, url, blob }) {
+  if (blob && size) {
+    isBundle(blob).then(async (bundle) => {
+      if (bundle) {
+        try {
+          const files = await unpackBundle(blob);
+          const reg = await registerBundle(files);
+          if (currentBundleId) releaseBundle(currentBundleId);
+          currentBundleId = reg.id;
+          if (currentLocalUrl) { URL.revokeObjectURL(currentLocalUrl); currentLocalUrl = null; }
+          localFileId = id;
+          localMode = true;
+          player.setUrl(reg.url);
+          player.state = { url: reg.url, playing: false, time: 0, at: Date.now(), rate: 1 };
+          finishLocalReceive(id);
+          return;
+        } catch (err) {
+          console.warn("hls bundle failed, using plain file", err);
+        }
+      }
+      receivePlainLocalFile({ id, url });
+    });
+    return;
+  }
+  receivePlainLocalFile({ id, url });
+}
+
+function receivePlainLocalFile({ id, url }) {
   if (currentLocalUrl && currentLocalUrl !== url) URL.revokeObjectURL(currentLocalUrl);
   currentLocalUrl = url;
   localFileId = id;
@@ -1505,6 +1537,10 @@ function receiveLocalFile({ id, name, size, url }) {
   player.state = { url, playing: false, time: 0, at: Date.now(), rate: 1 };
   player.video.src = url;
   player.video.load();
+  finishLocalReceive(id);
+}
+
+function finishLocalReceive(id) {
   $("#fileOfferBar").classList.add("hidden");
   hidePrep();
   $("#localBadge").classList.remove("hidden");
@@ -1613,13 +1649,22 @@ async function loadLocalFile(file) {
   showPrep();
   try {
     const { prepareLocalVideo } = await import("./transcode.js");
-    const { url, converted } = await prepareLocalVideo(file, {
+    const res = await prepareLocalVideo(file, {
       onStatus: setPrepStatus,
       onProgress: setPrepProgress
     });
-    if (currentLocalUrl) URL.revokeObjectURL(currentLocalUrl);
-    currentLocalUrl = url;
-    startLocalPlayback(url, file.name, converted);
+    if (res.hls) {
+      const packed = await packBundle(res.files);
+      const reg = await registerBundle(res.files);
+      if (currentBundleId) releaseBundle(currentBundleId);
+      currentBundleId = reg.id;
+      res.url = reg.url;
+      res.blob = packed;
+    }
+    if (currentLocalUrl) { URL.revokeObjectURL(currentLocalUrl); currentLocalUrl = null; }
+    if (!res.hls) currentLocalUrl = res.url;
+    startLocalPlayback(res, file.name);
+    if (!res.hls) maybeUpgradeLocal(file);
   } catch (err) {
     console.error(err);
     toast(t(err?.message === "cdn-unavailable" ? "toast.converterOffline" : "toast.convertFailed"), "error");
@@ -1628,40 +1673,138 @@ async function loadLocalFile(file) {
   }
 }
 
-function startLocalPlayback(url, fileName, converted) {
+function startLocalPlayback(res, fileName) {
+  const { url, hls, converted, blob } = res;
   localMode = true;
   player.destroyHls();
-  player.url = url;
+  if (hls) player.setUrl(url);
+  else {
+    player.url = url;
+    player.video.src = url;
+    player.video.load();
+  }
   player.state = { url, playing: false, time: 0, at: Date.now(), rate: 1 };
-  player.video.src = url;
-  player.video.load();
   syncStageEmpty();
   $("#localBadge").classList.remove("hidden");
   $("#localBadge").textContent = t("room.localBadge");
   updatePlayUI(false);
   toast(
-    converted
-      ? (getLang() === "fa" ? `«${fileName}» آماده شد` : `"${fileName}" is ready`)
-      : (getLang() === "fa" ? `«${fileName}» در حال پخش` : `Playing "${fileName}"`),
+    hls
+      ? t("toast.hlsReady", { name: fileName })
+      : converted
+        ? (getLang() === "fa" ? `«${fileName}» آماده شد` : `"${fileName}" is ready`)
+        : (getLang() === "fa" ? `«${fileName}» در حال پخش` : `Playing "${fileName}"`),
     "success"
   );
   if (isHost) {
     localFileId = "lf" + Date.now().toString(36);
     net.syncLocalState({ id: localFileId, playing: false, time: 0, rate: 1 });
     const shareId = localFileId;
-    (async () => {
-      try {
-        const blob = await (await fetch(url)).blob();
-        if (localFileId === shareId && player.url === url) {
-          net.shareLocalFile({ id: shareId, name: fileName, size: blob.size, blob });
-        }
-      } catch {}
-    })();
+    if (blob) {
+      net.shareLocalFile({ id: shareId, name: fileName, size: blob.size, blob });
+    } else {
+      (async () => {
+        try {
+          const plain = await (await fetch(url)).blob();
+          if (localFileId === shareId && player.url === url) {
+            net.shareLocalFile({ id: shareId, name: fileName, size: plain.size, blob: plain });
+          }
+        } catch {}
+      })();
+    }
     net.command("chat", {
       text: getLang() === "fa"
         ? `🎬 ${nick} فایل «${fileName}» را پخش می‌کند — برای تماشای هم‌زمان، فایل را دریافت کن.`
         : `🎬 ${nick} is playing "${fileName}" — download it to watch along.`
     });
+  }
+}
+
+function swapToHls(original, virtual) {
+  const v = player.video;
+  const time = v.currentTime || 0;
+  const playing = !v.paused;
+  player.aliasSource(original, virtual);
+  player.setUrl(virtual);
+  const restore = () => {
+    try { v.currentTime = time; } catch {}
+    if (playing) v.play().catch(() => {});
+  };
+  v.addEventListener("loadedmetadata", restore, { once: true });
+}
+
+let localUpgradeFile = null;
+function maybeUpgradeLocal(file) {
+  localUpgradeFile = file;
+  setTimeout(async () => {
+    if (localUpgradeFile !== file) return;
+    try {
+      const { upgradeLocalVideo } = await import("./transcode.js");
+      const out = await upgradeLocalVideo(file, file.name, {});
+      if (!out || localUpgradeFile !== file) return;
+      if (!(out.audio > 1 || out.subs > 0)) return;
+      const packed = await packBundle(out.files);
+      const reg = await registerBundle(out.files);
+      if (currentBundleId) releaseBundle(currentBundleId);
+      currentBundleId = reg.id;
+      swapToHls(player.url, reg.url);
+      if (isHost) {
+        localFileId = "lf" + Date.now().toString(36);
+        net.syncLocalState({ id: localFileId, playing: !player.video.paused, time: player.video.currentTime || 0, rate: player.video.playbackRate || 1 });
+        net.shareLocalFile({ id: localFileId, name: file.name, size: packed.size, blob: packed });
+      }
+      toast(t("toast.tracksFound", { a: String(out.audio), s: String(out.subs) }), "success");
+      setTracksHint(null);
+    } catch (err) {
+      console.warn("local track upgrade skipped", err);
+    }
+  }, 1200);
+}
+
+async function maybeUpgradeLink(url) {
+  if (!url || linkUpgrades.has(url) || player.alias.has(url)) return;
+  if (/\.m3u8($|\?)/i.test(url)) { setTracksHint(null); return; }
+  if (!/^https?:/i.test(url)) return;
+  linkUpgrades.add(url);
+  setTracksHint("checking");
+  try {
+    const maxMB = Math.max(1, Number(siteCfg?.upload?.maxFileMB) || 50);
+    const head = await fetch(url, { method: "HEAD" }).catch(() => null);
+    if (head && !head.ok) { setTracksHint("none"); return; }
+    const len = Number(head?.headers?.get("content-length")) || 0;
+    if (len && len > maxMB * 1024 * 1024) { setTracksHint("none"); return; }
+    const res = await fetch(url);
+    if (!res.ok) { setTracksHint("none"); return; }
+    const blob = await res.blob();
+    if (!blob.size || blob.size > maxMB * 1024 * 1024) { setTracksHint("none"); return; }
+    if (player.state?.url && player.state.url !== url) return;
+    const raw = url.split("?")[0].split("#")[0].split("/").pop() || "video.mp4";
+    const { upgradeLocalVideo } = await import("./transcode.js");
+    const out = await upgradeLocalVideo(blob, decodeURIComponent(raw), {});
+    if (!out || !(out.audio > 1 || out.subs > 0)) { setTracksHint("none"); return; }
+    const reg = await registerBundle(out.files);
+    if (currentBundleId) releaseBundle(currentBundleId);
+    currentBundleId = reg.id;
+    swapToHls(url, reg.url);
+    setTracksHint(null);
+    toast(t("toast.tracksFound", { a: String(out.audio), s: String(out.subs) }), "success");
+  } catch (err) {
+    console.warn("link track upgrade skipped", err);
+    setTracksHint("none");
+  }
+}
+
+function setTracksHint(kind) {
+  const hint = $("#tracksHint");
+  if (!hint) return;
+  clearTimeout(tracksHintTimer);
+  if (!kind) { hint.classList.add("hidden"); return; }
+  hint.textContent = t(kind === "checking" ? "settings.tracksChecking" : "settings.tracksNone");
+  hint.classList.remove("hidden");
+  if (kind === "checking") {
+    tracksHintTimer = setTimeout(() => {
+      if (!hint.classList.contains("hidden")) setTracksHint("none");
+    }, 25000);
   }
 }
 
@@ -3288,6 +3431,7 @@ function renderAudio(info) {
     return;
   }
   row.classList.remove("hidden");
+  setTracksHint(null);
   sel.innerHTML = "";
   for (const track of info.tracks) {
     const label = track.name || track.lang || `Track ${track.i + 1}`;
@@ -3306,6 +3450,7 @@ function renderTextTracks(info) {
     return;
   }
   row.classList.remove("hidden");
+  setTracksHint(null);
   sel.innerHTML = "";
   sel.append(el("option", { value: "-1", text: t("settings.subsTrackOff") }));
   for (const track of info.tracks) {

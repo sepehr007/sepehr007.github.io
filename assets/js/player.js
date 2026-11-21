@@ -42,6 +42,7 @@ export class Player {
 
     this.url = "";
     this.state = { url: "", playing: false, time: 0, at: Date.now(), rate: 1 };
+    this.alias = new Map();
     this.applying = false;
     this.hls = null;
     this.cues = [];
@@ -105,6 +106,7 @@ export class Player {
 
   clear() {
     this.url = "";
+    this.alias.clear();
     this.state = { url: "", playing: false, time: 0, at: Date.now(), rate: 1 };
     this.destroyHls();
     this.onLevels?.(null);
@@ -123,24 +125,29 @@ export class Player {
     if (this.hls) { try { this.hls.destroy(); } catch {} this.hls = null; }
   }
 
+  aliasSource(from, to) {
+    if (from && to) this.alias.set(from, to);
+  }
+
   setUrl(url) {
-    if (!url || url === this.url) return;
-    this.url = url;
+    const real = this.alias.get(url) || url;
+    if (!real || real === this.url) return;
+    this.url = real;
     this.destroyHls();
     this.cues = [];
     this.sets = [];
     this.activeSet = "";
     this.subsOffset = 0;
     this.lastCue = "";
-    const isHls = /\.m3u8($|\?)/i.test(url);
+    const isHls = /\.m3u8($|\?)/i.test(real);
     if (isHls) {
-      if (window.Hls?.isSupported()) this.#startHls(url);
-      else this.#loadHlsEngine(url);
+      if (window.Hls?.isSupported()) this.#startHls(real);
+      else this.#loadHlsEngine(real);
       return;
     }
     this.onLevels?.(null);
     this.onAudio?.(null);
-    this.video.src = url;
+    this.video.src = real;
   }
 
   /* The HLS engine is only downloaded when a stream actually needs it. */
