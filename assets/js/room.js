@@ -1968,6 +1968,7 @@ async function ensureLinkPrepared() {
     if (currentBundleId) releaseBundle(currentBundleId);
     currentBundleId = reg.id;
     job.done = true;
+    if (out.subs > 0 && job.want.subs == null) job.want.subs = 0;
     swapToHls(url, reg.url);
     setTracksHint(null);
     setTrackControlsReady(true);

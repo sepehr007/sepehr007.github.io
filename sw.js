@@ -1,4 +1,4 @@
-const CACHE = "wt-v139";
+const CACHE = "wt-v140";
 const SHELL = [
   "./",
   "./index.html",
