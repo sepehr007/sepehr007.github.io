@@ -166,10 +166,12 @@ export class Player {
 
   #startHls(url) {
     this.hls = new window.Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 30 });
-    this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => { this.#emitLevels(); this.#emitAudio(); });
+    this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => { this.#emitLevels(); this.#emitAudio(); this.#emitText(); });
     this.hls.on(window.Hls.Events.LEVEL_SWITCHED, () => this.#emitLevels());
     this.hls.on(window.Hls.Events.AUDIO_TRACKS_UPDATED, () => this.#emitAudio());
     this.hls.on(window.Hls.Events.AUDIO_TRACK_SWITCHED, () => this.#emitAudio());
+    this.hls.on(window.Hls.Events.SUBTITLE_TRACKS_UPDATED, () => this.#emitText());
+    this.hls.on(window.Hls.Events.SUBTITLE_TRACK_SWITCHED, () => this.#emitText());
     this.hls.on(window.Hls.Events.ERROR, (_evt, data) => {
       if (!data?.fatal) return;
       if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) this.hls.startLoad();
@@ -223,6 +225,17 @@ export class Player {
   }
 
   #emitText() {
+    if (this.hls) {
+      const list = this.hls.subtitleTracks || [];
+      if (!list.length) { this.onText?.(null); return; }
+      const tracks = list.map((s, i) => ({
+        i,
+        name: s.name || s.lang || `Subtitle ${i + 1}`,
+        lang: s.lang || ""
+      }));
+      this.onText?.({ tracks, current: this.hls.subtitleTrack ?? -1 });
+      return;
+    }
     const list = this.video.textTracks;
     if (!list) { this.onText?.(null); return; }
     const tracks = [];
@@ -238,9 +251,15 @@ export class Player {
   }
 
   setTextTrack(i) {
+    const want = Number(i);
+    if (this.hls) {
+      this.hls.subtitleTrack = Number.isFinite(want) ? want : -1;
+      if (this.hls.subtitleDisplay !== undefined) this.hls.subtitleDisplay = want >= 0;
+      this.#emitText();
+      return;
+    }
     const list = this.video.textTracks;
     if (!list) return;
-    const want = Number(i);
     for (let n = 0; n < list.length; n++) {
       const t = list[n];
       if (t.kind !== "subtitles" && t.kind !== "captions") continue;
@@ -355,6 +374,10 @@ export class Player {
   }
   getSubtitleSets() {
     return this.sets.map((s) => ({ name: s.name, count: s.cues.length, active: s.name === this.activeSet }));
+  }
+  getSubtitleCues(name = this.activeSet) {
+    const found = this.sets.find((s) => s.name === name);
+    return found ? found.cues : [];
   }
   activateSubtitleSet(name) {
     const found = this.sets.find((s) => s.name === name);

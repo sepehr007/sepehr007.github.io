@@ -3157,19 +3157,37 @@ function wireSettings() {
   });
   $("#subsFile").addEventListener("change", async (e) => {
     if (!allow("watch.subtitles", "زیرنویس غیرفعال شده است.")) { e.target.value = ""; return; }
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const raw = await file.text();
-    const cues = parseSubtitles(raw);
-    if (!cues.length) return toast(getLang() === "fa" ? "زیرنویس معتبر نبود" : "Invalid subtitle file", "error");
-    const name = (file.name || "").replace(/\.[^.]+$/, "").slice(0, 40) || t("settings.subs");
+    const files = [...(e.target.files || [])];
+    if (!files.length) return;
+    let total = 0;
+    let loaded = 0;
+    const existing = new Set((player.getSubtitleSets() || []).map((s) => s.name));
+    for (const file of files) {
+      const cues = parseSubtitles(await file.text());
+      if (!cues.length) continue;
+      let name = (file.name || "").replace(/\.[^.]+$/, "").slice(0, 40) || t("settings.subs");
+      if (existing.has(name)) {
+        let n = 2;
+        while (existing.has(`${name} (${n})`)) n++;
+        name = `${name} (${n})`;
+      }
+      existing.add(name);
+      player.setCues(cues, name);
+      total += cues.length;
+      loaded++;
+    }
     const label = $("#subsFileName");
-    if (label) label.textContent = file.name;
-    player.setCues(cues, name);
+    if (label) {
+      label.textContent = loaded === 1 ? files[0].name : (getLang() === "fa" ? `${loaded} فایل زیرنویس` : `${loaded} subtitle files`);
+    }
     renderSubsSets();
-    if (isHost) net.shareSubtitles(cues);
-    recordFeatureUse("watch.subtitles", { plan: flagContext.plan, role: flagContext.role, room: code });
-    toast(getLang() === "fa" ? `${cues.length} خط زیرنویس بارگذاری شد` : `${cues.length} cues loaded`, "success");
+    if (isHost) shareActiveSubs();
+    if (loaded) {
+      recordFeatureUse("watch.subtitles", { plan: flagContext.plan, role: flagContext.role, room: code });
+      toast(getLang() === "fa" ? `${total} خط زیرنویس از ${loaded} فایل بارگذاری شد` : `${total} cues loaded from ${loaded} file(s)`, "success");
+    } else {
+      toast(getLang() === "fa" ? "زیرنویس معتبر نبود" : "Invalid subtitle file", "error");
+    }
     e.target.value = "";
   });
   const layer = $("#subtitleLayer");
@@ -3296,6 +3314,12 @@ function renderTextTracks(info) {
   sel.value = String(info.current >= 0 ? info.current : -1);
 }
 
+function shareActiveSubs() {
+  if (!isHost || !player) return;
+  const cues = player.getSubtitleCues();
+  if (cues.length) net.shareSubtitles(cues);
+}
+
 function renderSubsSets() {
   const wrap = $("#subsList");
   if (!wrap) return;
@@ -3308,12 +3332,14 @@ function renderSubsSets() {
     name.addEventListener("click", () => {
       player.activateSubtitleSet(s.name);
       renderSubsSets();
+      shareActiveSubs();
     });
     const count = el("span", { class: "subs-count", text: String(s.count) });
     const rm = el("button", { class: "subs-x", type: "button", text: "×", "aria-label": "Remove" });
     rm.addEventListener("click", () => {
       player.removeSubtitleSet(s.name);
       renderSubsSets();
+      shareActiveSubs();
     });
     item.append(name, count, rm);
     wrap.append(item);

@@ -455,6 +455,22 @@
           <p class="hint pref-note" id="prefsLockedNote" hidden data-i18n="prefs.locked">شخصی‌سازی ظاهر توسط مدیر سایت خاموش شده است.</p>
           <p class="hint pref-note" data-i18n="prefs.note">این تنظیمات برای حساب خودت ذخیره می‌شود و فقط روی نمایش همین دستگاه اثر دارد.</p>
         </div>
+        <div class="setting hidden" id="qualityRow">
+          <label for="optQuality" data-i18n="settings.quality">کیفیت پخش</label>
+          <select id="optQuality">
+            <option value="-1" data-i18n="settings.qualityAuto">خودکار</option>
+          </select>
+        </div>
+        <div class="setting hidden" id="audioRow">
+          <label for="optAudio" data-i18n="settings.audioTrack">ترک صوتی</label>
+          <select id="optAudio"></select>
+          <p class="hint" data-i18n="settings.audioHint">اگر فیلم چند صدا داشته باشد، صدای دلخواه را انتخاب کن.</p>
+        </div>
+        <div class="setting hidden" id="subsTrackRow">
+          <label for="optSubsTrack" data-i18n="settings.subsTrack">زیرنویس داخلی فیلم</label>
+          <select id="optSubsTrack"></select>
+          <p class="hint" data-i18n="settings.subsTrackHint">زیرنویس‌های چسبیده به فایل خودکار شناسایی می‌شوند و رنگ انتخابی روی آن‌ها اعمال می‌شود.</p>
+        </div>
         <div class="setting">
           <label for="optControl" data-i18n="settings.whoControls">چه کسی کنترل پخش دارد؟</label>
           <select id="optControl">
@@ -548,29 +564,14 @@
           <span class="switch"></span>
         </label>
         <p class="hint" data-i18n="settings.sheetDockHint">برای پنهان کردن کشو آن را پایین بکش؛ دکمهٔ چت شناور برمی‌گرداند.</p>
-        <div class="setting hidden" id="qualityRow">
-          <label for="optQuality" data-i18n="settings.quality">کیفیت پخش</label>
-          <select id="optQuality">
-            <option value="-1" data-i18n="settings.qualityAuto">خودکار</option>
-          </select>
-        </div>
-        <div class="setting hidden" id="audioRow">
-          <label for="optAudio" data-i18n="settings.audioTrack">ترک صوتی</label>
-          <select id="optAudio"></select>
-          <p class="hint" data-i18n="settings.audioHint">اگر فیلم چند صدا داشته باشد، صدای دلخواه را انتخاب کن.</p>
-        </div>
-        <div class="setting hidden" id="subsTrackRow">
-          <label for="optSubsTrack" data-i18n="settings.subsTrack">زیرنویس داخلی فیلم</label>
-          <select id="optSubsTrack"></select>
-          <p class="hint" data-i18n="settings.subsTrackHint">زیرنویس‌های چسبیده به فایل خودکار شناسایی می‌شوند و رنگ انتخابی روی آن‌ها اعمال می‌شود.</p>
-        </div>
         <div class="setting">
           <label for="subsFile" data-i18n="settings.subs">زیرنویس (SRT / VTT)</label>
-          <input type="file" id="subsFile" class="hidden" accept=".srt,.vtt,text/vtt,text/plain">
+          <input type="file" id="subsFile" class="hidden" accept=".srt,.vtt,text/vtt,text/plain" multiple>
           <div class="file-pick">
-            <button class="btn btn-secondary btn-sm" id="subsPickBtn" type="button" data-i18n="settings.subsPick">انتخاب فایل زیرنویس</button>
+            <button class="btn btn-secondary btn-sm" id="subsPickBtn" type="button" data-i18n="settings.subsPick">انتخاب فایل‌های زیرنویس</button>
             <span class="file-name" id="subsFileName" data-i18n="settings.subsNone">فایلی انتخاب نشده</span>
           </div>
+          <p class="hint" data-i18n="settings.subsMultiHint">می‌توانی چند فایل زیرنویس بدهی و از فهرست پایین هر کدام را خواستی فعال کنی.</p>
           <div class="subs-controls">
             <label data-i18n="settings.subsSize">اندازه</label>
             <input type="range" id="subsSize" min="80" max="200" value="120">
