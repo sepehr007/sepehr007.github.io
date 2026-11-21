@@ -302,13 +302,36 @@ async function boot() {
       paintSeekFill(current, duration);
     },
     onLoaded: () => { clearMediaWatchdog(); hideMediaLoading(); hidePlayerError(); finishSample(true); syncStageEmpty(); },
-    onError: (kind) => { hideMediaLoading(); if (!retrySample()) showPlayerError(kind); },
+    onError: (kind) => {
+      hideMediaLoading();
+      if (retrySample()) return;
+      showPlayerError(kind);
+      const job = linkPrep;
+      if ((kind === "format" || kind === "media") && job && !job.done && !job.started && !job.autoTried && job.url === (player?.state?.url || player?.url)) {
+        job.autoTried = true;
+        ensureLinkPrepared();
+      }
+    },
     onBuffering: (on) => {
       $("#videoFrame")?.classList.toggle("buffering", !!on && !!player?.url);
     },
     onLevels: (info) => renderQuality(info),
-    onAudio: (info) => renderAudio(info),
-    onText: (info) => renderTextTracks(info)
+    onAudio: (info) => {
+      renderAudio(info);
+      const want = linkPrep?.want;
+      if (linkPrep?.done && want?.audio != null) {
+        player.setAudio(String(want.audio));
+        want.audio = null;
+      }
+    },
+    onText: (info) => {
+      renderTextTracks(info);
+      const want = linkPrep?.want;
+      if (linkPrep?.done && want?.subs != null) {
+        player.setTextTrack(Number(want.subs));
+        want.subs = null;
+      }
+    }
   });
 
   voice = new Voice({
@@ -1837,47 +1860,92 @@ async function fetchLinkMedia(url, maxMB, onProgress) {
   }
 }
 
+let linkPrep = null;
+
 async function maybeUpgradeLink(url) {
   if (!url || linkUpgrades.has(url) || player.alias.has(url)) return;
-  if (/\.m3u8($|\?)/i.test(url)) { setTracksHint(null); return; }
+  if (/\.m3u8($|\?)/i.test(url)) { linkPrep = null; setTracksHint(null); return; }
   if (!/^https?:/i.test(url)) return;
   linkUpgrades.add(url);
   resetTrackPanel();
-  const maxMB = linkMaxMB();
+  linkPrep = { url, probe: null, started: false, done: false, failed: false, autoTried: false, want: { audio: null, subs: null } };
   setTracksHint("checking");
   showPrep();
   $("#prepTitle").textContent = t("room.checkingTracks");
   setPrepProgress(0);
+  let probe = null;
+  try {
+    const { probeRemoteTracks } = await import("./media-probe.js");
+    probe = await Promise.race([
+      probeRemoteTracks(url).catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve(null), 8000))
+    ]);
+  } catch {}
+  hidePrep();
+  if (!linkPrep || linkPrep.url !== url) return;
+  if (probe && !probe.unknownTracks && (probe.audio > 1 || probe.textSubs > 0)) {
+    /* Only the container header was read (a few kilobytes). The file itself is
+       downloaded later, and only if the viewer actually switches a track. */
+    linkPrep.probe = probe;
+    const sizeMB = probe.sizeBytes ? Math.ceil(probe.sizeBytes / (1024 * 1024)) : 0;
+    showProbedTracks(probe, true);
+    setTrackStatus(t("settings.tracksReady", {
+      a: String(probe.audio),
+      s: String(probe.textSubs),
+      size: sizeMB ? String(sizeMB) : "?"
+    }));
+    if (!(await linkPlayable(url))) {
+      linkPrep.autoTried = true;
+      await ensureLinkPrepared();
+    }
+    return;
+  }
+  setTracksHint(probe && !probe.unknownTracks ? "none" : "undetected");
+}
+
+/* A URL can report metadata and still be undecodable (MKV in Chrome shows 0x0).
+   Only a real picture counts as playable; a slow host is left alone. */
+function linkPlayable(url, timeoutMs = 9000) {
+  return new Promise((resolve) => {
+    const v = document.createElement("video");
+    v.muted = true;
+    v.preload = "metadata";
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      v.removeAttribute("src");
+      try { v.load(); } catch {}
+      resolve(ok);
+    };
+    v.onloadedmetadata = () => finish(v.videoWidth > 0 && v.videoHeight > 0);
+    v.onerror = () => finish(false);
+    setTimeout(() => finish(true), timeoutMs);
+    v.src = url;
+  });
+}
+
+async function ensureLinkPrepared() {
+  const job = linkPrep;
+  if (!job || job.started || job.done) return;
+  const url = job.url;
+  job.started = true;
+  const maxMB = linkMaxMB();
   const progress = (p) => {
     setPrepProgress(p);
     setTrackStatus(t("settings.tracksProgress", { p: String(Math.round(Math.max(0, Math.min(1, p)) * 100)) }));
   };
+  setTrackControlsReady(false);
+  showPrep();
+  $("#prepTitle").textContent = t("room.prepTracks");
+  setPrepProgress(0);
   try {
-    const { probeRemoteTracks } = await import("./media-probe.js");
-    const probe = await Promise.race([
-      probeRemoteTracks(url).catch(() => null),
-      new Promise((resolve) => setTimeout(() => resolve(null), 8000))
-    ]);
-    if (probe && !probe.unknownTracks) {
-      const sizeMB = probe.sizeBytes ? Math.ceil(probe.sizeBytes / (1024 * 1024)) : 0;
-      $("#prepSub").textContent = t("room.probeFound", {
-        a: String(probe.audio),
-        s: String(probe.textSubs),
-        size: String(sizeMB)
-      });
-      if (probe.audio > 0 || probe.textSubs > 0) {
-        showProbedTracks(probe);
-        setTrackStatus(t("settings.tracksProbed", {
-          a: String(probe.audio),
-          s: String(probe.textSubs),
-          size: sizeMB ? String(sizeMB) : "?"
-        }));
-      }
-    }
     const media = await fetchLinkMedia(url, maxMB, progress);
     if (!media.blob) {
       const reason = media.reason === "size" ? "size" : "blocked";
       const sizeMB = media.sizeBytes ? Math.ceil(media.sizeBytes / (1024 * 1024)) : 0;
+      job.started = false;
+      job.failed = true;
       setTracksHint(reason);
       const key = reason === "size" ? (sizeMB ? "toast.linkTooLarge" : "toast.linkLargeUnknown") : "toast.linkUnreadable";
       toast(t(key, { max: String(maxMB), size: String(sizeMB) }), "error", 9000);
@@ -1893,13 +1961,15 @@ async function maybeUpgradeLink(url) {
     const reg = await registerBundle(out.files);
     if (currentBundleId) releaseBundle(currentBundleId);
     currentBundleId = reg.id;
+    job.done = true;
     swapToHls(url, reg.url);
     setTracksHint(null);
-    setTrackControlsReady();
+    setTrackControlsReady(true);
     toast(out.fixed ? t("toast.codecFixed") : t("toast.tracksFound", { a: String(out.audio), s: String(out.subs) }), "success");
   } catch (err) {
     console.warn("link track upgrade skipped", err);
-    linkUpgrades.delete(url);
+    job.started = false;
+    job.failed = true;
     const offline = /cdn-unavailable/.test(String(err?.message || err));
     setTracksHint(offline ? "engine" : "failed");
     const oom = /memory|alloc|rangeerror/i.test(String(err?.message || err));
@@ -1907,6 +1977,7 @@ async function maybeUpgradeLink(url) {
     toast(t(key, { max: String(maxMB) }), "error", 9000);
   } finally {
     hidePrep();
+    if (!job.done) setTrackControlsReady(true);
   }
 }
 
@@ -1918,7 +1989,7 @@ function trackLabel(kind, index, lang) {
 /* The probe already knows the container's tracks. Show them in the room
    settings right away (disabled until the HLS bundle is ready) so the panel
    exists even while the file is still being prepared. */
-function showProbedTracks(probe) {
+function showProbedTracks(probe, ready = false) {
   const audioSel = $("#optAudio");
   const subsSel = $("#optSubsTrack");
   if (!audioSel || !subsSel || !probe) return;
@@ -1929,7 +2000,7 @@ function showProbedTracks(probe) {
       audioSel.append(el("option", { value: String(i), text: trackLabel("audio", i, probe.audioLangs?.[i]) }));
     }
     audioSel.value = "0";
-    audioSel.disabled = true;
+    audioSel.disabled = !ready;
   }
   if (probe.textSubs > 0) {
     $("#subsTrackRow")?.classList.remove("hidden");
@@ -1939,15 +2010,15 @@ function showProbedTracks(probe) {
       subsSel.append(el("option", { value: String(i), text: trackLabel("subs", i, probe.subLangs?.[i]) }));
     }
     subsSel.value = "-1";
-    subsSel.disabled = true;
+    subsSel.disabled = !ready;
   }
 }
 
-function setTrackControlsReady() {
+function setTrackControlsReady(enabled = true) {
   const audioSel = $("#optAudio");
   const subsSel = $("#optSubsTrack");
-  if (audioSel) audioSel.disabled = false;
-  if (subsSel) subsSel.disabled = false;
+  if (audioSel) audioSel.disabled = !enabled;
+  if (subsSel) subsSel.disabled = !enabled;
 }
 
 function resetTrackPanel() {
@@ -1984,6 +2055,7 @@ function setTracksHint(kind) {
     blocked: "settings.tracksBlocked",
     failed: "settings.tracksFailed",
     engine: "settings.tracksEngine",
+    undetected: "settings.tracksUndetected",
     none: "settings.tracksNone"
   }[kind] || "settings.tracksNone";
   const retry = kind === "failed" || kind === "blocked" || kind === "engine";
@@ -3474,14 +3546,31 @@ function wireSettings() {
   });
   $("#optAudio").addEventListener("change", (e) => {
     if (!allow("watch.audioTracks", "انتخاب ترک صوتی غیرفعال شده است.")) return;
+    if (linkPrep && !linkPrep.done) {
+      linkPrep.want.audio = Number(e.target.value);
+      ensureLinkPrepared();
+      return;
+    }
     player.setAudio(e.target.value);
   });
   $("#optSubsTrack")?.addEventListener("change", (e) => {
     if (!allow("watch.subtitles", "زیرنویس غیرفعال شده است.")) return;
+    if (linkPrep && !linkPrep.done) {
+      linkPrep.want.subs = Number(e.target.value);
+      ensureLinkPrepared();
+      return;
+    }
     player.setTextTrack(Number(e.target.value));
   });
 
   $("#tracksRetry")?.addEventListener("click", () => {
+    const job = linkPrep;
+    if (job && !job.done) {
+      job.started = false;
+      job.failed = false;
+      ensureLinkPrepared();
+      return;
+    }
     const url = player?.state?.url || player?.url;
     if (!url) return;
     linkUpgrades.delete(url);
@@ -3621,6 +3710,7 @@ function renderAudio(info) {
   const sel = $("#optAudio");
   if (!row || !sel) return;
   if (!info || !info.tracks.length) {
+    if (linkPrep?.probe && !linkPrep.done) { row.classList.remove("hidden"); return; }
     row.classList.add("hidden");
     return;
   }
@@ -3640,6 +3730,7 @@ function renderTextTracks(info) {
   const sel = $("#optSubsTrack");
   if (!row || !sel) return;
   if (!info || !info.tracks?.length) {
+    if (linkPrep?.probe && !linkPrep.done) { row.classList.remove("hidden"); return; }
     row.classList.add("hidden");
     sel.innerHTML = "";
     return;
