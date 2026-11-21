@@ -81,7 +81,7 @@ export const SITE_CONFIG_DEFAULTS = {
     mediaKeepHours: 48
   },
   player: {
-    linkMaxMB: 600
+    linkMaxMB: 2048
   },
   room: {
     allowFileUpload: true
@@ -156,7 +156,7 @@ export function normalizeSiteConfig(raw) {
   merged.upload.mediaKeepHours = num(merged.upload.mediaKeepHours, 48, 0, 720);
   merged.upload.deleteAfterWatch = merged.upload.deleteAfterWatch !== false;
   merged.player = merged.player && typeof merged.player === "object" ? merged.player : {};
-  merged.player.linkMaxMB = num(merged.player.linkMaxMB, 600, 50, 1500);
+  merged.player.linkMaxMB = num(merged.player.linkMaxMB, 2048, 64, 4096);
   merged.room = merged.room && typeof merged.room === "object" ? merged.room : {};
   merged.room.allowFileUpload = merged.room.allowFileUpload !== false;
   if (!["IRT", "USD"].includes(merged.billing.currency)) merged.billing.currency = "IRT";

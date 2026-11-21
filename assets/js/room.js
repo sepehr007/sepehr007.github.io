@@ -1767,13 +1767,14 @@ function maybeUpgradeLocal(file) {
 
 function linkMaxMB() {
   const n = Number(siteCfg?.player?.linkMaxMB);
-  return Number.isFinite(n) && n > 0 ? Math.min(1500, Math.max(50, Math.round(n))) : 600;
+  return Number.isFinite(n) && n > 0 ? Math.min(4096, Math.max(64, Math.round(n))) : 2048;
 }
 
 async function readCappedBlob(res, maxBytes, onProgress) {
   const expected = Number(res.headers?.get?.("content-length")) || 0;
-  if (!res.body) {
+  if (!res.body || expected > 512 * 1024 * 1024) {
     const blob = await res.blob();
+    onProgress?.(0.99);
     return blob.size > maxBytes ? null : blob;
   }
   const reader = res.body.getReader();
@@ -1847,6 +1848,19 @@ async function maybeUpgradeLink(url) {
   $("#prepTitle").textContent = t("room.checkingTracks");
   setPrepProgress(0);
   try {
+    const { probeRemoteTracks } = await import("./media-probe.js");
+    const probe = await Promise.race([
+      probeRemoteTracks(url).catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve(null), 8000))
+    ]);
+    if (probe && !probe.unknownTracks) {
+      const sizeMB = probe.sizeBytes ? Math.ceil(probe.sizeBytes / (1024 * 1024)) : 0;
+      $("#prepSub").textContent = t("room.probeFound", {
+        a: String(probe.audio),
+        s: String(probe.textSubs),
+        size: String(sizeMB)
+      });
+    }
     const media = await fetchLinkMedia(url, maxMB, (p) => setPrepProgress(p));
     if (!media.blob) {
       const reason = media.reason === "size" ? "size" : "blocked";
@@ -1872,7 +1886,9 @@ async function maybeUpgradeLink(url) {
   } catch (err) {
     console.warn("link track upgrade skipped", err);
     linkUpgrades.delete(url);
-    setTracksHint("blocked");
+    setTracksHint("failed");
+    const oom = /memory|alloc|rangeerror/i.test(String(err?.message || err));
+    toast(t(oom ? "toast.convertOom" : "toast.linkConvertFailed", { max: String(maxMB) }), "error", 9000);
   } finally {
     hidePrep();
   }
@@ -1888,6 +1904,7 @@ function setTracksHint(kind) {
     checking: "settings.tracksChecking",
     size: "settings.tracksSize",
     blocked: "settings.tracksBlocked",
+    failed: "settings.tracksFailed",
     none: "settings.tracksNone"
   }[kind] || "settings.tracksNone";
   hint.textContent = t(key, { max: String(maxMB) });

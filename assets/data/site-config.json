@@ -54,5 +54,8 @@
     "premiumPriceEn": "Coming soon",
     "premiumNoteFa": "چند اتاق هم‌زمان، آپلود ابری و ظاهرهای بیشتر.",
     "premiumNoteEn": "Multiple rooms, cloud uploads and more themes."
+  },
+  "player": {
+    "linkMaxMB": 2048
   }
 }
