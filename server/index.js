@@ -28,6 +28,7 @@ import adminAnalyticsRoutes from "./routes/adminAnalytics.js";
 import adminStorageRoutes from "./routes/adminStorage.js";
 import uploadRoutes from "./routes/uploads.js";
 import fileRoutes from "./routes/files.js";
+import mediaRoutes from "./routes/media.js";
 import { sweepMedia } from "./storage.js";
 import { scheduleOwnerBootstrap } from "./ownerBootstrap.js";
 import { sqlSweepExpired } from "./stores/billing.js";
@@ -884,6 +885,7 @@ export async function buildServer() {
   await app.register(adminStorageRoutes, { prefix: "/api/admin" });
   await app.register(uploadRoutes, { prefix: "/api/uploads" });
   await app.register(fileRoutes, { prefix: "/api/files" });
+  await app.register(mediaRoutes, { prefix: "/api/media" });
 
   app.get("/api/features", async (req) => {
     const header = req.headers.authorization || "";

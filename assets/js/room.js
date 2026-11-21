@@ -16,6 +16,7 @@ import { avatarSrc } from "./avatars.js";
 import { CAPS } from "./capabilities.js";
 import { notifPrefs, notifPermission, setRoomNotif, notifyChat, notifyActivity } from "./notifications.js";
 import { loadSiteConfig, applySiteConfig, applyGlobalTheme, featureOn, accessOn, isMaintenanceBlocked, listenLiveConfig } from "./site-config.js";
+import { apiUrl, apiGetToken, apiHasToken } from "./api.js";
 import { isBundle, unpackBundle, registerBundle, releaseBundle, packBundle } from "./hls-bundle.js";
 import {
   resolveFlags, applyFlagsToDom, buildFlagContext, flagOn, recordFeatureUse, readFeatureCenter
@@ -1742,7 +1743,6 @@ function maybeUpgradeLocal(file) {
       const { upgradeLocalVideo } = await import("./transcode.js");
       const out = await upgradeLocalVideo(file, file.name, {});
       if (!out || localUpgradeFile !== file) return;
-      if (!(out.audio > 1 || out.subs > 0)) return;
       const packed = await packBundle(out.files);
       const reg = await registerBundle(out.files);
       if (currentBundleId) releaseBundle(currentBundleId);
@@ -1753,12 +1753,75 @@ function maybeUpgradeLocal(file) {
         net.syncLocalState({ id: localFileId, playing: !player.video.paused, time: player.video.currentTime || 0, rate: player.video.playbackRate || 1 });
         net.shareLocalFile({ id: localFileId, name: file.name, size: packed.size, blob: packed });
       }
-      toast(t("toast.tracksFound", { a: String(out.audio), s: String(out.subs) }), "success");
+      toast(out.fixed ? t("toast.codecFixed") : t("toast.tracksFound", { a: String(out.audio), s: String(out.subs) }), "success");
       setTracksHint(null);
     } catch (err) {
       console.warn("local track upgrade skipped", err);
     }
   }, 1200);
+}
+
+async function readCappedBlob(res, maxBytes) {
+  if (!res.body) {
+    const blob = await res.blob();
+    return blob.size > maxBytes ? null : blob;
+  }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+  return new Blob(chunks);
+}
+
+/* <video> plays without CORS but fetch() needs it, so many file hosts play
+   fine and still refuse to give us the bytes. The API can fetch the link
+   server-side and hand the bytes back. */
+async function fetchLinkMedia(url, maxMB) {
+  const maxBytes = maxMB * 1024 * 1024;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(url, { mode: "cors", cache: "no-store", signal: controller.signal });
+    clearTimeout(timer);
+    if (res.ok) {
+      const len = Number(res.headers.get("content-length")) || 0;
+      if (len && len > maxBytes) {
+        try { await res.body?.cancel(); } catch {}
+        return { reason: "size" };
+      }
+      const blob = await readCappedBlob(res, maxBytes);
+      if (blob?.size) return { blob };
+      if (!blob) return { reason: "size" };
+    }
+  } catch {}
+  clearTimeout(timer);
+  if (!apiHasToken()) return { reason: "blocked" };
+  try {
+    const res = await fetch(apiUrl(`/media/fetch?url=${encodeURIComponent(url)}&maxMB=${maxMB}`), {
+      headers: { Authorization: `Bearer ${apiGetToken()}` },
+      cache: "no-store"
+    });
+    if (res.status === 413) return { reason: "size" };
+    if (!res.ok) return { reason: "blocked" };
+    const blob = await readCappedBlob(res, maxBytes);
+    if (blob?.size) return { blob };
+    return { reason: blob ? "blocked" : "size" };
+  } catch {
+    return { reason: "blocked" };
+  }
 }
 
 async function maybeUpgradeLink(url) {
@@ -1767,30 +1830,30 @@ async function maybeUpgradeLink(url) {
   if (!/^https?:/i.test(url)) return;
   linkUpgrades.add(url);
   setTracksHint("checking");
+  const maxMB = Math.max(1, Number(siteCfg?.upload?.maxFileMB) || 50);
   try {
-    const maxMB = Math.max(1, Number(siteCfg?.upload?.maxFileMB) || 50);
-    const head = await fetch(url, { method: "HEAD" }).catch(() => null);
-    if (head && !head.ok) { setTracksHint("none"); return; }
-    const len = Number(head?.headers?.get("content-length")) || 0;
-    if (len && len > maxMB * 1024 * 1024) { setTracksHint("none"); return; }
-    const res = await fetch(url);
-    if (!res.ok) { setTracksHint("none"); return; }
-    const blob = await res.blob();
-    if (!blob.size || blob.size > maxMB * 1024 * 1024) { setTracksHint("none"); return; }
+    const media = await fetchLinkMedia(url, maxMB);
+    if (!media.blob) {
+      const reason = media.reason === "size" ? "size" : "blocked";
+      setTracksHint(reason);
+      toast(t(reason === "size" ? "toast.linkTooLarge" : "toast.linkUnreadable", { max: String(maxMB) }), "error", 8000);
+      return;
+    }
     if (player.state?.url && player.state.url !== url) return;
     const raw = url.split("?")[0].split("#")[0].split("/").pop() || "video.mp4";
     const { upgradeLocalVideo } = await import("./transcode.js");
-    const out = await upgradeLocalVideo(blob, decodeURIComponent(raw), {});
-    if (!out || !(out.audio > 1 || out.subs > 0)) { setTracksHint("none"); return; }
+    const out = await upgradeLocalVideo(media.blob, decodeURIComponent(raw), {});
+    if (!out) { setTracksHint("none"); return; }
     const reg = await registerBundle(out.files);
     if (currentBundleId) releaseBundle(currentBundleId);
     currentBundleId = reg.id;
     swapToHls(url, reg.url);
     setTracksHint(null);
-    toast(t("toast.tracksFound", { a: String(out.audio), s: String(out.subs) }), "success");
+    toast(out.fixed ? t("toast.codecFixed") : t("toast.tracksFound", { a: String(out.audio), s: String(out.subs) }), "success");
   } catch (err) {
     console.warn("link track upgrade skipped", err);
-    setTracksHint("none");
+    linkUpgrades.delete(url);
+    setTracksHint("blocked");
   }
 }
 
@@ -1799,12 +1862,19 @@ function setTracksHint(kind) {
   if (!hint) return;
   clearTimeout(tracksHintTimer);
   if (!kind) { hint.classList.add("hidden"); return; }
-  hint.textContent = t(kind === "checking" ? "settings.tracksChecking" : "settings.tracksNone");
+  const maxMB = Math.max(1, Number(siteCfg?.upload?.maxFileMB) || 50);
+  const key = {
+    checking: "settings.tracksChecking",
+    size: "settings.tracksSize",
+    blocked: "settings.tracksBlocked",
+    none: "settings.tracksNone"
+  }[kind] || "settings.tracksNone";
+  hint.textContent = t(key, { max: String(maxMB) });
   hint.classList.remove("hidden");
   if (kind === "checking") {
     tracksHintTimer = setTimeout(() => {
       if (!hint.classList.contains("hidden")) setTracksHint("none");
-    }, 25000);
+    }, 8 * 60 * 1000);
   }
 }
 
@@ -3426,7 +3496,7 @@ function renderAudio(info) {
   const row = $("#audioRow");
   const sel = $("#optAudio");
   if (!row || !sel) return;
-  if (!info || info.tracks.length < 2) {
+  if (!info || !info.tracks.length) {
     row.classList.add("hidden");
     return;
   }

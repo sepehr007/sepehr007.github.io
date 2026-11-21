@@ -262,6 +262,21 @@ await step("private files require owner token", async () => {
   assert.equal(anonymous.status, 401, anonymous.text);
 });
 
+await step("media proxy requires auth and blocks internal hosts", async () => {
+  const target = encodeURIComponent("http://127.0.0.1/api/health");
+  const anon = await api("GET", `/api/media/fetch?url=${target}`);
+  assert.equal(anon.status, 401, anon.text);
+  const loopback = await api("GET", `/api/media/fetch?url=${target}`, { token: alice.token });
+  assert.equal(loopback.status, 400, loopback.text);
+  assert.equal(loopback.json.error, "url_not_allowed");
+  const localhost = await api("GET", `/api/media/fetch?url=${encodeURIComponent("https://localhost/x.mp4")}`, { token: alice.token });
+  assert.equal(localhost.status, 400, localhost.text);
+  const metadata = await api("GET", `/api/media/fetch?url=${encodeURIComponent("http://169.254.169.254/latest/meta-data/")}`, { token: alice.token });
+  assert.equal(metadata.status, 400, metadata.text);
+  const missing = await api("GET", "/api/media/fetch", { token: alice.token });
+  assert.equal(missing.status, 400, missing.text);
+});
+
 await step("websocket chat dedupe, ack and resume", async () => {
   const a = await wsClient();
   const hello = await a.next("hello");

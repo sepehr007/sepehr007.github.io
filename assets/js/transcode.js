@@ -8,6 +8,13 @@ const FFMPEG_VER = "0.12.10";
 const CORE_VER = "0.12.6";
 const UTIL_VER = "0.12.1";
 
+const VIDEO_OK = new Set(["h264", "vp8", "vp9", "av1"]);
+const AUDIO_OK = new Set(["aac", "mp3", "opus", "vorbis", "flac"]);
+const TEXT_SUB_CODECS = new Set([
+  "subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text",
+  "sami", "microdvd", "subviewer", "subviewer1", "mpl2", "pjs", "realtext", "jacosub"
+]);
+
 let ffmpegPromise = null;
 let activeBase = "";
 let engineQueue = Promise.resolve();
@@ -91,18 +98,55 @@ function extOf(name) {
 }
 
 function parseProbe(lines) {
-  const info = { video: "", audio: 0, subs: 0, audioLangs: [], subLangs: [] };
+  const info = {
+    video: "", videoIndex: 0, pixFmt: "", tenBit: false,
+    audio: 0, acodecs: [], audioLangs: [],
+    subs: 0, textSubs: 0, subIdx: [], subLangs: [], imageSubs: 0
+  };
+  let vi = 0;
+  let si = 0;
   for (const line of lines) {
     const m = line.match(/Stream #\d+:\d+(?:\[[^\]]*\])?(?:\(([^)]*)\))?: (Video|Audio|Subtitle): ([a-z0-9_]+)/i);
     if (!m) continue;
     const lang = (m[1] || "").split(",")[0].trim();
     const kind = m[2].toLowerCase();
     const codec = m[3].toLowerCase();
-    if (kind === "video" && !info.video) info.video = codec;
-    if (kind === "audio") { info.audio++; info.audioLangs.push(lang); }
-    if (kind === "subtitle") { info.subs++; info.subLangs.push(lang); }
+    if (kind === "video") {
+      const idx = vi++;
+      if (/attached pic/i.test(line) || info.video) continue;
+      info.video = codec;
+      info.videoIndex = idx;
+      const px = line.match(/Video: [^,]+, ([^(,]+)/);
+      info.pixFmt = px ? px[1].trim() : "";
+    } else if (kind === "audio") {
+      info.audio++;
+      info.acodecs.push(codec);
+      info.audioLangs.push(lang);
+    } else {
+      const idx = si++;
+      info.subs++;
+      if (TEXT_SUB_CODECS.has(codec)) {
+        info.textSubs++;
+        info.subIdx.push(idx);
+        info.subLangs.push(lang);
+      } else {
+        info.imageSubs++;
+      }
+    }
   }
+  info.tenBit = /10le|12le|p010|p016/i.test(info.pixFmt);
   return info;
+}
+
+function videoCopyable(probe) {
+  return probe.video === "h264" && !probe.tenBit && !/444|422/.test(probe.pixFmt);
+}
+
+/** True when the browser cannot play every codec in the file as-is. */
+function needsCodecFix(probe) {
+  const badVideo = !VIDEO_OK.has(probe.video) || (probe.video === "h264" && !videoCopyable(probe));
+  const badAudio = probe.acodecs.some((c) => !AUDIO_OK.has(c));
+  return badVideo || badAudio;
 }
 
 async function probeMedia(ff, inName) {
@@ -196,20 +240,21 @@ async function makeSubPlaylist(ff, index, duration) {
   await ff.writeFile(`sub_${index}.m3u8`, playlist);
 }
 
-function buildMaster({ audio, subs }) {
+function buildMaster({ audio, subs, audioLangs = [], subLangs = [] }) {
   const fa = getLang() === "fa";
   const num = (n) => (fa ? "۰۱۲۳۴۵۶۷۸۹"[n] || String(n) : String(n));
+  const langTag = (l) => (l && l !== "und" ? ` (${l})` : "");
   const lines = ["#EXTM3U", "#EXT-X-VERSION:3"];
   const audioAttrs = [];
   for (let i = 0; i < audio; i++) {
-    const name = fa ? `صدای ${num(i + 1)}` : `Audio ${i + 1}`;
+    const name = (fa ? `صدای ${num(i + 1)}` : `Audio ${i + 1}`) + langTag(audioLangs[i]);
     audioAttrs.push(
       `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="${name}",DEFAULT=${i === 0 ? "YES" : "NO"},AUTOSELECT=YES,URI="audio_${i}.m3u8"`
     );
   }
   lines.push(...audioAttrs);
   for (let i = 0; i < subs; i++) {
-    const name = fa ? `زیرنویس ${num(i + 1)}` : `Subtitle ${i + 1}`;
+    const name = (fa ? `زیرنویس ${num(i + 1)}` : `Subtitle ${i + 1}`) + langTag(subLangs[i]);
     lines.push(
       `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="sub",NAME="${name}",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,URI="sub_${i}.m3u8"`
     );
@@ -225,9 +270,12 @@ async function convertToHls(ff, inName, probe, onProgress) {
   onProgress?.(0);
   await purgeOutputs(ff);
   try {
+    const videoArgs = videoCopyable(probe)
+      ? ["-c:v", "copy"]
+      : ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-vf", "scale='min(1280,iw)':-2", "-pix_fmt", "yuv420p"];
     await runFF(ff, [
-      "-hide_banner", "-i", inName, "-map", "0:v:0", "-an", "-sn",
-      ...(probe.video === "h264" ? ["-c:v", "copy"] : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-vf", "scale='min(1280,iw)':-2", "-pix_fmt", "yuv420p"]),
+      "-hide_banner", "-i", inName, "-map", `0:v:${probe.videoIndex}`, "-an", "-sn",
+      ...videoArgs,
       ...HLS_OUT, "-hls_flags", "independent_segments",
       "-hls_segment_filename", "v_%03d.ts", "video.m3u8"
     ], { log: true });
@@ -255,18 +303,19 @@ async function convertToHls(ff, inName, probe, onProgress) {
   onProgress?.(0.7);
 
   let subsDone = 0;
-  const subLimit = Math.min(probe.subs, 8);
-  for (let i = 0; i < subLimit; i++) {
+  const textIdx = probe.subIdx.slice(0, 8);
+  for (let i = 0; i < textIdx.length; i++) {
+    const src = textIdx[i];
     try {
       await runFF(ff, [
-        "-hide_banner", "-i", inName, "-map", `0:s:${i}`,
+        "-hide_banner", "-i", inName, "-map", `0:s:${src}`,
         "-c:s", "webvtt",
         ...HLS_OUT, "-hls_segment_filename", `s${i}_%03d.vtt`, `sub_${i}.m3u8`
       ], { log: true });
       subsDone++;
     } catch {
       try {
-        await runFF(ff, ["-hide_banner", "-i", inName, "-map", `0:s:${i}`, "-c:s", "webvtt", `s${i}.vtt`], { log: true });
+        await runFF(ff, ["-hide_banner", "-i", inName, "-map", `0:s:${src}`, "-c:s", "webvtt", `s${i}.vtt`], { log: true });
         await makeSubPlaylist(ff, i, await hlsDuration(ff));
         subsDone++;
       } catch (err) {
@@ -277,22 +326,30 @@ async function convertToHls(ff, inName, probe, onProgress) {
   }
   onProgress?.(0.9);
 
-  await ff.writeFile("master.m3u8", buildMaster({ audio: audioDone, subs: subsDone }));
+  await ff.writeFile("master.m3u8", buildMaster({
+    audio: audioDone,
+    subs: subsDone,
+    audioLangs: probe.audioLangs,
+    subLangs: probe.subLangs
+  }));
   const files = await readAndClear(ff, inName);
   if (!files.some((f) => f.name === "master.m3u8")) throw new Error("hls-master-missing");
   return { files, audio: audioDone, subs: subsDone };
 }
 
-async function fallbackMp4(ff, inName, onProgress) {
+async function fallbackMp4(ff, inName, probe, onProgress) {
   onProgress?.(0);
   await purgeOutputs(ff);
+  const maps = ["-map", `0:v:${probe.videoIndex}`, "-map", "0:a:0?"];
+  const copy = videoCopyable(probe) && AUDIO_OK.has(probe.acodecs[0] || "");
   try {
-    await runFF(ff, ["-i", inName, "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", "out.mp4"]);
+    if (!copy) throw new Error("reencode");
+    await runFF(ff, ["-i", inName, ...maps, "-c", "copy", "-movflags", "+faststart", "out.mp4"]);
   } catch {
     await runFF(ff, [
-      "-i", inName, "-map", "0:v:0?", "-map", "0:a:0?",
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
-      "-vf", "scale='min(1280,iw)':-2",
+      "-i", inName, ...maps,
+      "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+      "-vf", "scale='min(1280,iw)':-2", "-pix_fmt", "yuv420p",
       "-c:a", "aac", "-b:a", "128k",
       "-movflags", "+faststart", "out.mp4"
     ]);
@@ -303,8 +360,9 @@ async function fallbackMp4(ff, inName, onProgress) {
 }
 
 /**
- * Converts a local file into an HLS bundle that keeps every audio track and
- * every text subtitle. Returns null when the file has nothing extra to offer.
+ * Converts a file into an HLS bundle when the browser needs it: several audio
+ * tracks, text subtitles, or codecs it cannot play (HEVC, 10-bit, AC3/DTS…).
+ * Returns null when the file already plays fine as-is.
  */
 export async function upgradeLocalVideo(source, name, { onProgress } = {}) {
   const inName = `in.${extOf(name)}`;
@@ -314,8 +372,10 @@ export async function upgradeLocalVideo(source, name, { onProgress } = {}) {
     try {
       await ff.writeFile(inName, await fetchFile(source));
       const probe = await probeMedia(ff, inName);
-      if (!probe.video || (probe.audio < 2 && probe.subs < 1)) return null;
-      return await convertToHls(ff, inName, probe, onProgress);
+      if (!probe.video) return null;
+      const fixed = needsCodecFix(probe);
+      if (!fixed && probe.audio < 2 && probe.textSubs < 1) return null;
+      return { ...(await convertToHls(ff, inName, probe, onProgress)), fixed };
     } finally {
       await cleanInput(ff, inName);
     }
@@ -368,7 +428,9 @@ export async function prepareLocalVideo(file, { onStatus, onProgress } = {}) {
       const inName = `in.${extOf(file.name)}`;
       try {
         await ff.writeFile(inName, await fetchFile(file));
-        return await fallbackMp4(ff, inName, onProgress);
+        const probe = await probeMedia(ff, inName);
+        if (!probe.video) throw new Error("no-video-stream");
+        return await fallbackMp4(ff, inName, probe, onProgress);
       } finally {
         await cleanInput(ff, inName);
       }

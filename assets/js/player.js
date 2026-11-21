@@ -173,7 +173,11 @@ export class Player {
 
   #startHls(url) {
     this.hls = new window.Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 30 });
-    this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => { this.#emitLevels(); this.#emitAudio(); this.#emitText(); });
+    this.hlsErrors = { net: 0, media: 0 };
+    this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+      this.hlsErrors = { net: 0, media: 0 };
+      this.#emitLevels(); this.#emitAudio(); this.#emitText();
+    });
     this.hls.on(window.Hls.Events.LEVEL_SWITCHED, () => this.#emitLevels());
     this.hls.on(window.Hls.Events.AUDIO_TRACKS_UPDATED, () => this.#emitAudio());
     this.hls.on(window.Hls.Events.AUDIO_TRACK_SWITCHED, () => this.#emitAudio());
@@ -181,9 +185,14 @@ export class Player {
     this.hls.on(window.Hls.Events.SUBTITLE_TRACK_SWITCHED, () => this.#emitText());
     this.hls.on(window.Hls.Events.ERROR, (_evt, data) => {
       if (!data?.fatal) return;
-      if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) this.hls.startLoad();
-      else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) this.hls.recoverMediaError();
-      else this.onError?.("format");
+      const errs = this.hlsErrors || (this.hlsErrors = { net: 0, media: 0 });
+      if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
+        if (++errs.net > 6) { this.onError?.("network"); return; }
+        this.hls.startLoad();
+      } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
+        if (++errs.media > 3) { this.onError?.("format"); return; }
+        this.hls.recoverMediaError();
+      } else this.onError?.("format");
     });
     this.hls.loadSource(url);
     this.hls.attachMedia(this.video);
